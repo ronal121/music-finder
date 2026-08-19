@@ -3,7 +3,6 @@ package com.kafshar.musicfinder
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ContentValues
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -14,7 +13,11 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.*
+import android.widget.EditText
+import android.widget.ProgressBar
+import android.widget.SeekBar
+import android.widget.TextView
+import android.widget.Toast
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -48,10 +51,7 @@ class MainActivity : Activity() {
     private lateinit var player: ExoPlayer
 
     private val results = ArrayList<String>()
-
     private var currentIndex = -1
-
-    // لینک مستقیم آهنگ در حال پخش
     private var currentAudioUrl = ""
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -77,7 +77,6 @@ class MainActivity : Activity() {
         durationText = findViewById(R.id.duration)
         loading = findViewById(R.id.loading)
 
-        // WebView فقط پشت صحنه استفاده می‌شود
         web.visibility = View.GONE
 
         setupPlayer()
@@ -89,50 +88,53 @@ class MainActivity : Activity() {
 
         player = ExoPlayer.Builder(this).build()
 
-        player.addListener(
-            object : Player.Listener {
+        player.addListener(object : Player.Listener {
 
-                override fun onIsPlayingChanged(
-                    isPlaying: Boolean
-                ) {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
 
-                    playButton.text =
-                        if (isPlaying) "❚❚" else "▶"
+                playButton.text =
+                    if (isPlaying) "❚❚" else "▶"
 
-                    if (isPlaying) {
+                if (isPlaying) {
+                    status.text = "در حال پخش"
+                }
+            }
+
+            override fun onPlaybackStateChanged(state: Int) {
+
+                when (state) {
+
+                    Player.STATE_BUFFERING -> {
+                        loading.visibility = View.VISIBLE
+                        status.text = "در حال بارگذاری آهنگ..."
+                    }
+
+                    Player.STATE_READY -> {
+                        loading.visibility = View.GONE
+                        updateDuration()
                         status.text = "در حال پخش"
                     }
-                }
 
-                override fun onPlaybackStateChanged(
-                    playbackState: Int
-                ) {
-
-                    when (playbackState) {
-
-                        Player.STATE_BUFFERING -> {
-
-                            loading.visibility = View.VISIBLE
-                            status.text = "در حال بارگذاری آهنگ..."
-                        }
-
-                        Player.STATE_READY -> {
-
-                            loading.visibility = View.GONE
-                            updateDuration()
-                        }
-
-                        Player.STATE_ENDED -> {
-
-                            loading.visibility = View.GONE
-
-                            // آهنگ بعدی خودکار
-                            nextSong()
-                        }
+                    Player.STATE_ENDED -> {
+                        loading.visibility = View.GONE
+                        nextSong()
                     }
                 }
             }
-        )
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+
+                loading.visibility = View.GONE
+
+                status.text = "این لینک قابل پخش نیست"
+
+                Toast.makeText(
+                    this@MainActivity,
+                    "پخش این آهنگ ممکن نبود",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        })
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -144,11 +146,11 @@ class MainActivity : Activity() {
             domStorageEnabled = true
             databaseEnabled = true
 
+            mediaPlaybackRequiresUserGesture = false
+
             userAgentString =
-                "Mozilla/5.0 (Linux; Android 12) " +
-                        "AppleWebKit/537.36 " +
-                        "(KHTML, like Gecko) " +
-                        "Chrome/128 Mobile Safari/537.36"
+                "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 " +
+                        "(KHTML, like Gecko) Chrome/128 Mobile Safari/537.36"
         }
 
         web.addJavascriptInterface(
@@ -156,65 +158,58 @@ class MainActivity : Activity() {
             "MusicFinder"
         )
 
-        web.webViewClient =
-            object : WebViewClient() {
+        web.webViewClient = object : WebViewClient() {
 
-                override fun shouldOverrideUrlLoading(
-                    view: WebView,
-                    request: WebResourceRequest
-                ): Boolean {
+            override fun shouldOverrideUrlLoading(
+                view: WebView,
+                request: WebResourceRequest
+            ): Boolean {
+                return false
+            }
 
-                    return false
-                }
+            override fun onPageFinished(
+                view: WebView,
+                url: String
+            ) {
 
-                override fun onPageFinished(
-                    view: WebView,
-                    url: String
-                ) {
+                when {
 
-                    if (url.contains("google.com/search")) {
-
+                    url.contains("google.com/search") -> {
                         extractGoogleResults()
+                    }
 
-                    } else if (
-                        url.contains("rozmusic.com")
-                    ) {
+                    url.contains("rozmusic.com") -> {
+                        extractAudioFromPage()
+                    }
 
-                        extractRozMusic()
+                    url.contains("mybia2music.com") -> {
+                        extractAudioFromPage()
+                    }
 
-                    } else if (
-                        url.contains("mybia2music.com") ||
-                        url.contains("musicdel.ir") ||
-                        url.contains("musics-fa.com")
-                    ) {
+                    url.contains("musicdel.ir") -> {
+                        extractAudioFromPage()
+                    }
 
-                        extractGenericMusicSite()
+                    url.contains("musics-fa.com") -> {
+                        extractAudioFromPage()
                     }
                 }
             }
+        }
     }
 
     private fun setupControls() {
 
-        findViewById<TextView>(
-            R.id.search
-        ).setOnClickListener {
-
+        findViewById<TextView>(R.id.search).setOnClickListener {
             searchMusic()
         }
 
-        query.setOnEditorActionListener {
-                _, actionId, _ ->
+        query.setOnEditorActionListener { _, actionId, _ ->
 
-            if (
-                actionId == EditorInfo.IME_ACTION_SEARCH
-            ) {
-
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
                 searchMusic()
                 true
-
             } else {
-
                 false
             }
         }
@@ -229,18 +224,14 @@ class MainActivity : Activity() {
         }
 
         previousButton.setOnClickListener {
-
             previousSong()
         }
 
         nextButton.setOnClickListener {
-
             nextSong()
         }
 
-        // دکمه دانلود
         downloadButton.setOnClickListener {
-
             downloadCurrentSong()
         }
 
@@ -259,10 +250,9 @@ class MainActivity : Activity() {
 
                     if (duration > 0) {
 
-                        val position =
+                        player.seekTo(
                             duration * progress / 100
-
-                        player.seekTo(position)
+                        )
                     }
                 }
 
@@ -281,8 +271,7 @@ class MainActivity : Activity() {
 
     private fun searchMusic() {
 
-        val text =
-            query.text.toString().trim()
+        val text = query.text.toString().trim()
 
         if (text.isEmpty()) {
 
@@ -304,11 +293,9 @@ class MainActivity : Activity() {
         titleText.text = text
         artistText.text = "در حال جستجو..."
 
-        status.text =
-            "در حال پیدا کردن آهنگ..."
+        status.text = "در حال پیدا کردن آهنگ..."
 
-        loading.visibility =
-            View.VISIBLE
+        loading.visibility = View.VISIBLE
 
         val searchQuery =
             "\"$text\" " +
@@ -323,11 +310,9 @@ class MainActivity : Activity() {
                 "UTF-8"
             )
 
-        val url =
+        web.loadUrl(
             "https://www.google.com/search?q=$encoded"
-
-        // Google برای کاربر نمایش داده نمی‌شود
-        web.loadUrl(url)
+        )
     }
 
     private fun extractGoogleResults() {
@@ -340,11 +325,7 @@ class MainActivity : Activity() {
 
                 var found = [];
 
-                for (
-                    var i = 0;
-                    i < links.length;
-                    i++
-                ) {
+                for (var i = 0; i < links.length; i++) {
 
                     var href =
                         links[i].href || "";
@@ -359,7 +340,6 @@ class MainActivity : Activity() {
                         if (
                             found.indexOf(href) === -1
                         ) {
-
                             found.push(href);
                         }
                     }
@@ -385,115 +365,26 @@ class MainActivity : Activity() {
         )
     }
 
-    private fun extractRozMusic() {
+    private fun extractAudioFromPage() {
 
-        status.text =
-            "لینک مستقیم آهنگ پیدا شد..."
-
-        val script = """
-            (function() {
-
-                var links =
-                    document.querySelectorAll("a");
-
-                var audioLinks = [];
-
-                for (
-                    var i = 0;
-                    i < links.length;
-                    i++
-                ) {
-
-                    var href =
-                        links[i].href || "";
-
-                    var lower =
-                        href.toLowerCase();
-
-                    if (
-                        lower.indexOf(".mp3") !== -1 ||
-                        lower.indexOf(".m4a") !== -1 ||
-                        lower.indexOf(".aac") !== -1 ||
-                        lower.indexOf(".ogg") !== -1 ||
-                        lower.indexOf(".wav") !== -1 ||
-                        lower.indexOf("dl.rozmusic.com") !== -1
-                    ) {
-
-                        if (
-                            audioLinks.indexOf(href) === -1
-                        ) {
-
-                            audioLinks.push(href);
-                        }
-                    }
-                }
-
-                var sources =
-                    document.querySelectorAll(
-                        "audio source, video source"
-                    );
-
-                for (
-                    var j = 0;
-                    j < sources.length;
-                    j++
-                ) {
-
-                    var src =
-                        sources[j].src || "";
-
-                    if (
-                        src.indexOf(".mp3") !== -1 ||
-                        src.indexOf(".m4a") !== -1
-                    ) {
-
-                        audioLinks.push(src);
-                    }
-                }
-
-                if (
-                    audioLinks.length > 0
-                ) {
-
-                    MusicFinder.audio(
-                        audioLinks.join("###")
-                    );
-
-                } else {
-
-                    MusicFinder.notFound();
-                }
-
-            })();
-        """.trimIndent()
-
-        web.evaluateJavascript(
-            script,
-            null
-        )
-    }
-
-    private fun extractGenericMusicSite() {
+        status.text = "در حال پیدا کردن لینک مستقیم..."
 
         val script = """
             (function() {
 
-                var audioLinks = [];
+                var found = [];
 
-                var links =
-                    document.querySelectorAll("a");
+                function add(url) {
 
-                for (
-                    var i = 0;
-                    i < links.length;
-                    i++
-                ) {
+                    if (!url) return;
 
-                    var href =
-                        links[i].href || "";
+                    if (
+                        url.indexOf("blob:") === 0 ||
+                        url.indexOf("data:") === 0
+                    ) return;
 
                     var lower =
-                        href.toLowerCase();
+                        url.toLowerCase();
 
                     if (
                         lower.indexOf(".mp3") !== -1 ||
@@ -504,11 +395,37 @@ class MainActivity : Activity() {
                     ) {
 
                         if (
-                            audioLinks.indexOf(href) === -1
+                            found.indexOf(url) === -1
                         ) {
-
-                            audioLinks.push(href);
+                            found.push(url);
                         }
+                    }
+                }
+
+                var audio =
+                    document.querySelectorAll(
+                        "audio"
+                    );
+
+                for (
+                    var i = 0;
+                    i < audio.length;
+                    i++
+                ) {
+
+                    add(audio[i].src);
+
+                    var sources =
+                        audio[i].querySelectorAll(
+                            "source"
+                        );
+
+                    for (
+                        var j = 0;
+                        j < sources.length;
+                        j++
+                    ) {
+                        add(sources[j].src);
                     }
                 }
 
@@ -518,25 +435,51 @@ class MainActivity : Activity() {
                     );
 
                 for (
-                    var j = 0;
-                    j < sources.length;
-                    j++
+                    var k = 0;
+                    k < sources.length;
+                    k++
+                ) {
+                    add(sources[k].src);
+                }
+
+                var links =
+                    document.querySelectorAll("a");
+
+                for (
+                    var x = 0;
+                    x < links.length;
+                    x++
                 ) {
 
-                    var src =
-                        sources[j].src || "";
+                    add(links[x].href);
+                }
 
-                    if (src) {
-                        audioLinks.push(src);
+                var html =
+                    document.documentElement.innerHTML;
+
+                var matches =
+                    html.match(
+                        /https?:[^"' ]+\.(mp3|m4a|aac|ogg|wav)[^"' ]*/gi
+                    );
+
+                if (matches) {
+
+                    for (
+                        var z = 0;
+                        z < matches.length;
+                        z++
+                    ) {
+
+                        add(
+                            matches[z]
+                        );
                     }
                 }
 
-                if (
-                    audioLinks.length > 0
-                ) {
+                if (found.length > 0) {
 
                     MusicFinder.audio(
-                        audioLinks.join("###")
+                        found.join("###")
                     );
 
                 } else {
@@ -553,38 +496,40 @@ class MainActivity : Activity() {
         )
     }
 
-    private fun playAudio(
-        url: String
-    ) {
+    private fun playAudio(url: String) {
 
         if (url.isBlank()) {
 
-            loading.visibility =
-                View.GONE
-
-            status.text =
-                "لینک آهنگ پیدا نشد"
+            loading.visibility = View.GONE
+            status.text = "لینک آهنگ پیدا نشد"
 
             return
         }
 
         currentAudioUrl = url
 
-        loading.visibility =
-            View.VISIBLE
-
-        status.text =
-            "در حال پخش..."
-
-        val mediaItem =
-            MediaItem.fromUri(url)
+        loading.visibility = View.VISIBLE
+        status.text = "در حال پخش..."
 
         player.setMediaItem(
-            mediaItem
+            MediaItem.fromUri(url)
         )
 
         player.prepare()
         player.play()
+    }
+
+    private fun loadSongPage(url: String) {
+
+        if (url.isBlank()) {
+            notFound()
+            return
+        }
+
+        loading.visibility = View.VISIBLE
+        status.text = "در حال پیدا کردن آهنگ..."
+
+        web.loadUrl(url)
     }
 
     private fun nextSong() {
@@ -593,10 +538,7 @@ class MainActivity : Activity() {
             return
         }
 
-        if (
-            currentIndex <
-            results.size - 1
-        ) {
+        if (currentIndex < results.size - 1) {
 
             currentIndex++
 
@@ -605,6 +547,8 @@ class MainActivity : Activity() {
             )
 
         } else {
+
+            status.text = "در حال پیدا کردن آهنگ بعدی..."
 
             searchRelatedSong()
         }
@@ -624,19 +568,6 @@ class MainActivity : Activity() {
                 results[currentIndex]
             )
         }
-    }
-
-    private fun loadSongPage(
-        url: String
-    ) {
-
-        loading.visibility =
-            View.VISIBLE
-
-        status.text =
-            "در حال پیدا کردن آهنگ..."
-
-        web.loadUrl(url)
     }
 
     private fun searchRelatedSong() {
@@ -662,13 +593,9 @@ class MainActivity : Activity() {
         )
     }
 
-    /*
-     * دانلود آهنگ فعلی
-     */
     private fun downloadCurrentSong() {
 
-        val url =
-            currentAudioUrl
+        val url = currentAudioUrl
 
         if (url.isBlank()) {
 
@@ -686,11 +613,7 @@ class MainActivity : Activity() {
                 query.text.toString()
             ) + ".mp3"
 
-        downloadButton.text =
-            "..."
-
-        status.text =
-            "در حال دانلود..."
+        downloadButton.text = "..."
 
         Thread {
 
@@ -713,15 +636,14 @@ class MainActivity : Activity() {
 
                 runOnUiThread {
 
-                    downloadButton.text =
-                        "✓"
+                    downloadButton.text = "✓"
 
                     status.text =
                         "آهنگ در پوشه Music ذخیره شد"
 
                     Toast.makeText(
                         this,
-                        "دانلود شد ✓",
+                        "آهنگ ذخیره شد ✓",
                         Toast.LENGTH_LONG
                     ).show()
                 }
@@ -730,15 +652,14 @@ class MainActivity : Activity() {
 
                 runOnUiThread {
 
-                    downloadButton.text =
-                        "⬇"
+                    downloadButton.text = "⬇"
 
                     status.text =
                         "دانلود ناموفق بود"
 
                     Toast.makeText(
                         this,
-                        "خطا در دانلود: ${e.message}",
+                        "خطا در دانلود",
                         Toast.LENGTH_LONG
                     ).show()
                 }
@@ -747,18 +668,10 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    /*
-     * Android 10 و بالاتر
-     *
-     * فایل مستقیماً داخل Music ذخیره می‌شود.
-     */
     private fun downloadWithMediaStore(
         urlString: String,
         fileName: String
     ) {
-
-        val resolver =
-            contentResolver
 
         val values =
             ContentValues().apply {
@@ -785,12 +698,12 @@ class MainActivity : Activity() {
             }
 
         val uri =
-            resolver.insert(
+            contentResolver.insert(
                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
                 values
             )
                 ?: throw Exception(
-                    "امکان ساخت فایل وجود ندارد"
+                    "ساخت فایل ناموفق بود"
                 )
 
         try {
@@ -798,23 +711,16 @@ class MainActivity : Activity() {
             val connection =
                 URL(urlString)
                     .openConnection()
-                    as HttpURLConnection
+                        as HttpURLConnection
 
-            connection.connectTimeout =
-                15000
-
-            connection.readTimeout =
-                30000
-
-            connection.requestMethod =
-                "GET"
+            connection.connectTimeout = 15000
+            connection.readTimeout = 30000
 
             connection.connect()
 
             if (
                 connection.responseCode !in 200..299
             ) {
-
                 throw Exception(
                     "سرور فایل را ارسال نکرد"
                 )
@@ -826,14 +732,15 @@ class MainActivity : Activity() {
                 )
 
             val output =
-                resolver.openOutputStream(
+                contentResolver.openOutputStream(
                     uri
                 )
                     ?: throw Exception(
-                        "امکان نوشتن فایل وجود ندارد"
+                        "نوشتن فایل ناموفق بود"
                     )
 
             input.use { inputStream ->
+
                 output.use { outputStream ->
 
                     val buffer =
@@ -842,9 +749,7 @@ class MainActivity : Activity() {
                     var count: Int
 
                     while (
-                        inputStream.read(
-                            buffer
-                        )
+                        inputStream.read(buffer)
                             .also {
                                 count = it
                             } != -1
@@ -870,7 +775,7 @@ class MainActivity : Activity() {
                     )
                 }
 
-            resolver.update(
+            contentResolver.update(
                 uri,
                 update,
                 null,
@@ -879,7 +784,7 @@ class MainActivity : Activity() {
 
         } catch (e: Exception) {
 
-            resolver.delete(
+            contentResolver.delete(
                 uri,
                 null,
                 null
@@ -889,71 +794,41 @@ class MainActivity : Activity() {
         }
     }
 
-    /*
-     * Android 9 و پایین‌تر
-     */
     private fun downloadOldAndroid(
         urlString: String,
         fileName: String
     ) {
 
-        if (
-            checkSelfPermission(
-                android.Manifest.permission.WRITE_EXTERNAL_STORAGE
-            ) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-
-            runOnUiThread {
-
-                requestPermissions(
-                    arrayOf(
-                        android.Manifest.permission
-                            .WRITE_EXTERNAL_STORAGE
-                    ),
-                    100
-                )
-            }
-
-            throw Exception(
-                "اجازه ذخیره‌سازی لازم است"
-            )
-        }
-
-        val musicDirectory =
+        val directory =
             Environment.getExternalStoragePublicDirectory(
                 Environment.DIRECTORY_MUSIC
             )
 
-        if (!musicDirectory.exists()) {
-            musicDirectory.mkdirs()
+        if (!directory.exists()) {
+            directory.mkdirs()
         }
 
         val file =
             File(
-                musicDirectory,
+                directory,
                 fileName
             )
 
         val connection =
             URL(urlString)
                 .openConnection()
-                as HttpURLConnection
+                    as HttpURLConnection
 
-        connection.connectTimeout =
-            15000
-
-        connection.readTimeout =
-            30000
+        connection.connectTimeout = 15000
+        connection.readTimeout = 30000
 
         connection.connect()
 
         if (
             connection.responseCode !in 200..299
         ) {
-
             throw Exception(
-                "دانلود از سرور ناموفق بود"
+                "دانلود ناموفق بود"
             )
         }
 
@@ -966,6 +841,7 @@ class MainActivity : Activity() {
             FileOutputStream(file)
 
         input.use { inputStream ->
+
             output.use { outputStream ->
 
                 val buffer =
@@ -974,9 +850,7 @@ class MainActivity : Activity() {
                 var count: Int
 
                 while (
-                    inputStream.read(
-                        buffer
-                    )
+                    inputStream.read(buffer)
                         .also {
                             count = it
                         } != -1
@@ -998,8 +872,7 @@ class MainActivity : Activity() {
         text: String
     ): String {
 
-        var name =
-            text.trim()
+        var name = text.trim()
 
         if (name.isEmpty()) {
             name = "Music_Finder_Song"
@@ -1016,8 +889,7 @@ class MainActivity : Activity() {
 
     private fun updateDuration() {
 
-        val duration =
-            player.duration
+        val duration = player.duration
 
         if (duration <= 0) {
             return
@@ -1025,8 +897,6 @@ class MainActivity : Activity() {
 
         durationText.text =
             formatTime(duration)
-
-        seekBar.progress = 0
 
         updateProgress()
     }
@@ -1039,21 +909,18 @@ class MainActivity : Activity() {
             return
         }
 
-        val position =
-            player.currentPosition
-
         val duration =
             player.duration
 
-        val progress =
+        val position =
+            player.currentPosition
+
+        seekBar.progress =
             (
                 position.toDouble() /
                         duration.toDouble() *
-                        100.0
+                        100
                 ).toInt()
-
-        seekBar.progress =
-            progress
 
         currentTime.text =
             formatTime(position)
@@ -1079,37 +946,40 @@ class MainActivity : Activity() {
             return "0:00"
         }
 
-        val totalSeconds =
+        val seconds =
             millis / 1000
 
         val minutes =
-            totalSeconds / 60
+            seconds / 60
 
-        val seconds =
-            totalSeconds % 60
+        val remaining =
+            seconds % 60
 
         return String.format(
             Locale.US,
             "%d:%02d",
             minutes,
-            seconds
+            remaining
         )
+    }
+
+    private fun notFound() {
+
+        loading.visibility = View.GONE
+
+        status.text =
+            "آهنگ قابل پخش پیدا نشد"
     }
 
     inner class MusicBridge {
 
         @JavascriptInterface
-        fun results(
-            data: String
-        ) {
+        fun results(data: String) {
 
             runOnUiThread {
 
-                results.clear()
-
                 val urls =
-                    data
-                        .split("###")
+                    data.split("###")
                         .map {
                             it.trim()
                         }
@@ -1118,11 +988,10 @@ class MainActivity : Activity() {
                         }
                         .distinct()
 
+                results.clear()
                 results.addAll(urls)
 
-                if (
-                    results.isEmpty()
-                ) {
+                if (results.isEmpty()) {
 
                     notFound()
 
@@ -1138,15 +1007,12 @@ class MainActivity : Activity() {
         }
 
         @JavascriptInterface
-        fun audio(
-            data: String
-        ) {
+        fun audio(data: String) {
 
             runOnUiThread {
 
                 val urls =
-                    data
-                        .split("###")
+                    data.split("###")
                         .map {
                             it.trim()
                         }
@@ -1155,23 +1021,12 @@ class MainActivity : Activity() {
                         }
                         .distinct()
 
-                if (
-                    urls.isEmpty()
-                ) {
+                if (urls.isEmpty()) {
 
                     notFound()
 
                     return@runOnUiThread
                 }
-
-                /*
-                 * اولین لینک مستقیم
-                 */
-                val audioUrl =
-                    urls.first()
-
-                currentAudioUrl =
-                    audioUrl
 
                 titleText.text =
                     query.text.toString()
@@ -1180,7 +1035,7 @@ class MainActivity : Activity() {
                     "Music Finder"
 
                 playAudio(
-                    audioUrl
+                    urls[0]
                 )
             }
         }
@@ -1189,12 +1044,7 @@ class MainActivity : Activity() {
         fun notFound() {
 
             runOnUiThread {
-
-                loading.visibility =
-                    View.GONE
-
-                status.text =
-                    "آهنگ قابل پخش پیدا نشد"
+                notFound()
             }
         }
     }
@@ -1205,10 +1055,5 @@ class MainActivity : Activity() {
         web.destroy()
 
         super.onDestroy()
-    }
-
-    override fun onBackPressed() {
-
-        super.onBackPressed()
     }
 }
