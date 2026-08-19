@@ -3,14 +3,11 @@ package com.kafshar.musicfinder
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.view.inputmethod.EditorInfo
+import android.view.View
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
 import android.widget.EditText
 import android.widget.ProgressBar
 import android.widget.SeekBar
@@ -22,26 +19,30 @@ import java.util.Locale
 class MainActivity : Activity() {
 
     private lateinit var web: WebView
+
     private lateinit var query: EditText
     private lateinit var status: TextView
-    private lateinit var nowPlaying: TextView
+    private lateinit var titleText: TextView
+    private lateinit var artistText: TextView
+
     private lateinit var playButton: TextView
-    private lateinit var progress: SeekBar
+    private lateinit var previousButton: TextView
+    private lateinit var nextButton: TextView
+
+    private lateinit var seekBar: SeekBar
     private lateinit var currentTime: TextView
-    private lateinit var duration: TextView
+    private lateinit var totalTime: TextView
+
     private lateinit var loading: ProgressBar
 
-    private val handler = Handler(Looper.getMainLooper())
+    private val results = ArrayList<SearchResult>()
 
-    private var pageHasAudio = false
-    private var isPlaying = false
+    private var currentIndex = -1
+    private var currentTitle = ""
+    private var currentArtist = ""
 
-    private val progressUpdater = object : Runnable {
-        override fun run() {
-            updatePlayerState()
-            handler.postDelayed(this, 500)
-        }
-    }
+    private var searching = false
+    private var pageLoaded = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,30 +51,50 @@ class MainActivity : Activity() {
         setContentView(R.layout.activity_main)
 
         web = findViewById(R.id.web)
+
         query = findViewById(R.id.query)
         status = findViewById(R.id.status)
-        nowPlaying = findViewById(R.id.nowPlaying)
+
+        titleText = findViewById(R.id.titleText)
+        artistText = findViewById(R.id.artistText)
+
         playButton = findViewById(R.id.playButton)
-        progress = findViewById(R.id.progress)
+        previousButton = findViewById(R.id.previousButton)
+        nextButton = findViewById(R.id.nextButton)
+
+        seekBar = findViewById(R.id.progress)
         currentTime = findViewById(R.id.currentTime)
-        duration = findViewById(R.id.duration)
+        totalTime = findViewById(R.id.duration)
+
         loading = findViewById(R.id.loading)
 
-        val search = findViewById<Button>(R.id.search)
-        val menu = findViewById<TextView>(R.id.menu)
-        val filter = findViewById<TextView>(R.id.filter)
+        configureWebView()
+        configureButtons()
+
+        web.loadUrl("https://www.google.com/")
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun configureWebView() {
 
         web.settings.apply {
+
             javaScriptEnabled = true
+
             domStorageEnabled = true
+
             databaseEnabled = true
+
             mediaPlaybackRequiresUserGesture = false
+
             builtInZoomControls = false
+
             displayZoomControls = false
 
             userAgentString =
                 "Mozilla/5.0 (Linux; Android 12) " +
-                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) " +
                 "Chrome/128 Mobile Safari/537.36"
         }
 
@@ -88,6 +109,7 @@ class MainActivity : Activity() {
                 view: WebView,
                 request: WebResourceRequest
             ): Boolean {
+
                 return false
             }
 
@@ -95,52 +117,72 @@ class MainActivity : Activity() {
                 view: WebView,
                 url: String
             ) {
-                loading.visibility = ProgressBar.GONE
 
-                if (isGooglePage(url)) {
-                    status.text = "نتایج پیدا شد؛ در حال انتخاب نتیجه مناسب..."
+                pageLoaded = true
 
-                    handler.postDelayed({
-                        selectFirstMusicResult()
-                    }, 1000)
-                } else {
-                    status.text = "صفحه آهنگ آماده است"
+                if (searching) {
 
-                    handler.postDelayed({
-                        detectAudio()
-                    }, 1200)
+                    searching = false
+
+                    status.text =
+                        "در حال بررسی نتیجه..."
+
+                    inspectMusicPage()
                 }
             }
         }
+    }
 
-        search.setOnClickListener {
+    private fun configureButtons() {
+
+        findViewById<TextView>(R.id.search).setOnClickListener {
             searchMusic()
         }
 
-        query.setOnEditorActionListener { _, actionId, _ ->
-
-            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                searchMusic()
-                true
-            } else {
-                false
-            }
+        query.setOnEditorActionListener { _, _, _ ->
+            searchMusic()
+            true
         }
 
         playButton.setOnClickListener {
-            togglePlayPause()
+            togglePlay()
         }
 
-        progress.setOnSeekBarChangeListener(
+        previousButton.setOnClickListener {
+            previousSong()
+        }
+
+        nextButton.setOnClickListener {
+            nextSong()
+        }
+
+        seekBar.setOnSeekBarChangeListener(
             object : SeekBar.OnSeekBarChangeListener {
 
                 override fun onProgressChanged(
                     seekBar: SeekBar?,
-                    progressValue: Int,
+                    progress: Int,
                     fromUser: Boolean
                 ) {
+
                     if (fromUser) {
-                        seekTo(progressValue)
+
+                        val script = """
+                            (function() {
+                                var media =
+                                    document.querySelector('audio,video');
+
+                                if (media && media.duration) {
+                                    media.currentTime =
+                                        media.duration * ($progress / 100);
+                                }
+                            })();
+                        """.trimIndent()
+
+                        web.evaluateJavascript(
+                            script,
+                            null
+                        )
                     }
                 }
 
@@ -155,52 +197,48 @@ class MainActivity : Activity() {
                 }
             }
         )
-
-        menu.setOnClickListener {
-            Toast.makeText(
-                this,
-                "Music Finder • KAFSHAR",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        filter.setOnClickListener {
-            Toast.makeText(
-                this,
-                "RozMusic • Bia2Music • Musicdel • Musics-fa",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        handler.post(progressUpdater)
-
-        web.loadUrl("https://www.google.com/")
     }
 
     private fun searchMusic() {
 
-        val text = query.text.toString().trim()
+        val text =
+            query.text.toString().trim()
 
         if (text.isEmpty()) {
+
             Toast.makeText(
                 this,
                 "نام آهنگ را وارد کنید",
                 Toast.LENGTH_SHORT
             ).show()
+
             return
         }
 
-        pageHasAudio = false
-        isPlaying = false
+        results.clear()
+
+        currentIndex = -1
+
+        titleText.text = text
+
+        artistText.text =
+            "در حال جستجو..."
+
+        currentTime.text = "0:00"
+
+        totalTime.text = "0:00"
+
+        seekBar.progress = 0
 
         playButton.text = "▶"
-        nowPlaying.text = text
-        currentTime.text = "0:00"
-        duration.text = "0:00"
-        progress.progress = 0
 
-        loading.visibility = ProgressBar.VISIBLE
-        status.text = "در حال جستجوی $text ..."
+        loading.visibility =
+            View.VISIBLE
+
+        status.text =
+            "در حال جستجوی منابع موسیقی..."
+
+        searching = true
 
         val searchQuery =
             "\"$text\" " +
@@ -210,7 +248,10 @@ class MainActivity : Activity() {
             "site:musics-fa.com)"
 
         val encoded =
-            URLEncoder.encode(searchQuery, "UTF-8")
+            URLEncoder.encode(
+                searchQuery,
+                "UTF-8"
+            )
 
         val url =
             "https://www.google.com/search?q=$encoded"
@@ -218,85 +259,132 @@ class MainActivity : Activity() {
         web.loadUrl(url)
     }
 
-    private fun selectFirstMusicResult() {
+    private fun inspectMusicPage() {
 
         val script = """
             (function() {
-                var links = document.querySelectorAll('a');
 
-                for (var i = 0; i < links.length; i++) {
+                var audio =
+                    document.querySelector('audio,video');
 
-                    var href = links[i].href || '';
+                var title =
+                    document.title || '';
+
+                var text =
+                    document.body.innerText || '';
+
+                if (audio) {
+
+                    MusicFinder.found(
+                        audio.currentSrc ||
+                        audio.src ||
+                        '',
+                        title,
+                        text.substring(0, 1000)
+                    );
+
+                    return;
+                }
+
+                var links =
+                    document.querySelectorAll('a');
+
+                for (
+                    var i = 0;
+                    i < links.length;
+                    i++
+                ) {
+
+                    var href =
+                        links[i].href || '';
 
                     if (
-                        href.indexOf('rozmusic.com') !== -1 ||
-                        href.indexOf('mybia2music.com') !== -1 ||
-                        href.indexOf('musicdel.ir') !== -1 ||
-                        href.indexOf('musics-fa.com') !== -1
+                        href.indexOf('.mp3') !== -1 ||
+                        href.indexOf('.m4a') !== -1 ||
+                        href.indexOf('.aac') !== -1 ||
+                        href.indexOf('.ogg') !== -1 ||
+                        href.indexOf('.wav') !== -1
                     ) {
-                        links[i].click();
+
+                        MusicFinder.found(
+                            href,
+                            title,
+                            text.substring(0, 1000)
+                        );
+
                         return;
                     }
                 }
 
-                MusicFinder.noResult();
+                MusicFinder.notFound();
+
             })();
         """.trimIndent()
 
-        web.evaluateJavascript(script, null)
+        web.evaluateJavascript(
+            script,
+            null
+        )
     }
 
-    private fun detectAudio() {
+    private fun startSong(
+        result: SearchResult
+    ) {
+
+        currentTitle =
+            result.title
+
+        currentArtist =
+            result.artist
+
+        titleText.text =
+            currentTitle
+
+        artistText.text =
+            currentArtist
+
+        status.text =
+            "در حال آماده‌سازی..."
 
         val script = """
             (function() {
 
                 var media =
-                    document.querySelectorAll(
-                        'audio, video'
-                    );
+                    document.querySelector('audio,video');
 
-                if (media.length === 0) {
-                    MusicFinder.noAudio();
+                if (!media) {
                     return;
                 }
 
-                var item = media[0];
+                media.currentTime = 0;
 
-                item.controls = false;
-
-                MusicFinder.audioFound(
-                    item.currentSrc ||
-                    item.src ||
-                    ''
-                );
+                media.play();
 
             })();
         """.trimIndent()
 
-        web.evaluateJavascript(script, null)
+        web.evaluateJavascript(
+            script,
+            null
+        )
+
+        playButton.text =
+            "❚❚"
+
+        status.text =
+            "در حال پخش"
     }
 
-    private fun togglePlayPause() {
-
-        if (!pageHasAudio) {
-            Toast.makeText(
-                this,
-                "فایل صوتی قابل پخش پیدا نشد",
-                Toast.LENGTH_SHORT
-            ).show()
-            return
-        }
+    private fun togglePlay() {
 
         val script = """
             (function() {
 
                 var media =
-                    document.querySelector(
-                        'audio, video'
-                    );
+                    document.querySelector('audio,video');
 
                 if (!media) {
+                    MusicFinder.noPlayer();
                     return;
                 }
 
@@ -309,137 +397,168 @@ class MainActivity : Activity() {
             })();
         """.trimIndent()
 
-        web.evaluateJavascript(script, null)
+        web.evaluateJavascript(
+            script,
+            null
+        )
     }
 
-    private fun seekTo(value: Int) {
+    private fun previousSong() {
 
-        val script = """
-            (function() {
-
-                var media =
-                    document.querySelector(
-                        'audio, video'
-                    );
-
-                if (media && media.duration) {
-                    media.currentTime =
-                        media.duration * ($value / 100.0);
-                }
-
-            })();
-        """.trimIndent()
-
-        web.evaluateJavascript(script, null)
-    }
-
-    private fun updatePlayerState() {
-
-        if (!pageHasAudio) {
+        if (results.isEmpty()) {
             return
         }
 
-        val script = """
-            (function() {
+        if (currentIndex > 0) {
 
-                var media =
-                    document.querySelector(
-                        'audio, video'
-                    );
+            currentIndex--
 
-                if (!media) {
-                    return;
-                }
-
-                var current =
-                    media.currentTime || 0;
-
-                var total =
-                    media.duration || 0;
-
-                var playing =
-                    !media.paused && !media.ended;
-
-                MusicFinder.state(
-                    current,
-                    total,
-                    playing
-                );
-
-            })();
-        """.trimIndent()
-
-        web.evaluateJavascript(script, null)
+            openResult(
+                results[currentIndex]
+            )
+        }
     }
 
-    private fun isGooglePage(url: String): Boolean {
-        return url.contains("google.com")
+    private fun nextSong() {
+
+        if (results.isEmpty()) {
+            return
+        }
+
+        if (currentIndex < results.size - 1) {
+
+            currentIndex++
+
+            openResult(
+                results[currentIndex]
+            )
+        }
     }
 
-    private fun formatTime(seconds: Double): String {
+    private fun openResult(
+        result: SearchResult
+    ) {
 
-        if (!seconds.isFinite() || seconds < 0) {
+        loading.visibility =
+            View.VISIBLE
+
+        status.text =
+            "در حال باز کردن آهنگ..."
+
+        searching = false
+
+        web.loadUrl(
+            result.url
+        )
+    }
+
+    private fun addResult(
+        result: SearchResult
+    ) {
+
+        results.add(result)
+
+        currentIndex =
+            results.size - 1
+
+        loading.visibility =
+            View.GONE
+
+        startSong(result)
+    }
+
+    private fun formatTime(
+        seconds: Double
+    ): String {
+
+        if (
+            seconds.isNaN() ||
+            seconds.isInfinite() ||
+            seconds < 0
+        ) {
             return "0:00"
         }
 
-        val totalSeconds = seconds.toInt()
-        val minutes = totalSeconds / 60
-        val secs = totalSeconds % 60
+        val total =
+            seconds.toInt()
+
+        val minutes =
+            total / 60
+
+        val secondsPart =
+            total % 60
 
         return String.format(
             Locale.US,
             "%d:%02d",
             minutes,
-            secs
+            secondsPart
         )
     }
 
     inner class MusicBridge {
 
         @JavascriptInterface
-        fun audioFound(url: String) {
+        fun found(
+            audioUrl: String,
+            pageTitle: String,
+            pageText: String
+        ) {
 
             runOnUiThread {
 
-                pageHasAudio = true
+                if (audioUrl.isBlank()) {
 
-                status.text =
-                    "✓ فایل صوتی صفحه پیدا شد"
+                    notFound()
 
-                nowPlaying.text =
-                    query.text.toString()
+                    return@runOnUiThread
+                }
 
-                Toast.makeText(
-                    this@MainActivity,
-                    "آهنگ آماده پخش است",
-                    Toast.LENGTH_SHORT
-                ).show()
+                val artist =
+                    extractArtist(
+                        pageTitle,
+                        pageText
+                    )
+
+                val title =
+                    extractTitle(
+                        pageTitle
+                    )
+
+                val result =
+                    SearchResult(
+                        title = title,
+                        artist = artist,
+                        url = web.url ?: ""
+                    )
+
+                addResult(result)
             }
         }
 
         @JavascriptInterface
-        fun noAudio() {
+        fun notFound() {
 
             runOnUiThread {
 
-                pageHasAudio = false
+                loading.visibility =
+                    View.GONE
 
                 status.text =
-                    "این صفحه فایل صوتی قابل کنترل پیدا نکرد"
-
-                playButton.text = "▶"
+                    "نتیجه قابل پخش پیدا نشد"
             }
         }
 
         @JavascriptInterface
-        fun noResult() {
+        fun noPlayer() {
 
             runOnUiThread {
 
-                loading.visibility = ProgressBar.GONE
+                playButton.text =
+                    "▶"
 
                 status.text =
-                    "نتیجه مناسبی از منابع انتخاب‌شده پیدا نشد"
+                    "پلیر این صفحه در دسترس نیست"
             }
         }
 
@@ -452,33 +571,89 @@ class MainActivity : Activity() {
 
             runOnUiThread {
 
-                isPlaying = playing
-
-                playButton.text =
-                    if (playing) "❚❚" else "▶"
-
                 currentTime.text =
                     formatTime(current)
 
-                duration.text =
+                totalTime.text =
                     formatTime(total)
 
                 if (total > 0) {
 
-                    val value =
+                    seekBar.progress =
                         ((current / total) * 100)
                             .toInt()
-                            .coerceIn(0, 100)
+                            .coerceIn(
+                                0,
+                                100
+                            )
+                }
 
-                    progress.progress = value
+                playButton.text =
+                    if (playing) {
+                        "❚❚"
+                    } else {
+                        "▶"
+                    }
+
+                if (
+                    total > 0 &&
+                    current >= total - 0.5
+                ) {
+
+                    nextSong()
                 }
             }
         }
     }
 
-    override fun onDestroy() {
+    private fun extractTitle(
+        title: String
+    ): String {
 
-        handler.removeCallbacks(progressUpdater)
+        if (title.isBlank()) {
+            return query.text.toString()
+        }
+
+        return title
+            .replace(
+                Regex(
+                    "\\s*[-|].*$"
+                ),
+                ""
+            )
+            .trim()
+    }
+
+    private fun extractArtist(
+        title: String,
+        text: String
+    ): String {
+
+        val source =
+            "$title $text"
+
+        val names =
+            listOf(
+                "محسن چاوشی",
+                "چاوشی"
+            )
+
+        for (name in names) {
+
+            if (
+                source.contains(
+                    name,
+                    ignoreCase = true
+                )
+            ) {
+                return name
+            }
+        }
+
+        return "Music Finder"
+    }
+
+    override fun onDestroy() {
 
         web.destroy()
 
@@ -488,9 +663,18 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
 
         if (web.canGoBack()) {
+
             web.goBack()
+
         } else {
+
             super.onBackPressed()
         }
     }
+
+    data class SearchResult(
+        val title: String,
+        val artist: String,
+        val url: String
+    )
 }
