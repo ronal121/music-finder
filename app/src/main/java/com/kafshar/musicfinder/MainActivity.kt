@@ -9,8 +9,9 @@ import android.widget.*
 import android.graphics.Color
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
-import java.net.URLDecoder
+import java.net.URLEncoder
 
 class MainActivity : Activity() {
 
@@ -21,14 +22,7 @@ class MainActivity : Activity() {
     private lateinit var playButton: TextView
 
     private var player: ExoPlayer? = null
-
-    private var currentAudioUrl: String? = null
-    private var currentTitle: String = ""
-
-    private var searchStarted = false
-    private var candidateIndex = 0
-
-    private val candidateSites = mutableListOf<String>()
+    private var currentUrl: String? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -36,23 +30,23 @@ class MainActivity : Activity() {
 
         setContentView(R.layout.activity_main)
 
-        query = findViewById(R.id.query)
         web = findViewById(R.id.web)
+        query = findViewById(R.id.query)
         status = findViewById(R.id.status)
         nowPlaying = findViewById(R.id.nowPlaying)
         playButton = findViewById(R.id.playButton)
 
-        val search: Button = findViewById(R.id.search)
-        val menu: TextView = findViewById(R.id.menu)
-        val filter: TextView = findViewById(R.id.filter)
+        val search = findViewById<Button>(R.id.search)
+        val menu = findViewById<TextView>(R.id.menu)
+        val filter = findViewById<TextView>(R.id.filter)
 
         web.setBackgroundColor(Color.TRANSPARENT)
 
         web.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
-            mediaPlaybackRequiresUserGesture = false
             databaseEnabled = true
+            mediaPlaybackRequiresUserGesture = false
             builtInZoomControls = false
             displayZoomControls = false
 
@@ -67,7 +61,6 @@ class MainActivity : Activity() {
                 view: WebView,
                 request: WebResourceRequest
             ): Boolean {
-
                 return false
             }
 
@@ -75,98 +68,43 @@ class MainActivity : Activity() {
                 view: WebView,
                 url: String
             ) {
+                status.text = "صفحه آماده است"
 
-                status.text = "در حال بررسی صفحه..."
-
-                if (searchStarted && isGoogleUrl(url)) {
-
-                    findFirstMusicResults()
-                    return
+                if (!isGoogle(url)) {
+                    findPublicAudio()
                 }
-
-                if (searchStarted && !isGoogleUrl(url)) {
-
-                    status.text = "در حال پیدا کردن فایل موسیقی..."
-
-                    detectAudioFromPage()
-                }
-            }
-
-            override fun shouldInterceptRequest(
-                view: WebView,
-                request: WebResourceRequest
-            ): WebResourceResponse? {
-
-                val url = request.url.toString()
-
-                if (isAudioUrl(url)) {
-
-                    runOnUiThread {
-
-                        if (currentAudioUrl == null) {
-
-                            currentAudioUrl = url
-
-                            status.text =
-                                "فایل موسیقی پیدا شد؛ در حال پخش..."
-
-                            playAudio(
-                                url,
-                                currentTitle.ifEmpty {
-                                    query.text.toString()
-                                }
-                            )
-                        }
-                    }
-                }
-
-                return super.shouldInterceptRequest(view, request)
             }
         }
 
         search.setOnClickListener {
-
-            doSearch()
+            searchMusic()
         }
 
         query.setOnEditorActionListener { _, actionId, _ ->
-
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-
-                doSearch()
-
+                searchMusic()
                 true
-
             } else {
-
                 false
             }
         }
 
         playButton.setOnClickListener {
-
-            togglePlayback()
-        }
-
-        nowPlaying.setOnClickListener {
-
-            togglePlayback()
+            togglePlayer()
         }
 
         menu.setOnClickListener {
-
             Toast.makeText(
                 this,
-                "Music Finder • طراحی: KAFSHAR",
+                "Music Finder • KAFSHAR",
                 Toast.LENGTH_SHORT
             ).show()
         }
 
         filter.setOnClickListener {
-
             Toast.makeText(
                 this,
-                "انتخاب خودکار بهترین نتیجه موسیقی",
+                "جستجو در منابع موسیقی",
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -174,281 +112,117 @@ class MainActivity : Activity() {
         web.loadUrl("https://www.google.com/")
     }
 
-    private fun doSearch() {
+    private fun searchMusic() {
 
-        val q = query.text.toString().trim()
+        val text = query.text.toString().trim()
 
-        if (q.isEmpty()) {
-
+        if (text.isEmpty()) {
             Toast.makeText(
                 this,
                 "نام آهنگ را وارد کنید",
                 Toast.LENGTH_SHORT
             ).show()
-
             return
         }
 
         player?.stop()
-
-        currentAudioUrl = null
-        currentTitle = ""
-
-        searchStarted = true
-        candidateIndex = 0
-        candidateSites.clear()
+        currentUrl = null
 
         playButton.text = "▶"
         nowPlaying.text = "در حال جستجو..."
+        status.text = "در حال پیدا کردن بهترین نتیجه..."
 
-        status.text =
-            "در حال پیدا کردن بهترین نتیجه موسیقی..."
-
-        val smartQuery =
-            "\"$q\" (آهنگ OR موزیک OR music OR song OR mp3)"
+        val searchQuery =
+            "$text site:rozmusic.com OR site:mybia2music.com " +
+            "OR site:musicdel.ir OR site:musics-fa.com"
 
         val url =
             "https://www.google.com/search?q=" +
-                    java.net.URLEncoder.encode(
-                        smartQuery,
-                        "UTF-8"
-                    )
+                    URLEncoder.encode(searchQuery, "UTF-8")
 
         web.loadUrl(url)
     }
 
-    private fun findFirstMusicResults() {
+    private fun findPublicAudio() {
 
         web.evaluateJavascript(
             """
             (function() {
 
-                var links = document.querySelectorAll('a');
-                var result = [];
+                var list = [];
 
-                for (var i = 0; i < links.length; i++) {
-
-                    var a = links[i];
-                    var href = a.href || "";
-                    var text = (a.innerText || "").trim();
-
-                    if (!href || !text) continue;
-
-                    if (!href.startsWith("http")) continue;
-
-                    var bad =
-                        href.indexOf("google.com") !== -1 ||
-                        href.indexOf("googleusercontent.com") !== -1 ||
-                        href.indexOf("gstatic.com") !== -1 ||
-                        href.indexOf("youtube.com") !== -1;
-
-                    if (bad) continue;
-
-                    if (
-                        text.length > 2 &&
-                        (
-                            text.toLowerCase().indexOf("mp3") !== -1 ||
-                            text.toLowerCase().indexOf("آهنگ") !== -1 ||
-                            text.toLowerCase().indexOf("موزیک") !== -1 ||
-                            text.toLowerCase().indexOf("چنگیز") !== -1 ||
-                            text.toLowerCase().indexOf("music") !== -1 ||
-                            text.toLowerCase().indexOf("song") !== -1
-                        )
-                    ) {
-
-                        result.push(
-                            JSON.stringify({
-                                url: href,
-                                title: text
-                            })
-                        );
-                    }
-                }
-
-                return "[" + result.join(",") + "]";
-
-            })();
-            """.trimIndent()
-        ) { result ->
-
-            try {
-
-                val decoded =
-                    URLDecoder.decode(
-                        result
-                            .removePrefix("\"")
-                            .removeSuffix("\"")
-                            .replace("\\\"", "\"")
-                            .replace("\\/", "/"),
-                        "UTF-8"
-                    )
-
-                parseGoogleResults(decoded)
-
-            } catch (e: Exception) {
-
-                status.text =
-                    "نتیجه موسیقی پیدا نشد"
-            }
-        }
-    }
-
-    private fun parseGoogleResults(json: String) {
-
-        candidateSites.clear()
-
-        val urlRegex =
-            Regex("\"url\"\\s*:\\s*\"(.*?)\"")
-
-        val matches =
-            urlRegex.findAll(json)
-
-        for (match in matches) {
-
-            val url =
-                match.groupValues[1]
-                    .replace("\\/", "/")
-
-            if (
-                url.startsWith("http") &&
-                !url.contains("google.com")
-            ) {
-
-                candidateSites.add(url)
-            }
-        }
-
-        if (candidateSites.isEmpty()) {
-
-            status.text =
-                "نتیجه موسیقی مناسبی پیدا نشد"
-
-            return
-        }
-
-        candidateIndex = 0
-
-        openNextCandidate()
-    }
-
-    private fun openNextCandidate() {
-
-        if (candidateIndex >= candidateSites.size) {
-
-            status.text =
-                "فایل صوتی قابل پخش پیدا نشد"
-
-            return
-        }
-
-        val url =
-            candidateSites[candidateIndex]
-
-        candidateIndex++
-
-        currentAudioUrl = null
-
-        status.text =
-            "در حال بررسی نتیجه ${candidateIndex}..."
-
-        web.loadUrl(url)
-    }
-
-    private fun detectAudioFromPage() {
-
-        web.evaluateJavascript(
-            """
-            (function() {
-
-                var media =
+                var elements =
                     document.querySelectorAll(
-                        'audio, video, source'
+                        'audio, audio source, video, video source'
                     );
 
-                var result = [];
+                for (var i = 0; i < elements.length; i++) {
 
-                for (var i = 0; i < media.length; i++) {
+                    var u =
+                        elements[i].currentSrc ||
+                        elements[i].src ||
+                        elements[i].getAttribute('src');
 
-                    var src =
-                        media[i].src ||
-                        media[i].currentSrc ||
-                        media[i].getAttribute('src');
-
-                    if (src) {
-                        result.push(src);
+                    if (u) {
+                        list.push(u);
                     }
                 }
 
-                return JSON.stringify(result);
+                return JSON.stringify(list);
 
             })();
             """.trimIndent()
         ) { result ->
 
-            try {
+            val urls = extractUrls(result)
 
-                val clean =
-                    result
-                        .removePrefix("\"")
-                        .removeSuffix("\"")
-                        .replace("\\\"", "\"")
-                        .replace("\\/", "/")
-
-                val urlRegex =
-                    Regex("https?://[^\"\\s,]+")
-
-                val urls =
-                    urlRegex.findAll(clean)
-
-                for (match in urls) {
-
-                    val url =
-                        match.value
-
-                    if (isAudioUrl(url)) {
-
-                        currentAudioUrl = url
-
-                        playAudio(
-                            url,
-                            query.text.toString()
-                        )
-
-                        return@evaluateJavascript
-                    }
+            val audio =
+                urls.firstOrNull {
+                    isSupportedAudio(it)
                 }
 
+            if (audio != null) {
+
+                currentUrl = audio
+
+                playAudio(
+                    audio,
+                    query.text.toString()
+                )
+
+            } else {
+
                 status.text =
-                    "این نتیجه فایل صوتی قابل پخش نداشت"
-
-                openNextCandidate()
-
-            } catch (e: Exception) {
-
-                openNextCandidate()
+                    "این صفحه فایل صوتی قابل پخش داخلی ارائه نکرده است"
             }
         }
     }
 
-    private fun isGoogleUrl(url: String): Boolean {
+    private fun extractUrls(data: String): List<String> {
 
-        return url.contains("google.com") ||
-                url.contains("googleusercontent.com")
+        return Regex(
+            """https?://[^"\\\s,\]]+"""
+        )
+            .findAll(data)
+            .map {
+                it.value
+                    .replace("\\/", "/")
+                    .replace("\\u0026", "&")
+            }
+            .toList()
     }
 
-    private fun isAudioUrl(url: String): Boolean {
+    private fun isSupportedAudio(url: String): Boolean {
 
-        val lower =
-            url.lowercase()
+        val u = url.lowercase()
 
-        return lower.contains(".mp3") ||
-                lower.contains(".m4a") ||
-                lower.contains(".aac") ||
-                lower.contains(".ogg") ||
-                lower.contains(".wav") ||
-                lower.contains(".flac") ||
-                lower.contains(".m3u8") ||
-                lower.contains("audio/")
+        return u.contains(".mp3") ||
+                u.contains(".m4a") ||
+                u.contains(".aac") ||
+                u.contains(".ogg") ||
+                u.contains(".wav") ||
+                u.contains(".flac") ||
+                u.contains(".m3u8")
     }
 
     private fun playAudio(
@@ -463,29 +237,20 @@ class MainActivity : Activity() {
             player =
                 ExoPlayer.Builder(this).build()
 
-            val mediaItem =
+            player?.setMediaItem(
                 MediaItem.fromUri(url)
-
-            player?.setMediaItem(mediaItem)
+            )
 
             player?.addListener(
-                object : androidx.media3.common.Player.Listener {
+                object : Player.Listener {
 
                     override fun onIsPlayingChanged(
                         isPlaying: Boolean
                     ) {
 
-                        if (isPlaying) {
-
-                            playButton.text = "❚❚"
-
-                            nowPlaying.text =
-                                "در حال پخش: $title"
-
-                        } else {
-
-                            playButton.text = "▶"
-                        }
+                        playButton.text =
+                            if (isPlaying) "❚❚"
+                            else "▶"
                     }
 
                     override fun onPlayerError(
@@ -493,34 +258,30 @@ class MainActivity : Activity() {
                     ) {
 
                         status.text =
-                            "پخش این نتیجه ممکن نبود؛ نتیجه بعدی..."
+                            "پخش این فایل ممکن نیست"
 
-                        openNextCandidate()
+                        playButton.text = "▶"
                     }
                 }
             )
 
             player?.prepare()
-
             player?.play()
-
-            currentTitle = title
 
             nowPlaying.text =
                 "در حال پخش: $title"
 
-            playButton.text = "❚❚"
-
             status.text =
-                "✓ موسیقی در حال پخش است"
+                "✓ پخش شروع شد"
 
         } catch (e: Exception) {
 
-            openNextCandidate()
+            status.text =
+                "خطا در پخش فایل"
         }
     }
 
-    private fun togglePlayback() {
+    private fun togglePlayer() {
 
         val p = player
 
@@ -528,7 +289,7 @@ class MainActivity : Activity() {
 
             Toast.makeText(
                 this,
-                "هنوز آهنگی برای پخش انتخاب نشده",
+                "ابتدا یک آهنگ جستجو کنید",
                 Toast.LENGTH_SHORT
             ).show()
 
@@ -536,23 +297,19 @@ class MainActivity : Activity() {
         }
 
         if (p.isPlaying) {
-
             p.pause()
-
-            playButton.text = "▶"
-
         } else {
-
             p.play()
-
-            playButton.text = "❚❚"
         }
+    }
+
+    private fun isGoogle(url: String): Boolean {
+        return url.contains("google.com")
     }
 
     override fun onDestroy() {
 
         player?.release()
-
         player = null
 
         web.destroy()
@@ -563,11 +320,8 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
 
         if (web.canGoBack()) {
-
             web.goBack()
-
         } else {
-
             super.onBackPressed()
         }
     }
