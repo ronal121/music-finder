@@ -6,13 +6,17 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="@color/bg"
-    android:paddingStart="16dp"
-    android:paddingEnd="16dp">
+    android:paddingStart="18dp"
+    android:paddingEnd="18dp">
+
+    <!-- Header -->
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="60dp"
-        android:gravity="center_vertical">
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:paddingTop="16dp"
+        android:paddingBottom="8dp">
 
         <TextView
             android:id="@+id/menu"
@@ -21,7 +25,7 @@
             android:gravity="center"
             android:text="☰"
             android:textColor="@color/white"
-            android:textSize="22sp"/>
+            android:textSize="24sp"/>
 
         <TextView
             android:layout_width="0dp"
@@ -30,7 +34,7 @@
             android:gravity="center"
             android:text="Music Finder"
             android:textColor="@color/white"
-            android:textSize="21sp"
+            android:textSize="22sp"
             android:textStyle="bold"/>
 
         <TextView
@@ -38,7 +42,7 @@
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:gravity="center"
-            android:text="⋮"
+            android:text="≡"
             android:textColor="@color/white"
             android:textSize="25sp"/>
 
@@ -46,19 +50,30 @@
 
     <TextView
         android:layout_width="match_parent"
-        android:layout_height="35dp"
+        android:layout_height="wrap_content"
         android:gravity="center"
-        android:text="جستجوی موسیقی"
+        android:text="جستجوی موسیقی در وب"
         android:textColor="@color/muted"
-        android:textSize="13sp"/>
+        android:textSize="14sp"
+        android:paddingBottom="18dp"/>
+
+    <!-- Search -->
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="55dp"
+        android:layout_height="58dp"
         android:gravity="center_vertical"
         android:background="@drawable/bg_search"
-        android:paddingStart="12dp"
-        android:paddingEnd="5dp">
+        android:paddingStart="14dp"
+        android:paddingEnd="6dp">
+
+        <TextView
+            android:layout_width="28dp"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="⌕"
+            android:textColor="@color/muted"
+            android:textSize="25sp"/>
 
         <EditText
             android:id="@+id/query"
@@ -66,8 +81,8 @@
             android:layout_height="match_parent"
             android:layout_weight="1"
             android:background="@android:color/transparent"
-            android:hint="مثلاً چنگیز چاوشی"
-            android:textColorHint="@color/muted"
+            android:hint="نام آهنگ، خواننده یا بخشی از متن..."
+            android:hintTextColor="@color/muted"
             android:textColor="@color/white"
             android:textSize="14sp"
             android:singleLine="true"
@@ -76,23 +91,24 @@
         <TextView
             android:id="@+id/search"
             android:layout_width="54dp"
-            android:layout_height="46dp"
+            android:layout_height="48dp"
             android:gravity="center"
             android:background="@drawable/bg_button"
             android:text="⌕"
             android:textColor="@color/white"
-            android:textSize="22sp"/>
+            android:textSize="21sp"/>
 
     </LinearLayout>
 
     <TextView
         android:id="@+id/status"
         android:layout_width="match_parent"
-        android:layout_height="38dp"
-        android:gravity="center_vertical"
+        android:layout_height="wrap_content"
         android:text="نام آهنگ را جستجو کنید"
         android:textColor="@color/muted"
-        android:textSize="12sp"/>
+        android:textSize="12sp"
+        android:paddingTop="12dp"
+        android:paddingBottom="8dp"/>
 
     <ProgressBar
         android:id="@+id/loading"
@@ -101,160 +117,168 @@
         android:layout_gravity="center"
         android:visibility="gone"/>
 
+    <!-- Hidden WebView -->
+
     <WebView
         android:id="@+id/web"
         android:layout_width="1dp"
         android:layout_height="1dp"
-        android:visibility="invisible"/>
+        android:visibility="gone"/>
+
+    <!-- Now Playing -->
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:gravity="center"
-        android:padding="20dp">
-
-        <TextView
-            android:text="♫"
-            android:textColor="@color/purple"
-            android:textSize="60sp"
-            android:gravity="center"
-            android:layout_width="match_parent"
-            android:layout_height="90dp"/>
+        android:background="@drawable/bg_card"
+        android:padding="16dp">
 
         <TextView
             android:id="@+id/titleText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="Music Finder"
+            android:text="هنوز آهنگی پخش نمی‌شود"
             android:textColor="@color/white"
-            android:textSize="20sp"
-            android:textStyle="bold"
-            android:maxLines="1"
-            android:ellipsize="end"/>
+            android:textSize="16sp"
+            android:textStyle="bold"/>
 
         <TextView
             android:id="@+id/artistText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center"
-            android:text="برای شروع جستجو کنید"
+            android:text="Music Finder"
             android:textColor="@color/muted"
-            android:textSize="13sp"
-            android:paddingTop="8dp"/>
+            android:textSize="12sp"
+            android:paddingTop="4dp"/>
 
-    </LinearLayout>
+        <!-- Progress -->
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="35dp"
-        android:gravity="center_vertical">
-
-        <TextView
-            android:id="@+id/currentTime"
-            android:layout_width="42dp"
-            android:layout_height="match_parent"
-            android:gravity="center"
-            android:text="0:00"
-            android:textColor="@color/muted"
-            android:textSize="10sp"/>
-
-        <SeekBar
-            android:id="@+id/progress"
-            android:layout_width="0dp"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:max="100"/>
+            android:gravity="center_vertical"
+            android:paddingTop="12dp">
 
-        <TextView
-            android:id="@+id/duration"
-            android:layout_width="42dp"
-            android:layout_height="match_parent"
+            <TextView
+                android:id="@+id/currentTime"
+                android:layout_width="40dp"
+                android:layout_height="wrap_content"
+                android:text="0:00"
+                android:textColor="@color/muted"
+                android:textSize="10sp"/>
+
+            <SeekBar
+                android:id="@+id/progress"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"/>
+
+            <TextView
+                android:id="@+id/duration"
+                android:layout_width="40dp"
+                android:layout_height="wrap_content"
+                android:gravity="end"
+                android:text="0:00"
+                android:textColor="@color/muted"
+                android:textSize="10sp"/>
+
+        </LinearLayout>
+
+        <!-- Player controls -->
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="58dp"
             android:gravity="center"
-            android:text="0:00"
-            android:textColor="@color/muted"
-            android:textSize="10sp"/>
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/previousButton"
+                android:layout_width="55dp"
+                android:layout_height="50dp"
+                android:gravity="center"
+                android:text="|◀"
+                android:textColor="@color/white"
+                android:textSize="20sp"/>
+
+            <TextView
+                android:id="@+id/playButton"
+                android:layout_width="65dp"
+                android:layout_height="50dp"
+                android:gravity="center"
+                android:background="@drawable/bg_button"
+                android:text="▶"
+                android:textColor="@color/white"
+                android:textSize="22sp"/>
+
+            <TextView
+                android:id="@+id/nextButton"
+                android:layout_width="55dp"
+                android:layout_height="50dp"
+                android:gravity="center"
+                android:text="▶|"
+                android:textColor="@color/white"
+                android:textSize="20sp"/>
+
+            <!-- Download -->
+
+            <TextView
+                android:id="@+id/downloadButton"
+                android:layout_width="55dp"
+                android:layout_height="50dp"
+                android:gravity="center"
+                android:text="⬇"
+                android:textColor="@color/white"
+                android:textSize="22sp"/>
+
+        </LinearLayout>
 
     </LinearLayout>
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="65dp"
-        android:gravity="center">
-
-        <TextView
-            android:id="@+id/previousButton"
-            android:layout_width="60dp"
-            android:layout_height="55dp"
-            android:gravity="center"
-            android:text="⏮"
-            android:textColor="@color/white"
-            android:textSize="24sp"/>
-
-        <TextView
-            android:id="@+id/playButton"
-            android:layout_width="62dp"
-            android:layout_height="62dp"
-            android:gravity="center"
-            android:text="▶"
-            android:textColor="@color/white"
-            android:textSize="23sp"
-            android:background="@drawable/bg_button"/>
-
-        <TextView
-            android:id="@+id/nextButton"
-            android:layout_width="60dp"
-            android:layout_height="55dp"
-            android:gravity="center"
-            android:text="⏭"
-            android:textColor="@color/white"
-            android:textSize="24sp"/>
-
-    </LinearLayout>
+    <!-- Bottom navigation -->
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="52dp"
+        android:layout_height="58dp"
         android:gravity="center"
         android:weightSum="4">
 
         <TextView
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:gravity="center"
             android:text="⌕&#10;جستجو"
             android:textColor="@color/purple"
-            android:textSize="10sp"/>
-
-        <TextView
+            android:gravity="center"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
-            android:gravity="center"
+            android:textSize="11sp"/>
+
+        <TextView
             android:text="▣&#10;کتابخانه"
             android:textColor="@color/muted"
-            android:textSize="10sp"/>
-
-        <TextView
+            android:gravity="center"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
-            android:gravity="center"
-            android:text="♫&#10;پخش"
+            android:textSize="11sp"/>
+
+        <TextView
+            android:text="♫&#10;در حال پخش"
             android:textColor="@color/muted"
-            android:textSize="10sp"/>
-
-        <TextView
+            android:gravity="center"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
-            android:gravity="center"
+            android:textSize="11sp"/>
+
+        <TextView
             android:text="⚙&#10;تنظیمات"
             android:textColor="@color/muted"
-            android:textSize="10sp"/>
+            android:gravity="center"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:textSize="11sp"/>
 
     </LinearLayout>
 
