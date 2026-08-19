@@ -76,7 +76,7 @@
             android:layout_weight="1"
             android:background="@android:color/transparent"
             android:hint="نام آهنگ یا خواننده..."
-            android:hintTextColor="@color/muted"
+            android:textColorHint="@color/muted"
             android:textColor="@color/white"
             android:textSize="14sp"
             android:singleLine="true"
