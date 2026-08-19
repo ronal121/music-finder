@@ -2,13 +2,16 @@ package com.kafshar.musicfinder
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.graphics.Color
 import android.os.Bundle
 import android.view.inputmethod.EditorInfo
-import android.webkit.*
-import android.widget.*
-import android.graphics.Color
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Button
+import android.widget.EditText
+import android.widget.TextView
+import android.widget.Toast
 import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import java.net.URLEncoder
@@ -22,7 +25,6 @@ class MainActivity : Activity() {
     private lateinit var playButton: TextView
 
     private var player: ExoPlayer? = null
-    private var currentUrl: String? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,7 +61,7 @@ class MainActivity : Activity() {
 
             override fun shouldOverrideUrlLoading(
                 view: WebView,
-                request: WebResourceRequest
+                url: String
             ): Boolean {
                 return false
             }
@@ -69,10 +71,6 @@ class MainActivity : Activity() {
                 url: String
             ) {
                 status.text = "صفحه آماده است"
-
-                if (!isGoogle(url)) {
-                    findPublicAudio()
-                }
             }
         }
 
@@ -81,6 +79,7 @@ class MainActivity : Activity() {
         }
 
         query.setOnEditorActionListener { _, actionId, _ ->
+
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
                 searchMusic()
                 true
@@ -90,7 +89,7 @@ class MainActivity : Activity() {
         }
 
         playButton.setOnClickListener {
-            togglePlayer()
+            togglePlayback()
         }
 
         menu.setOnClickListener {
@@ -104,7 +103,7 @@ class MainActivity : Activity() {
         filter.setOnClickListener {
             Toast.makeText(
                 this,
-                "جستجو در منابع موسیقی",
+                "منابع موسیقی فعال هستند",
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -126,15 +125,16 @@ class MainActivity : Activity() {
         }
 
         player?.stop()
-        currentUrl = null
 
         playButton.text = "▶"
         nowPlaying.text = "در حال جستجو..."
-        status.text = "در حال پیدا کردن بهترین نتیجه..."
+        status.text = "در حال پیدا کردن نتیجه..."
 
         val searchQuery =
-            "$text site:rozmusic.com OR site:mybia2music.com " +
-            "OR site:musicdel.ir OR site:musics-fa.com"
+            "$text site:rozmusic.com OR " +
+            "site:mybia2music.com OR " +
+            "site:musicdel.ir OR " +
+            "site:musics-fa.com"
 
         val url =
             "https://www.google.com/search?q=" +
@@ -143,168 +143,81 @@ class MainActivity : Activity() {
         web.loadUrl(url)
     }
 
-    private fun findPublicAudio() {
+    private fun togglePlayback() {
 
-        web.evaluateJavascript(
-            """
-            (function() {
+        val currentPlayer = player
 
-                var list = [];
-
-                var elements =
-                    document.querySelectorAll(
-                        'audio, audio source, video, video source'
-                    );
-
-                for (var i = 0; i < elements.length; i++) {
-
-                    var u =
-                        elements[i].currentSrc ||
-                        elements[i].src ||
-                        elements[i].getAttribute('src');
-
-                    if (u) {
-                        list.push(u);
-                    }
-                }
-
-                return JSON.stringify(list);
-
-            })();
-            """.trimIndent()
-        ) { result ->
-
-            val urls = extractUrls(result)
-
-            val audio =
-                urls.firstOrNull {
-                    isSupportedAudio(it)
-                }
-
-            if (audio != null) {
-
-                currentUrl = audio
-
-                playAudio(
-                    audio,
-                    query.text.toString()
-                )
-
-            } else {
-
-                status.text =
-                    "این صفحه فایل صوتی قابل پخش داخلی ارائه نکرده است"
-            }
-        }
-    }
-
-    private fun extractUrls(data: String): List<String> {
-
-        return Regex(
-            """https?://[^"\\\s,\]]+"""
-        )
-            .findAll(data)
-            .map {
-                it.value
-                    .replace("\\/", "/")
-                    .replace("\\u0026", "&")
-            }
-            .toList()
-    }
-
-    private fun isSupportedAudio(url: String): Boolean {
-
-        val u = url.lowercase()
-
-        return u.contains(".mp3") ||
-                u.contains(".m4a") ||
-                u.contains(".aac") ||
-                u.contains(".ogg") ||
-                u.contains(".wav") ||
-                u.contains(".flac") ||
-                u.contains(".m3u8")
-    }
-
-    private fun playAudio(
-        url: String,
-        title: String
-    ) {
-
-        try {
-
-            player?.release()
-
-            player =
-                ExoPlayer.Builder(this).build()
-
-            player?.setMediaItem(
-                MediaItem.fromUri(url)
-            )
-
-            player?.addListener(
-                object : Player.Listener {
-
-                    override fun onIsPlayingChanged(
-                        isPlaying: Boolean
-                    ) {
-
-                        playButton.text =
-                            if (isPlaying) "❚❚"
-                            else "▶"
-                    }
-
-                    override fun onPlayerError(
-                        error: PlaybackException
-                    ) {
-
-                        status.text =
-                            "پخش این فایل ممکن نیست"
-
-                        playButton.text = "▶"
-                    }
-                }
-            )
-
-            player?.prepare()
-            player?.play()
-
-            nowPlaying.text =
-                "در حال پخش: $title"
-
-            status.text =
-                "✓ پخش شروع شد"
-
-        } catch (e: Exception) {
-
-            status.text =
-                "خطا در پخش فایل"
-        }
-    }
-
-    private fun togglePlayer() {
-
-        val p = player
-
-        if (p == null) {
-
+        if (currentPlayer == null) {
             Toast.makeText(
                 this,
-                "ابتدا یک آهنگ جستجو کنید",
+                "ابتدا یک آهنگ انتخاب کنید",
                 Toast.LENGTH_SHORT
             ).show()
-
             return
         }
 
-        if (p.isPlaying) {
-            p.pause()
+        if (currentPlayer.isPlaying) {
+            currentPlayer.pause()
+            playButton.text = "▶"
         } else {
-            p.play()
+            currentPlayer.play()
+            playButton.text = "❚❚"
         }
     }
 
-    private fun isGoogle(url: String): Boolean {
-        return url.contains("google.com")
+    private fun playAudio(
+        audioUrl: String,
+        title: String
+    ) {
+
+        player?.release()
+
+        player = ExoPlayer.Builder(this).build()
+
+        val mediaItem =
+            MediaItem.fromUri(audioUrl)
+
+        player?.setMediaItem(mediaItem)
+
+        player?.addListener(
+            object : Player.Listener {
+
+                override fun onIsPlayingChanged(
+                    isPlaying: Boolean
+                ) {
+
+                    playButton.text =
+                        if (isPlaying) {
+                            "❚❚"
+                        } else {
+                            "▶"
+                        }
+                }
+
+                override fun onPlaybackStateChanged(
+                    playbackState: Int
+                ) {
+
+                    if (
+                        playbackState ==
+                        Player.STATE_ENDED
+                    ) {
+                        playButton.text = "▶"
+                    }
+                }
+            }
+        )
+
+        player?.prepare()
+        player?.play()
+
+        nowPlaying.text =
+            "در حال پخش: $title"
+
+        status.text =
+            "✓ پخش شروع شد"
+
+        playButton.text = "❚❚"
     }
 
     override fun onDestroy() {
