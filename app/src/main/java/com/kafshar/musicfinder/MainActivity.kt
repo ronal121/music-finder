@@ -20,7 +20,6 @@ import java.util.Locale
 class MainActivity : Activity() {
 
     private lateinit var web: WebView
-
     private lateinit var query: EditText
     private lateinit var status: TextView
 
@@ -34,11 +33,9 @@ class MainActivity : Activity() {
     private lateinit var seekBar: SeekBar
     private lateinit var currentTime: TextView
     private lateinit var durationText: TextView
-
     private lateinit var loading: ProgressBar
 
     private val results = ArrayList<SearchResult>()
-
     private var currentIndex = -1
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -48,7 +45,6 @@ class MainActivity : Activity() {
         setContentView(R.layout.activity_main)
 
         web = findViewById(R.id.web)
-
         query = findViewById(R.id.query)
         status = findViewById(R.id.status)
 
@@ -62,7 +58,6 @@ class MainActivity : Activity() {
         seekBar = findViewById(R.id.progress)
         currentTime = findViewById(R.id.currentTime)
         durationText = findViewById(R.id.duration)
-
         loading = findViewById(R.id.loading)
 
         setupWebView()
@@ -109,11 +104,10 @@ class MainActivity : Activity() {
                 view: WebView,
                 url: String
             ) {
+
                 if (url.contains("google.com/search")) {
                     inspectGoogleResults()
-                } else if (
-                    !url.contains("google.com")
-                ) {
+                } else if (!url.contains("google.com")) {
                     inspectMusicPage()
                 }
             }
@@ -128,9 +122,7 @@ class MainActivity : Activity() {
 
         query.setOnEditorActionListener { _, actionId, _ ->
 
-            if (
-                actionId == EditorInfo.IME_ACTION_SEARCH
-            ) {
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
                 searchMusic()
                 true
             } else {
@@ -194,8 +186,7 @@ class MainActivity : Activity() {
 
     private fun searchMusic() {
 
-        val text =
-            query.text.toString().trim()
+        val text = query.text.toString().trim()
 
         if (text.isEmpty()) {
 
@@ -217,7 +208,6 @@ class MainActivity : Activity() {
         currentTime.text = "0:00"
         durationText.text = "0:00"
         seekBar.progress = 0
-
         playButton.text = "▶"
 
         loading.visibility = View.VISIBLE
@@ -367,8 +357,7 @@ class MainActivity : Activity() {
         result: SearchResult
     ) {
 
-        loading.visibility =
-            View.VISIBLE
+        loading.visibility = View.VISIBLE
 
         status.text =
             "در حال آماده‌سازی آهنگ..."
@@ -463,16 +452,14 @@ class MainActivity : Activity() {
 
         if (results.isEmpty()) return
 
-        if (
-            currentIndex <
-            results.size - 1
-        ) {
+        if (currentIndex < results.size - 1) {
 
             currentIndex++
 
             openResult(
                 results[currentIndex]
             )
+
         } else {
 
             status.text =
@@ -536,7 +523,6 @@ class MainActivity : Activity() {
         val knownArtists =
             listOf(
                 "محسن چاوشی",
-                "محسن چاوشی",
                 "چاوشی"
             )
 
@@ -558,9 +544,7 @@ class MainActivity : Activity() {
     inner class MusicBridge {
 
         @JavascriptInterface
-        fun results(
-            data: String
-        ) {
+        fun results(data: String) {
 
             runOnUiThread {
 
@@ -568,21 +552,15 @@ class MainActivity : Activity() {
                     data.split("###")
 
                 if (items.isEmpty()) {
-
                     notFound()
-
                     return@runOnUiThread
                 }
 
                 val first =
                     items.firstOrNull()
 
-                if (
-                    first.isNullOrBlank()
-                ) {
-
+                if (first.isNullOrBlank()) {
                     notFound()
-
                     return@runOnUiThread
                 }
 
@@ -595,10 +573,8 @@ class MainActivity : Activity() {
                         ?: ""
 
                 if (url.isBlank()) {
-
                     notFound()
-
-                    return@runUiThreadSafe
+                    return@runOnUiThread
                 }
 
                 val result =
@@ -628,18 +604,14 @@ class MainActivity : Activity() {
             runOnUiThread {
 
                 if (audioUrl.isBlank()) {
-
                     notFound()
-
                     return@runOnUiThread
                 }
 
                 val result =
                     SearchResult(
                         title =
-                            extractTitle(
-                                pageTitle
-                            ),
+                            extractTitle(pageTitle),
                         artist =
                             extractArtist(
                                 pageTitle,
@@ -649,9 +621,7 @@ class MainActivity : Activity() {
                             web.url ?: ""
                     )
 
-                if (
-                    results.isEmpty()
-                ) {
+                if (results.isEmpty()) {
                     results.add(result)
                     currentIndex = 0
                 }
@@ -710,10 +680,7 @@ class MainActivity : Activity() {
                                 100
                             )
                             .toInt()
-                            .coerceIn(
-                                0,
-                                100
-                            )
+                            .coerceIn(0, 100)
                 }
 
                 playButton.text =
@@ -727,7 +694,6 @@ class MainActivity : Activity() {
                     total > 0 &&
                     current >= total - 0.5
                 ) {
-
                     nextSong()
                 }
             }
@@ -741,10 +707,6 @@ class MainActivity : Activity() {
 
         status.text =
             "نتیجه‌ای پیدا نشد"
-    }
-
-    private fun runUiThreadSafe() {
-        notFound()
     }
 
     override fun onDestroy() {
