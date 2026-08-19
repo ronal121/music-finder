@@ -1,182 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="@color/bg"
-    android:paddingStart="16dp"
-    android:paddingEnd="16dp">
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="58dp"
-        android:gravity="center_vertical">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-        <TextView
-            android:id="@+id/menu"
-            android:layout_width="42dp"
-            android:layout_height="42dp"
-            android:gravity="center"
-            android:text="☰"
-            android:textColor="@color/white"
-            android:textSize="23sp"/>
+    <uses-permission android:name="android.permission.INTERNET" />
 
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:text="Music Finder"
-            android:textColor="@color/white"
-            android:textSize="21sp"
-            android:textStyle="bold"/>
+    <application
+        android:allowBackup="true"
+        android:label="Music Finder"
+        android:theme="@style/Theme.MusicFinder"
+        android:usesCleartextTraffic="true">
 
-        <TextView
-            android:id="@+id/filter"
-            android:layout_width="42dp"
-            android:layout_height="42dp"
-            android:gravity="center"
-            android:text="⋮"
-            android:textColor="@color/white"
-            android:textSize="25sp"/>
-    </LinearLayout>
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="portrait">
 
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center"
-        android:text="جستجوی سریع موسیقی"
-        android:textColor="@color/muted"
-        android:textSize="13sp"
-        android:paddingBottom="12dp"/>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:gravity="center_vertical"
-        android:background="@drawable/bg_search"
-        android:paddingStart="12dp"
-        android:paddingEnd="5dp">
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
 
-        <EditText
-            android:id="@+id/query"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:background="@android:color/transparent"
-            android:hint="مثلاً چاوشی چنگیز"
-            android:textColorHint="@color/muted"
-            android:textColor="@color/white"
-            android:textSize="14sp"
-            android:singleLine="true"
-            android:imeOptions="actionSearch"/>
+        </activity>
 
-        <Button
-            android:id="@+id/search"
-            android:layout_width="55dp"
-            android:layout_height="48dp"
-            android:background="@drawable/bg_button"
-            android:text="⌕"
-            android:textColor="@color/white"
-            android:textSize="21sp"/>
-    </LinearLayout>
+    </application>
 
-    <TextView
-        android:id="@+id/status"
-        android:layout_width="match_parent"
-        android:layout_height="40dp"
-        android:gravity="center_vertical"
-        android:text="نام آهنگ را جستجو کنید"
-        android:textColor="@color/muted"
-        android:textSize="12sp"/>
-
-    <WebView
-        android:id="@+id/web"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:background="@color/bg"/>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="76dp"
-        android:gravity="center_vertical"
-        android:background="@drawable/bg_card"
-        android:paddingStart="12dp"
-        android:paddingEnd="8dp">
-
-        <TextView
-            android:layout_width="40dp"
-            android:layout_height="48dp"
-            android:gravity="center"
-            android:text="♫"
-            android:textColor="@color/purple"
-            android:textSize="25sp"/>
-
-        <TextView
-            android:id="@+id/nowPlaying"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:gravity="center_vertical"
-            android:text="هنوز چیزی پخش نمی‌شود"
-            android:textColor="@color/white"
-            android:textSize="13sp"
-            android:maxLines="2"
-            android:ellipsize="end"/>
-
-        <TextView
-            android:id="@+id/playButton"
-            android:layout_width="52dp"
-            android:layout_height="52dp"
-            android:gravity="center"
-            android:text="▶"
-            android:textColor="@color/white"
-            android:textSize="20sp"
-            android:background="@drawable/bg_button"/>
-    </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="54dp"
-        android:gravity="center"
-        android:weightSum="4">
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:text="⌕&#10;جستجو"
-            android:textColor="@color/purple"
-            android:textSize="11sp"/>
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:text="▣&#10;کتابخانه"
-            android:textColor="@color/muted"
-            android:textSize="11sp"/>
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:text="♫&#10;در حال پخش"
-            android:textColor="@color/muted"
-            android:textSize="11sp"/>
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:text="⚙&#10;تنظیمات"
-            android:textColor="@color/muted"
-            android:textSize="11sp"/>
-    </LinearLayout>
-
-</LinearLayout>
+</manifest>
