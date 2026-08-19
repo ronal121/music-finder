@@ -5,15 +5,13 @@ import android.app.Activity
 import android.graphics.Color
 import android.os.Bundle
 import android.view.inputmethod.EditorInfo
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
 import java.net.URLEncoder
 
 class MainActivity : Activity() {
@@ -21,10 +19,6 @@ class MainActivity : Activity() {
     private lateinit var web: WebView
     private lateinit var query: EditText
     private lateinit var status: TextView
-    private lateinit var nowPlaying: TextView
-    private lateinit var playButton: TextView
-
-    private var player: ExoPlayer? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,8 +29,6 @@ class MainActivity : Activity() {
         web = findViewById(R.id.web)
         query = findViewById(R.id.query)
         status = findViewById(R.id.status)
-        nowPlaying = findViewById(R.id.nowPlaying)
-        playButton = findViewById(R.id.playButton)
 
         val search = findViewById<Button>(R.id.search)
         val menu = findViewById<TextView>(R.id.menu)
@@ -53,15 +45,16 @@ class MainActivity : Activity() {
             displayZoomControls = false
 
             userAgentString =
-                "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/128 Mobile Safari/537.36"
+                "Mozilla/5.0 (Linux; Android 12) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/128 Mobile Safari/537.36"
         }
 
         web.webViewClient = object : WebViewClient() {
 
             override fun shouldOverrideUrlLoading(
                 view: WebView,
-                url: String
+                request: WebResourceRequest
             ): Boolean {
                 return false
             }
@@ -86,10 +79,6 @@ class MainActivity : Activity() {
             } else {
                 false
             }
-        }
-
-        playButton.setOnClickListener {
-            togglePlayback()
         }
 
         menu.setOnClickListener {
@@ -124,11 +113,7 @@ class MainActivity : Activity() {
             return
         }
 
-        player?.stop()
-
-        playButton.text = "▶"
-        nowPlaying.text = "در حال جستجو..."
-        status.text = "در حال پیدا کردن نتیجه..."
+        status.text = "در حال جستجوی موسیقی..."
 
         val searchQuery =
             "$text site:rozmusic.com OR " +
@@ -136,98 +121,13 @@ class MainActivity : Activity() {
             "site:musicdel.ir OR " +
             "site:musics-fa.com"
 
+        val encoded =
+            URLEncoder.encode(searchQuery, "UTF-8")
+
         val url =
-            "https://www.google.com/search?q=" +
-                    URLEncoder.encode(searchQuery, "UTF-8")
+            "https://www.google.com/search?q=$encoded"
 
         web.loadUrl(url)
-    }
-
-    private fun togglePlayback() {
-
-        val currentPlayer = player
-
-        if (currentPlayer == null) {
-            Toast.makeText(
-                this,
-                "ابتدا یک آهنگ انتخاب کنید",
-                Toast.LENGTH_SHORT
-            ).show()
-            return
-        }
-
-        if (currentPlayer.isPlaying) {
-            currentPlayer.pause()
-            playButton.text = "▶"
-        } else {
-            currentPlayer.play()
-            playButton.text = "❚❚"
-        }
-    }
-
-    private fun playAudio(
-        audioUrl: String,
-        title: String
-    ) {
-
-        player?.release()
-
-        player = ExoPlayer.Builder(this).build()
-
-        val mediaItem =
-            MediaItem.fromUri(audioUrl)
-
-        player?.setMediaItem(mediaItem)
-
-        player?.addListener(
-            object : Player.Listener {
-
-                override fun onIsPlayingChanged(
-                    isPlaying: Boolean
-                ) {
-
-                    playButton.text =
-                        if (isPlaying) {
-                            "❚❚"
-                        } else {
-                            "▶"
-                        }
-                }
-
-                override fun onPlaybackStateChanged(
-                    playbackState: Int
-                ) {
-
-                    if (
-                        playbackState ==
-                        Player.STATE_ENDED
-                    ) {
-                        playButton.text = "▶"
-                    }
-                }
-            }
-        )
-
-        player?.prepare()
-        player?.play()
-
-        nowPlaying.text =
-            "در حال پخش: $title"
-
-        status.text =
-            "✓ پخش شروع شد"
-
-        playButton.text = "❚❚"
-    }
-
-    override fun onDestroy() {
-
-        player?.release()
-        player = null
-
-        web.destroy()
-
-        super.onDestroy()
     }
 
     override fun onBackPressed() {
@@ -237,5 +137,12 @@ class MainActivity : Activity() {
         } else {
             super.onBackPressed()
         }
+    }
+
+    override fun onDestroy() {
+
+        web.destroy()
+
+        super.onDestroy()
     }
 }
