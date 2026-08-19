@@ -9,14 +9,10 @@
     android:paddingStart="18dp"
     android:paddingEnd="18dp">
 
-    <!-- Header -->
-
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:paddingTop="16dp"
-        android:paddingBottom="8dp">
+        android:layout_height="60dp"
+        android:gravity="center_vertical">
 
         <TextView
             android:id="@+id/menu"
@@ -42,7 +38,7 @@
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:gravity="center"
-            android:text="≡"
+            android:text="⋮"
             android:textColor="@color/white"
             android:textSize="25sp"/>
 
@@ -52,12 +48,10 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center"
-        android:text="جستجوی موسیقی در وب"
+        android:text="جستجوی موسیقی"
         android:textColor="@color/muted"
         android:textSize="14sp"
         android:paddingBottom="18dp"/>
-
-    <!-- Search -->
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -81,7 +75,7 @@
             android:layout_height="match_parent"
             android:layout_weight="1"
             android:background="@android:color/transparent"
-            android:hint="نام آهنگ، خواننده یا بخشی از متن..."
+            android:hint="نام آهنگ یا خواننده..."
             android:hintTextColor="@color/muted"
             android:textColor="@color/white"
             android:textSize="14sp"
@@ -117,15 +111,11 @@
         android:layout_gravity="center"
         android:visibility="gone"/>
 
-    <!-- Hidden WebView -->
-
     <WebView
         android:id="@+id/web"
         android:layout_width="1dp"
         android:layout_height="1dp"
         android:visibility="gone"/>
-
-    <!-- Now Playing -->
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -140,7 +130,7 @@
             android:layout_height="wrap_content"
             android:text="هنوز آهنگی پخش نمی‌شود"
             android:textColor="@color/white"
-            android:textSize="16sp"
+            android:textSize="17sp"
             android:textStyle="bold"/>
 
         <TextView
@@ -150,9 +140,7 @@
             android:text="Music Finder"
             android:textColor="@color/muted"
             android:textSize="12sp"
-            android:paddingTop="4dp"/>
-
-        <!-- Progress -->
+            android:paddingTop="5dp"/>
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -185,11 +173,9 @@
 
         </LinearLayout>
 
-        <!-- Player controls -->
-
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="58dp"
+            android:layout_height="65dp"
             android:gravity="center"
             android:orientation="horizontal">
 
@@ -221,8 +207,6 @@
                 android:textColor="@color/white"
                 android:textSize="20sp"/>
 
-            <!-- Download -->
-
             <TextView
                 android:id="@+id/downloadButton"
                 android:layout_width="55dp"
@@ -236,7 +220,10 @@
 
     </LinearLayout>
 
-    <!-- Bottom navigation -->
+    <Space
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"/>
 
     <LinearLayout
         android:layout_width="match_parent"
