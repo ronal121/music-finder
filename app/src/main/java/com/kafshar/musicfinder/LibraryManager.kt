@@ -12,7 +12,7 @@ object LibraryManager {
     private const val KEY =
         "songs"
 
-    fun get(
+    fun getSongs(
         context: Context
     ): MutableList<SongResult> {
 
@@ -26,8 +26,7 @@ object LibraryManager {
             prefs.getString(
                 KEY,
                 "[]"
-            )
-                ?: "[]"
+            ) ?: "[]"
 
         val result =
             mutableListOf<SongResult>()
@@ -82,13 +81,13 @@ object LibraryManager {
         return result
     }
 
-    fun add(
+    fun saveSong(
         context: Context,
         song: SongResult
     ) {
 
         val list =
-            get(context)
+            getSongs(context)
 
         if (
             list.any {
@@ -98,29 +97,27 @@ object LibraryManager {
             return
         }
 
-        list.add(
-            song
-        )
+        list.add(song)
 
-        save(
+        saveSongs(
             context,
             list
         )
     }
 
-    fun remove(
+    fun removeSong(
         context: Context,
         song: SongResult
     ) {
 
         val list =
-            get(context)
+            getSongs(context)
 
         list.removeAll {
             it.url == song.url
         }
 
-        save(
+        saveSongs(
             context,
             list
         )
@@ -131,13 +128,13 @@ object LibraryManager {
         song: SongResult
     ): Boolean {
 
-        return get(context)
+        return getSongs(context)
             .any {
                 it.url == song.url
             }
     }
 
-    private fun save(
+    private fun saveSongs(
         context: Context,
         list: List<SongResult>
     ) {
@@ -145,34 +142,34 @@ object LibraryManager {
         val array =
             JSONArray()
 
-        list.forEach {
+        list.forEach { song ->
 
             val obj =
                 JSONObject()
 
             obj.put(
                 "url",
-                it.url
+                song.url
             )
 
             obj.put(
                 "title",
-                it.title
+                song.title
             )
 
             obj.put(
                 "artist",
-                it.artist
+                song.artist
             )
 
             obj.put(
                 "site",
-                it.site
+                song.site
             )
 
             obj.put(
                 "cover",
-                it.cover
+                song.cover
             )
 
             array.put(
@@ -191,5 +188,37 @@ object LibraryManager {
                 array.toString()
             )
             .apply()
+    }
+
+    // سازگاری با نسخه قبلی
+    fun get(
+        context: Context
+    ): MutableList<SongResult> {
+
+        return getSongs(context)
+    }
+
+    // سازگاری با نسخه قبلی
+    fun add(
+        context: Context,
+        song: SongResult
+    ) {
+
+        saveSong(
+            context,
+            song
+        )
+    }
+
+    // سازگاری با نسخه قبلی
+    fun remove(
+        context: Context,
+        song: SongResult
+    ) {
+
+        removeSong(
+            context,
+            song
+        )
     }
 }
