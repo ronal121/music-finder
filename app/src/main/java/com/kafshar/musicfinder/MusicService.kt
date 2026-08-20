@@ -3,6 +3,7 @@ package com.kafshar.musicfinder
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.Build
+import android.net.Uri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -11,6 +12,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import org.json.JSONArray
 
 class MusicService : MediaSessionService() {
 
@@ -55,8 +57,11 @@ class MusicService : MediaSessionService() {
 
     private lateinit var player: ExoPlayer
 
-    private var mediaSession:
-        MediaSession? = null
+    private var mediaSession: MediaSession? = null
+
+    private var currentArtist = ""
+
+    private var autoQueueBuilt = false
 
     override fun onCreate() {
 
@@ -75,6 +80,7 @@ class MusicService : MediaSessionService() {
                         .build(),
                     true
                 )
+                .setHandleAudioBecomingNoisy(true)
                 .build()
 
         mediaSession =
@@ -101,6 +107,14 @@ class MusicService : MediaSessionService() {
                     playbackState: Int
                 ) {
 
+                    if (
+                        playbackState ==
+                        Player.STATE_ENDED
+                    ) {
+
+                        playNextAutomatically()
+                    }
+
                     sendPlayerUpdate()
                 }
 
@@ -108,6 +122,24 @@ class MusicService : MediaSessionService() {
                     mediaItem: MediaItem?,
                     reason: Int
                 ) {
+
+                    if (
+                        mediaItem != null
+                    ) {
+
+                        val artist =
+                            mediaItem.mediaMetadata.artist
+                                ?.toString()
+                                ?: ""
+
+                        if (
+                            artist.isNotBlank()
+                        ) {
+
+                            currentArtist =
+                                artist
+                        }
+                    }
 
                     sendPlayerUpdate()
                 }
@@ -140,9 +172,7 @@ class MusicService : MediaSessionService() {
 
             ACTION_PLAY -> {
 
-                playUrl(
-                    intent
-                )
+                playUrl(intent)
             }
 
             ACTION_PAUSE -> {
@@ -176,9 +206,7 @@ class MusicService : MediaSessionService() {
                         0
                     )
 
-                seekPercent(
-                    percent
-                )
+                seekPercent(percent)
             }
 
             ACTION_GET_POSITION -> {
@@ -229,6 +257,195 @@ class MusicService : MediaSessionService() {
                 EXTRA_COVER
             ) ?: ""
 
+        currentArtist =
+            artist
+
+        autoQueueBuilt =
+            false
+
+        val queue =
+            buildRelatedQueue(
+                url,
+                title,
+                artist,
+                cover
+            )
+
+        if (
+            queue.isEmpty()
+        ) {
+
+            val item =
+                createMediaItem(
+                    url,
+                    title,
+                    artist,
+                    cover
+                )
+
+            player.setMediaItem(
+                item
+            )
+
+        } else {
+
+            player.setMediaItems(
+                queue,
+                0,
+                0L
+            )
+        }
+
+        player.prepare()
+
+        player.play()
+
+        autoQueueBuilt =
+            true
+
+        sendPlayerUpdate()
+    }
+
+    private fun buildRelatedQueue(
+        currentUrl: String,
+        currentTitle: String,
+        currentArtist: String,
+        currentCover: String
+    ): List<MediaItem> {
+
+        val result =
+            ArrayList<MediaItem>()
+
+        result.add(
+            createMediaItem(
+                currentUrl,
+                currentTitle,
+                currentArtist,
+                currentCover
+            )
+        )
+
+        val prefs =
+            getSharedPreferences(
+                "search_results",
+                MODE_PRIVATE
+            )
+
+        val data =
+            prefs.getString(
+                "songs",
+                ""
+            ) ?: ""
+
+        if (
+            data.isBlank()
+        ) {
+            return result
+        }
+
+        val candidates =
+            ArrayList<SongResult>()
+
+        data.split("\n")
+            .forEach { line ->
+
+                val parts =
+                    line.split("|||")
+
+                if (
+                    parts.size >= 5
+                ) {
+
+                    val song =
+                        SongResult(
+                            url = parts[0],
+                            title = parts[1],
+                            artist = parts[2],
+                            site = parts[3],
+                            cover = parts[4]
+                        )
+
+                    if (
+                        song.url.isNotBlank() &&
+                        song.url != currentUrl
+                    ) {
+
+                        candidates.add(
+                            song
+                        )
+                    }
+                }
+            }
+
+        if (
+            candidates.isEmpty()
+        ) {
+            return result
+        }
+
+        val artistWords =
+            currentArtist
+                .lowercase()
+                .split(
+                    Regex("[\\s,،\\-_|]+")
+                )
+                .filter {
+                    it.length >= 2
+                }
+
+        val sameArtist =
+            candidates.filter { song ->
+
+                val songArtist =
+                    song.artist.lowercase()
+
+                artistWords.any {
+                    word ->
+                    songArtist.contains(word)
+                }
+            }
+
+        val source =
+            if (
+                sameArtist.isNotEmpty()
+            )
+                sameArtist
+            else
+                candidates
+
+        val shuffled =
+            source.shuffled()
+
+        val selected =
+            shuffled.take(
+                minOf(
+                    25,
+                    shuffled.size
+                )
+            )
+
+        selected.forEach { song ->
+
+            result.add(
+                createMediaItem(
+                    song.url,
+                    song.title,
+                    song.artist,
+                    song.cover
+                )
+            )
+        }
+
+        return result
+    }
+
+    private fun createMediaItem(
+        url: String,
+        title: String,
+        artist: String,
+        cover: String
+    ): MediaItem {
+
         val metadata =
             MediaMetadata.Builder()
                 .setTitle(title)
@@ -240,28 +457,50 @@ class MusicService : MediaSessionService() {
                     ) {
 
                         setArtworkUri(
-                            android.net.Uri.parse(
-                                cover
-                            )
+                            Uri.parse(cover)
                         )
                     }
                 }
                 .build()
 
-        val item =
-            MediaItem.Builder()
-                .setUri(url)
-                .setMediaId(url)
-                .setMediaMetadata(metadata)
-                .build()
+        return MediaItem.Builder()
+            .setUri(url)
+            .setMediaId(url)
+            .setMediaMetadata(metadata)
+            .build()
+    }
 
-        player.setMediaItem(item)
+    private fun playNextAutomatically() {
 
-        player.prepare()
+        if (
+            player.mediaItemCount <= 1
+        ) {
+            return
+        }
 
-        player.play()
+        if (
+            player.hasNextMediaItem()
+        ) {
 
-        sendPlayerUpdate()
+            player.seekToNextMediaItem()
+
+            player.prepare()
+
+            player.play()
+
+            sendPlayerUpdate()
+
+        } else {
+
+            player.seekTo(
+                0,
+                0L
+            )
+
+            player.play()
+
+            sendPlayerUpdate()
+        }
     }
 
     private fun seekPercent(
@@ -288,7 +527,9 @@ class MusicService : MediaSessionService() {
             safe /
             100
 
-        player.seekTo(position)
+        player.seekTo(
+            position
+        )
 
         sendPlayerUpdate()
     }
@@ -316,6 +557,24 @@ class MusicService : MediaSessionService() {
                     "duration",
                     player.duration
                 )
+
+                putExtra(
+                    "title",
+                    player.currentMediaItem
+                        ?.mediaMetadata
+                        ?.title
+                        ?.toString()
+                        ?: ""
+                )
+
+                putExtra(
+                    "artist",
+                    player.currentMediaItem
+                        ?.mediaMetadata
+                        ?.artist
+                        ?.toString()
+                        ?: ""
+                )
             }
 
         sendBroadcast(intent)
@@ -328,7 +587,12 @@ class MusicService : MediaSessionService() {
             Intent(
                 this,
                 MainActivity::class.java
-            )
+            ).apply {
+
+                flags =
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
 
         return PendingIntent.getActivity(
             this,
@@ -350,6 +614,13 @@ class MusicService : MediaSessionService() {
     override fun onTaskRemoved(
         rootIntent: Intent?
     ) {
+
+        if (
+            player.isPlaying
+        ) {
+
+            player.play()
+        }
 
         super.onTaskRemoved(
             rootIntent
