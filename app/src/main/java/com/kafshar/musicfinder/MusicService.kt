@@ -41,159 +41,110 @@ class MusicService : MediaSessionService() {
         const val ACTION_GET_POSITION =
             "com.kafshar.musicfinder.GET_POSITION"
 
-        const val EXTRA_URL =
-            "url"
-
-        const val EXTRA_TITLE =
-            "title"
-
-        const val EXTRA_PERCENT =
-            "percent"
-
-        const val EXTRA_ARTIST =
-            "artist"
-
-        const val EXTRA_COVER =
-            "cover"
+        const val EXTRA_URL = "url"
+        const val EXTRA_TITLE = "title"
+        const val EXTRA_PERCENT = "percent"
+        const val EXTRA_ARTIST = "artist"
+        const val EXTRA_COVER = "cover"
 
         const val UPDATE =
             "com.kafshar.musicfinder.PLAYER_UPDATE"
-
-        const val EXTRA_ERROR =
-            "error"
-
-        const val EXTRA_ERROR_CODE =
-            "error_code"
     }
 
-    private var player: ExoPlayer? = null
+    private lateinit var player: ExoPlayer
 
     private var mediaSession: MediaSession? = null
 
-    @Volatile
-    private var destroyed = false
-
-    private val playerListener =
-        object : Player.Listener {
-
-            override fun onIsPlayingChanged(
-                isPlaying: Boolean
-            ) {
-                sendPlayerUpdate()
-            }
-
-            override fun onPlaybackStateChanged(
-                playbackState: Int
-            ) {
-                sendPlayerUpdate()
-            }
-
-            override fun onMediaItemTransition(
-                mediaItem: MediaItem?,
-                reason: Int
-            ) {
-
-                if (
-                    mediaItem != null &&
-                    reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
-                ) {
-                    saveToHistory(mediaItem)
-                }
-
-                sendPlayerUpdate()
-            }
-
-            override fun onPositionDiscontinuity(
-                oldPosition: Player.PositionInfo,
-                newPosition: Player.PositionInfo,
-                reason: Int
-            ) {
-                sendPlayerUpdate()
-            }
-
-            override fun onPlayerError(
-                error: PlaybackException
-            ) {
-
-                sendPlayerError(error)
-
-                /*
-                 * مهم:
-                 * خطای ExoPlayer نباید باعث Crash برنامه شود.
-                 *
-                 * فقط پخش متوقف می‌شود.
-                 * خود Service زنده می‌ماند تا کاربر بتواند
-                 * آهنگ دیگری انتخاب کند.
-                 */
-                try {
-                    player?.pause()
-                } catch (_: Exception) {
-                }
-
-                sendPlayerUpdate()
-            }
-        }
+    private var released = false
 
     override fun onCreate() {
 
         super.onCreate()
 
-        destroyed = false
+        released = false
 
-        try {
-
-            val newPlayer =
-                ExoPlayer.Builder(this)
-                    .setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setContentType(
-                                C.AUDIO_CONTENT_TYPE_MUSIC
-                            )
-                            .setUsage(
-                                C.USAGE_MEDIA
-                            )
-                            .build(),
-                        true
-                    )
-                    .setHandleAudioBecomingNoisy(
-                        true
-                    )
-                    .build()
-
-            player =
-                newPlayer
-
-            newPlayer.addListener(
-                playerListener
-            )
-
-            mediaSession =
-                MediaSession.Builder(
-                    this,
-                    newPlayer
+        player =
+            ExoPlayer.Builder(this)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setContentType(
+                            C.AUDIO_CONTENT_TYPE_MUSIC
+                        )
+                        .setUsage(
+                            C.USAGE_MEDIA
+                        )
+                        .build(),
+                    true
                 )
-                    .setSessionActivity(
-                        createOpenAppPendingIntent()
-                    )
-                    .build()
+                .setHandleAudioBecomingNoisy(
+                    true
+                )
+                .setPauseAtEndOfMediaItems(
+                    false
+                )
+                .build()
 
-        } catch (e: Exception) {
+        mediaSession =
+            MediaSession.Builder(
+                this,
+                player
+            )
+                .setSessionActivity(
+                    createOpenAppPendingIntent()
+                )
+                .build()
 
-            /*
-             * اگر ساخت Player یا MediaSession به هر دلیل
-             * شکست خورد، اجازه نمی‌دهیم Exception از Service
-             * خارج شود.
-             */
+        player.addListener(
+            object : Player.Listener {
 
-            mediaSession = null
+                override fun onIsPlayingChanged(
+                    isPlaying: Boolean
+                ) {
+                    safeSendUpdate()
+                }
 
-            try {
-                player?.release()
-            } catch (_: Exception) {
+                override fun onPlaybackStateChanged(
+                    playbackState: Int
+                ) {
+                    safeSendUpdate()
+                }
+
+                override fun onMediaItemTransition(
+                    mediaItem: MediaItem?,
+                    reason: Int
+                ) {
+
+                    if (
+                        mediaItem != null
+                    ) {
+                        saveToHistory(
+                            mediaItem
+                        )
+                    }
+
+                    safeSendUpdate()
+                }
+
+                override fun onPositionDiscontinuity(
+                    oldPosition:
+                        Player.PositionInfo,
+                    newPosition:
+                        Player.PositionInfo,
+                    reason: Int
+                ) {
+                    safeSendUpdate()
+                }
+
+                override fun onPlayerError(
+                    error: PlaybackException
+                ) {
+
+                    player.pause()
+
+                    safeSendUpdate()
+                }
             }
-
-            player = null
-        }
+        )
     }
 
     override fun onStartCommand(
@@ -203,8 +154,8 @@ class MusicService : MediaSessionService() {
     ): Int {
 
         if (
-            destroyed ||
-            player == null
+            released ||
+            !::player.isInitialized
         ) {
             return START_NOT_STICKY
         }
@@ -214,29 +165,46 @@ class MusicService : MediaSessionService() {
             when (intent?.action) {
 
                 ACTION_PLAY -> {
-
-                    playUrl(
-                        intent
-                    )
+                    playUrl(intent)
                 }
 
                 ACTION_PAUSE -> {
-
-                    safePause()
+                    player.pause()
+                    safeSendUpdate()
                 }
 
                 ACTION_TOGGLE -> {
 
-                    togglePlayback()
+                    if (
+                        player.currentMediaItem ==
+                        null
+                    ) {
+                        val url =
+                            intent.getStringExtra(
+                                EXTRA_URL
+                            )
+
+                        if (!url.isNullOrBlank()) {
+                            playUrl(intent)
+                        }
+
+                    } else {
+
+                        if (player.isPlaying) {
+                            player.pause()
+                        } else {
+                            player.play()
+                        }
+
+                        safeSendUpdate()
+                    }
                 }
 
                 ACTION_NEXT -> {
-
                     next()
                 }
 
                 ACTION_PREVIOUS -> {
-
                     previous()
                 }
 
@@ -248,49 +216,27 @@ class MusicService : MediaSessionService() {
                             0
                         )
 
-                    seekPercent(
-                        percent
-                    )
+                    seekPercent(percent)
                 }
 
                 ACTION_GET_POSITION -> {
-
-                    /*
-                     * فقط وضعیت Player را برگردان.
-                     *
-                     * این اکشن نباید Player جدید بسازد،
-                     * آهنگ را دوباره prepare کند یا
-                     * Service را restart کند.
-                     */
-                    sendPlayerUpdate()
+                    safeSendUpdate()
                 }
 
                 ACTION_STOP -> {
 
-                    stopPlaybackAndService()
+                    player.stop()
+                    safeSendUpdate()
+
+                    stopSelf()
                 }
             }
 
-        } catch (e: Exception) {
+        } catch (_: Exception) {
 
-            /*
-             * هیچ فرمانی از Activity نباید باعث
-             * Force Close شدن Service شود.
-             */
-
-            sendServiceError(
-                e.message
-                    ?: "خطای ناشناخته در پخش"
-            )
+            safeSendUpdate()
         }
 
-        /*
-         * START_NOT_STICKY:
-         *
-         * اگر Android Service را به دلیل کمبود منابع
-         * از بین برد، نباید با Intent قدیمی دوباره
-         * یک آهنگ را ناخواسته اجرا کند.
-         */
         return START_NOT_STICKY
     }
 
@@ -305,24 +251,10 @@ class MusicService : MediaSessionService() {
                 ?.trim()
 
         if (
-            url.isNullOrBlank()
-        ) {
-
-            sendServiceError(
-                "آدرس آهنگ معتبر نیست"
-            )
-
-            return
-        }
-
-        if (
+            url.isNullOrBlank() ||
             !isValidMediaUrl(url)
         ) {
-
-            sendServiceError(
-                "آدرس پخش معتبر نیست"
-            )
-
+            safeSendUpdate()
             return
         }
 
@@ -355,48 +287,27 @@ class MusicService : MediaSessionService() {
 
         val current =
             createMediaItem(
-                url = url,
-                title = title,
-                artist = artist,
-                cover = cover
+                url,
+                title,
+                artist,
+                cover
             )
-                ?: run {
 
-                    sendServiceError(
-                        "ساخت آهنگ امکان‌پذیر نیست"
-                    )
-
-                    return
-                }
+        val queue =
+            buildRelatedQueue(
+                url,
+                title,
+                artist,
+                cover
+            )
 
         try {
 
-            val currentPlayer =
-                player
-                    ?: return
+            player.stop()
 
-            /*
-             * قبل از تعویض آهنگ، Queue قبلی کاملاً
-             * جایگزین می‌شود.
-             *
-             * این کار از باقی ماندن آهنگ‌های قبلی
-             * جلوگیری می‌کند.
-             */
-            val queue =
-                buildRelatedQueue(
-                    currentUrl = url,
-                    currentTitle = title,
-                    currentArtist = artist,
-                    currentCover = cover
-                )
+            if (queue.size > 1) {
 
-            currentPlayer.stop()
-
-            if (
-                queue.size > 1
-            ) {
-
-                currentPlayer.setMediaItems(
+                player.setMediaItems(
                     queue,
                     0,
                     0L
@@ -404,186 +315,80 @@ class MusicService : MediaSessionService() {
 
             } else {
 
-                currentPlayer.setMediaItem(
+                player.setMediaItem(
                     current
                 )
             }
 
-            currentPlayer.prepare()
+            player.prepare()
+            player.play()
 
-            currentPlayer.play()
+            saveToHistory(current)
 
-            saveToHistory(
-                current
-            )
+            safeSendUpdate()
 
-            sendPlayerUpdate()
+        } catch (_: Exception) {
 
-        } catch (e: Exception) {
-
-            sendServiceError(
-                e.message
-                    ?: "پخش آهنگ ناموفق بود"
-            )
-
-            try {
-                player?.stop()
-            } catch (_: Exception) {
-            }
-
-            sendPlayerUpdate()
-        }
-    }
-
-    private fun togglePlayback() {
-
-        val currentPlayer =
-            player
-                ?: return
-
-        try {
-
-            if (
-                currentPlayer.currentMediaItem == null
-            ) {
-                return
-            }
-
-            if (
-                currentPlayer.isPlaying
-            ) {
-
-                currentPlayer.pause()
-
-            } else {
-
-                /*
-                 * اگر Player در حالت ENDED باشد،
-                 * play() به‌تنهایی همیشه رفتار موردنظر
-                 * را ایجاد نمی‌کند.
-                 */
-                if (
-                    currentPlayer.playbackState ==
-                    Player.STATE_ENDED
-                ) {
-
-                    currentPlayer.seekTo(
-                        0
-                    )
-                }
-
-                currentPlayer.play()
-            }
-
-            sendPlayerUpdate()
-
-        } catch (e: Exception) {
-
-            sendServiceError(
-                e.message
-                    ?: "تغییر وضعیت پخش ناموفق بود"
-            )
-        }
-    }
-
-    private fun safePause() {
-
-        try {
-
-            player?.pause()
-
-            sendPlayerUpdate()
-
-        } catch (e: Exception) {
-
-            sendServiceError(
-                e.message
-                    ?: "توقف پخش ناموفق بود"
-            )
+            player.stop()
+            safeSendUpdate()
         }
     }
 
     private fun next() {
 
-        val currentPlayer =
-            player
-                ?: return
-
         try {
 
             if (
-                currentPlayer.currentMediaItem == null
-            ) {
-                return
-            }
-
-            if (
-                currentPlayer.hasNextMediaItem()
+                player.hasNextMediaItem()
             ) {
 
-                currentPlayer.seekToNextMediaItem()
+                player.seekToNextMediaItem()
 
-            } else {
+            } else if (
+                player.currentMediaItem != null
+            ) {
 
-                /*
-                 * اگر Queue تمام شده،
-                 * به ابتدای آهنگ فعلی برمی‌گردیم.
-                 */
-                currentPlayer.seekTo(
-                    0
+                player.seekTo(
+                    0,
+                    0L
                 )
             }
 
-            currentPlayer.play()
+            player.prepare()
+            player.play()
 
-            sendPlayerUpdate()
+            safeSendUpdate()
 
-        } catch (e: Exception) {
-
-            sendServiceError(
-                e.message
-                    ?: "آهنگ بعدی قابل پخش نیست"
-            )
+        } catch (_: Exception) {
+            safeSendUpdate()
         }
     }
 
     private fun previous() {
 
-        val currentPlayer =
-            player
-                ?: return
-
         try {
 
             if (
-                currentPlayer.currentMediaItem == null
-            ) {
-                return
-            }
-
-            if (
-                currentPlayer.hasPreviousMediaItem()
+                player.hasPreviousMediaItem()
             ) {
 
-                currentPlayer.seekToPreviousMediaItem()
+                player.seekToPreviousMediaItem()
 
             } else {
 
-                currentPlayer.seekTo(
-                    0
+                player.seekTo(
+                    0,
+                    0L
                 )
             }
 
-            currentPlayer.play()
+            player.prepare()
+            player.play()
 
-            sendPlayerUpdate()
+            safeSendUpdate()
 
-        } catch (e: Exception) {
-
-            sendServiceError(
-                e.message
-                    ?: "آهنگ قبلی قابل پخش نیست"
-            )
+        } catch (_: Exception) {
+            safeSendUpdate()
         }
     }
 
@@ -597,22 +402,13 @@ class MusicService : MediaSessionService() {
         val result =
             ArrayList<MediaItem>()
 
-        val current =
+        result.add(
             createMediaItem(
                 currentUrl,
                 currentTitle,
                 currentArtist,
                 currentCover
             )
-
-        if (
-            current == null
-        ) {
-            return result
-        }
-
-        result.add(
-            current
         )
 
         try {
@@ -627,12 +423,9 @@ class MusicService : MediaSessionService() {
                 prefs.getString(
                     "songs",
                     ""
-                )
-                    ?: ""
+                ) ?: ""
 
-            if (
-                data.isBlank()
-            ) {
+            if (data.isBlank()) {
                 return result
             }
 
@@ -640,39 +433,24 @@ class MusicService : MediaSessionService() {
                 ArrayList<SongResult>()
 
             data.split("\n")
+                .take(60)
                 .forEach { line ->
 
-                    try {
+                    val parts =
+                        line.split(
+                            "|||",
+                            limit = 5
+                        )
 
-                        if (
-                            line.isBlank()
-                        ) {
-                            return@forEach
-                        }
-
-                        val parts =
-                            line.split(
-                                "|||"
-                            )
-
-                        if (
-                            parts.size < 5
-                        ) {
-                            return@forEach
-                        }
+                    if (parts.size >= 5) {
 
                         val song =
                             SongResult(
-                                url =
-                                    parts[0].trim(),
-                                title =
-                                    parts[1].trim(),
-                                artist =
-                                    parts[2].trim(),
-                                site =
-                                    parts[3].trim(),
-                                cover =
-                                    parts[4].trim()
+                                url = parts[0],
+                                title = parts[1],
+                                artist = parts[2],
+                                site = parts[3],
+                                cover = parts[4]
                             )
 
                         if (
@@ -682,27 +460,16 @@ class MusicService : MediaSessionService() {
                                 song.url
                             )
                         ) {
-
-                            candidates.add(
-                                song
-                            )
+                            candidates.add(song)
                         }
-
-                    } catch (_: Exception) {
-                        /*
-                         * یک رکورد خراب نباید کل Queue
-                         * را خراب کند.
-                         */
                     }
                 }
 
-            if (
-                candidates.isEmpty()
-            ) {
+            if (candidates.isEmpty()) {
                 return result
             }
 
-            val artistWords =
+            val currentArtistWords =
                 currentArtist
                     .lowercase()
                     .split(
@@ -714,7 +481,7 @@ class MusicService : MediaSessionService() {
                         it.length >= 2
                     }
 
-            val titleWords =
+            val currentTitleWords =
                 currentTitle
                     .lowercase()
                     .split(
@@ -727,50 +494,24 @@ class MusicService : MediaSessionService() {
                     }
 
             val sameArtist =
-                if (
-                    artistWords.isEmpty()
-                ) {
+                candidates.filter { song ->
 
-                    emptyList()
+                    val artist =
+                        song.artist.lowercase()
 
-                } else {
-
-                    candidates.filter { song ->
-
-                        val songArtist =
-                            song.artist
-                                .lowercase()
-
-                        artistWords.any {
-                            word ->
-                            songArtist.contains(
-                                word
-                            )
-                        }
+                    currentArtistWords.any {
+                        artist.contains(it)
                     }
                 }
 
-            val sameTitleStyle =
-                if (
-                    titleWords.isEmpty()
-                ) {
+            val sameTitle =
+                candidates.filter { song ->
 
-                    emptyList()
+                    val title =
+                        song.title.lowercase()
 
-                } else {
-
-                    candidates.filter { song ->
-
-                        val songTitle =
-                            song.title
-                                .lowercase()
-
-                        titleWords.any {
-                            word ->
-                            songTitle.contains(
-                                word
-                            )
-                        }
+                    currentTitleWords.any {
+                        title.contains(it)
                     }
                 }
 
@@ -780,8 +521,8 @@ class MusicService : MediaSessionService() {
                     sameArtist.size >= 2 ->
                         sameArtist
 
-                    sameTitleStyle.isNotEmpty() ->
-                        sameTitleStyle
+                    sameTitle.isNotEmpty() ->
+                        sameTitle
 
                     sameArtist.isNotEmpty() ->
                         sameArtist
@@ -797,44 +538,52 @@ class MusicService : MediaSessionService() {
                 .shuffled()
                 .take(
                     minOf(
-                        25,
+                        15,
                         source.size
                     )
                 )
                 .forEach { song ->
 
-                    val item =
+                    result.add(
                         createMediaItem(
-                            url =
-                                song.url,
-                            title =
-                                song.title,
-                            artist =
-                                song.artist,
-                            cover =
-                                song.cover
+                            song.url,
+                            song.title,
+                            song.artist,
+                            song.cover
                         )
-
-                    if (
-                        item != null
-                    ) {
-
-                        result.add(
-                            item
-                        )
-                    }
+                    )
                 }
 
         } catch (_: Exception) {
-            /*
-             * Queue اختیاری است.
-             *
-             * اگر ساخت Queue خراب شود،
-             * خود آهنگ اصلی همچنان قابل پخش است.
-             */
         }
 
         return result
+    }
+
+    private fun isValidMediaUrl(
+        value: String
+    ): Boolean {
+
+        return try {
+
+            val uri =
+                Uri.parse(value)
+
+            (
+                uri.scheme.equals(
+                    "http",
+                    true
+                ) ||
+                uri.scheme.equals(
+                    "https",
+                    true
+                )
+            ) &&
+                    !uri.host.isNullOrBlank()
+
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun createMediaItem(
@@ -842,91 +591,43 @@ class MusicService : MediaSessionService() {
         title: String,
         artist: String,
         cover: String
-    ): MediaItem? {
+    ): MediaItem {
 
-        return try {
+        val metadata =
+            MediaMetadata.Builder()
+                .setTitle(
+                    title.ifBlank {
+                        "Music Finder"
+                    }
+                )
+                .setArtist(
+                    artist.ifBlank {
+                        "Music Finder"
+                    }
+                )
+                .apply {
 
-            if (
-                !isValidMediaUrl(url)
-            ) {
-                return null
-            }
+                    if (
+                        cover.isNotBlank()
+                    ) {
 
-            val metadata =
-                MediaMetadata.Builder()
-                    .setTitle(
-                        title.ifBlank {
-                            "Music Finder"
-                        }
-                    )
-                    .setArtist(
-                        artist.ifBlank {
-                            "Music Finder"
-                        }
-                    )
-                    .apply {
+                        try {
 
-                        if (
-                            cover.isNotBlank()
-                        ) {
+                            setArtworkUri(
+                                Uri.parse(cover)
+                            )
 
-                            try {
-
-                                setArtworkUri(
-                                    Uri.parse(
-                                        cover
-                                    )
-                                )
-
-                            } catch (_: Exception) {
-                            }
+                        } catch (_: Exception) {
                         }
                     }
-                    .build()
-
-            MediaItem.Builder()
-                .setUri(
-                    Uri.parse(url)
-                )
-                .setMediaId(
-                    url
-                )
-                .setMediaMetadata(
-                    metadata
-                )
+                }
                 .build()
 
-        } catch (_: Exception) {
-
-            null
-        }
-    }
-
-    private fun isValidMediaUrl(
-        url: String
-    ): Boolean {
-
-        return try {
-
-            val uri =
-                Uri.parse(
-                    url
-                )
-
-            val scheme =
-                uri.scheme
-                    ?.lowercase()
-
-            (
-                scheme == "http" ||
-                scheme == "https"
-            ) &&
-                    !uri.host.isNullOrBlank()
-
-        } catch (_: Exception) {
-
-            false
-        }
+        return MediaItem.Builder()
+            .setUri(url)
+            .setMediaId(url)
+            .setMediaMetadata(metadata)
+            .build()
     }
 
     private fun saveToHistory(
@@ -938,9 +639,7 @@ class MusicService : MediaSessionService() {
             val url =
                 item.mediaId
 
-            if (
-                url.isBlank()
-            ) {
+            if (url.isBlank()) {
                 return
             }
 
@@ -954,8 +653,7 @@ class MusicService : MediaSessionService() {
                 prefs.getString(
                     "items",
                     ""
-                )
-                    ?: ""
+                ) ?: ""
 
             val title =
                 item.mediaMetadata.title
@@ -972,16 +670,13 @@ class MusicService : MediaSessionService() {
                     ?.toString()
                     ?: ""
 
-            val newLine =
+            val line =
                 listOf(
                     url,
                     title,
                     artist,
                     cover
-                )
-                    .joinToString(
-                        "|||"
-                    )
+                ).joinToString("|||")
 
             val lines =
                 old.split("\n")
@@ -995,13 +690,12 @@ class MusicService : MediaSessionService() {
 
             lines.add(
                 0,
-                newLine
+                line
             )
 
             while (
-                lines.size > 100
+                lines.size > 50
             ) {
-
                 lines.removeAt(
                     lines.lastIndex
                 )
@@ -1010,17 +704,11 @@ class MusicService : MediaSessionService() {
             prefs.edit()
                 .putString(
                     "items",
-                    lines.joinToString(
-                        "\n"
-                    )
+                    lines.joinToString("\n")
                 )
                 .apply()
 
         } catch (_: Exception) {
-            /*
-             * History یک قابلیت جانبی است.
-             * خرابی آن نباید پخش موسیقی را خراب کند.
-             */
         }
     }
 
@@ -1028,14 +716,10 @@ class MusicService : MediaSessionService() {
         percent: Int
     ) {
 
-        val currentPlayer =
-            player
-                ?: return
-
         try {
 
             val duration =
-                currentPlayer.duration
+                player.duration
 
             if (
                 duration <= 0 ||
@@ -1051,69 +735,36 @@ class MusicService : MediaSessionService() {
                 )
 
             val position =
-                (
-                    duration *
-                        safe.toLong()
-                ) / 100L
+                duration *
+                        safe /
+                        100L
 
-            currentPlayer.seekTo(
-                position.coerceIn(
-                    0L,
-                    duration
-                )
+            player.seekTo(
+                position
             )
 
-            sendPlayerUpdate()
+            safeSendUpdate()
 
-        } catch (e: Exception) {
-
-            sendServiceError(
-                e.message
-                    ?: "Seek ناموفق بود"
-            )
+        } catch (_: Exception) {
         }
     }
 
-    private fun sendPlayerUpdate() {
+    private fun safeSendUpdate() {
 
         if (
-            destroyed
+            released ||
+            !::player.isInitialized
         ) {
             return
         }
 
         try {
-
-            val currentPlayer =
-                player
-                    ?: return
 
             val item =
-                currentPlayer.currentMediaItem
-
-            val duration =
-                currentPlayer.duration
-
-            val safeDuration =
-                if (
-                    duration == C.TIME_UNSET ||
-                    duration < 0
-                ) {
-                    0L
-                } else {
-                    duration
-                }
-
-            val position =
-                currentPlayer.currentPosition
-                    .coerceAtLeast(
-                        0L
-                    )
+                player.currentMediaItem
 
             val intent =
-                Intent(
-                    UPDATE
-                ).apply {
+                Intent(UPDATE).apply {
 
                     setPackage(
                         packageName
@@ -1121,23 +772,29 @@ class MusicService : MediaSessionService() {
 
                     putExtra(
                         "playing",
-                        currentPlayer.isPlaying
+                        player.isPlaying
                     )
 
                     putExtra(
                         "position",
-                        position
+                        player.currentPosition
                     )
 
                     putExtra(
                         "duration",
-                        safeDuration
+                        if (
+                            player.duration ==
+                            C.TIME_UNSET
+                        ) {
+                            0L
+                        } else {
+                            player.duration
+                        }
                     )
 
                     putExtra(
                         "title",
-                        item
-                            ?.mediaMetadata
+                        item?.mediaMetadata
                             ?.title
                             ?.toString()
                             ?: ""
@@ -1145,157 +802,14 @@ class MusicService : MediaSessionService() {
 
                     putExtra(
                         "artist",
-                        item
-                            ?.mediaMetadata
+                        item?.mediaMetadata
                             ?.artist
                             ?.toString()
                             ?: ""
                     )
                 }
 
-            sendBroadcast(
-                intent
-            )
-
-        } catch (_: Exception) {
-            /*
-             * Activity ممکن است در حال Destroy شدن باشد.
-             * Broadcast شکست‌خورده نباید Service را بکشد.
-             */
-        }
-    }
-
-    private fun sendPlayerError(
-        error: PlaybackException
-    ) {
-
-        if (
-            destroyed
-        ) {
-            return
-        }
-
-        try {
-
-            val intent =
-                Intent(
-                    UPDATE
-                ).apply {
-
-                    setPackage(
-                        packageName
-                    )
-
-                    putExtra(
-                        "playing",
-                        false
-                    )
-
-                    putExtra(
-                        "position",
-                        player
-                            ?.currentPosition
-                            ?: 0L
-                    )
-
-                    putExtra(
-                        "duration",
-                        0L
-                    )
-
-                    putExtra(
-                        "title",
-                        player
-                            ?.currentMediaItem
-                            ?.mediaMetadata
-                            ?.title
-                            ?.toString()
-                            ?: ""
-                    )
-
-                    putExtra(
-                        "artist",
-                        player
-                            ?.currentMediaItem
-                            ?.mediaMetadata
-                            ?.artist
-                            ?.toString()
-                            ?: ""
-                    )
-
-                    putExtra(
-                        EXTRA_ERROR,
-                        error.message
-                            ?: "خطای پخش"
-                    )
-
-                    putExtra(
-                        EXTRA_ERROR_CODE,
-                        error.errorCode
-                    )
-                }
-
-            sendBroadcast(
-                intent
-            )
-
-        } catch (_: Exception) {
-        }
-    }
-
-    private fun sendServiceError(
-        message: String
-    ) {
-
-        if (
-            destroyed
-        ) {
-            return
-        }
-
-        try {
-
-            val intent =
-                Intent(
-                    UPDATE
-                ).apply {
-
-                    setPackage(
-                        packageName
-                    )
-
-                    putExtra(
-                        "playing",
-                        false
-                    )
-
-                    putExtra(
-                        "position",
-                        player
-                            ?.currentPosition
-                            ?: 0L
-                    )
-
-                    putExtra(
-                        "duration",
-                        player
-                            ?.duration
-                            ?.takeIf {
-                                it > 0 &&
-                                        it != C.TIME_UNSET
-                            }
-                            ?: 0L
-                    )
-
-                    putExtra(
-                        EXTRA_ERROR,
-                        message
-                    )
-                }
-
-            sendBroadcast(
-                intent
-            )
+            sendBroadcast(intent)
 
         } catch (_: Exception) {
         }
@@ -1324,22 +838,6 @@ class MusicService : MediaSessionService() {
         )
     }
 
-    private fun stopPlaybackAndService() {
-
-        try {
-
-            player?.stop()
-
-            player?.clearMediaItems()
-
-            sendPlayerUpdate()
-
-        } catch (_: Exception) {
-        }
-
-        stopSelf()
-    }
-
     override fun onGetSession(
         controllerInfo:
             MediaSession.ControllerInfo
@@ -1352,22 +850,11 @@ class MusicService : MediaSessionService() {
         rootIntent: Intent?
     ) {
 
-        /*
-         * MediaSessionService مسئول Background Playback است.
-         *
-         * اگر Player در حال پخش باشد، آن را متوقف
-         * یا آزاد نمی‌کنیم فقط چون Activity از Recent Apps
-         * حذف شده است.
-         */
-        try {
-
-            if (
-                player?.isPlaying == true
-            ) {
-                player?.play()
-            }
-
-        } catch (_: Exception) {
+        if (
+            ::player.isInitialized &&
+            player.isPlaying
+        ) {
+            player.play()
         }
 
         super.onTaskRemoved(
@@ -1377,41 +864,23 @@ class MusicService : MediaSessionService() {
 
     override fun onDestroy() {
 
-        if (
-            destroyed
-        ) {
-            super.onDestroy()
-            return
-        }
-
-        destroyed = true
+        released = true
 
         try {
-
-            player?.removeListener(
-                playerListener
-            )
-
-        } catch (_: Exception) {
-        }
-
-        try {
-
             mediaSession?.release()
-
         } catch (_: Exception) {
         }
 
         mediaSession = null
 
         try {
-
-            player?.release()
-
+            if (::player.isInitialized) {
+                player.stop()
+                player.clearMediaItems()
+                player.release()
+            }
         } catch (_: Exception) {
         }
-
-        player = null
 
         super.onDestroy()
     }
