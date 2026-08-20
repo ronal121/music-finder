@@ -13,11 +13,14 @@ import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -70,15 +73,63 @@ class MainActivity : Activity() {
     private lateinit var resultsContainer: LinearLayout
     private lateinit var vinyl: VinylView
 
-    private val songs =
-        ArrayList<SongResult>()
+    private val songs = ArrayList<SongResult>()
 
     private var currentIndex = -1
     private var currentAudioUrl = ""
 
     private var randomMode = false
 
+    /*
+     * هر Search یک شماره اختصاصی دارد.
+     * اگر Search جدید شروع شود، callbackهای Search قبلی
+     * دیگر اجازه تغییر UI یا لیست آهنگ‌ها را ندارند.
+     */
     private var searchGeneration = 0
+
+    /*
+     * Handler مخصوص کنترل Search
+     */
+    private val searchHandler =
+        Handler(Looper.getMainLooper())
+
+    /*
+     * آیا WebView در حال بررسی یک نتیجه است؟
+     */
+    private var processingSearchPage = false
+
+    /*
+     * شماره نتیجه‌ای که الان در حال بررسی است.
+     */
+    private var processingIndex = 0
+
+    /*
+     * لیست URLهای Google برای Search فعلی
+     */
+    private var currentSearchItems =
+        emptyList<String>()
+
+    /*
+     * Generation مربوط به صفحه‌ای که WebView الان باز کرده.
+     */
+    private var processingGeneration = -1
+
+    /*
+     * URL مورد انتظار برای صفحه فعلی.
+     * برای جلوگیری از callbackهای اشتباه.
+     */
+    private var expectedPageUrl = ""
+
+    /*
+     * اگر onPageFinished چند بار برای یک صفحه اجرا شد،
+     * فقط یک بار استخراج انجام شود.
+     */
+    private var pageExtractionStarted = false
+
+    /*
+     * زمان‌بندی timeout صفحه
+     */
+    private var pageTimeoutRunnable: Runnable? = null
 
     private var downloadThread: Thread? = null
 
@@ -100,8 +151,7 @@ class MainActivity : Activity() {
             ) {
 
                 if (
-                    intent?.action !=
-                    MusicService.UPDATE
+                    intent?.action != MusicService.UPDATE
                 ) {
                     return
                 }
@@ -126,6 +176,10 @@ class MainActivity : Activity() {
 
                 runOnUiThread {
 
+                    if (isFinishing || isDestroyed) {
+                        return@runOnUiThread
+                    }
+
                     updatePlayerProgress(
                         playing,
                         position,
@@ -142,20 +196,12 @@ class MainActivity : Activity() {
                             "artist"
                         ) ?: ""
 
-                    if (
-                        newTitle.isNotBlank()
-                    ) {
-
-                        titleText.text =
-                            newTitle
+                    if (newTitle.isNotBlank()) {
+                        titleText.text = newTitle
                     }
 
-                    if (
-                        newArtist.isNotBlank()
-                    ) {
-
-                        artistText.text =
-                            newArtist
+                    if (newArtist.isNotBlank()) {
+                        artistText.text = newArtist
                     }
                 }
             }
@@ -296,6 +342,9 @@ class MainActivity : Activity() {
                     request: WebResourceRequest
                 ): Boolean {
 
+                    /*
+                     * اجازه می‌دهیم WebView خودش URL را باز کند.
+                     */
                     return false
                 }
 
@@ -304,18 +353,126 @@ class MainActivity : Activity() {
                     url: String
                 ) {
 
+                    /*
+                     * اگر Search فعلی نیست،
+                     * این صفحه را نادیده بگیر.
+                     */
+                    if (!processingSearchPage) {
+                        return
+                    }
+
+                    if (
+                        processingGeneration !=
+                        searchGeneration
+                    ) {
+                        return
+                    }
+
+                    /*
+                     * Google Search
+                     */
                     if (
                         url.contains(
-                            "google.com/search"
+                            "google.com/search",
+                            ignoreCase = true
                         )
                     ) {
 
-                        extractGoogleResults()
+                        /*
+                         * فقط وقتی Google نتیجه را لود کرده
+                         * استخراج نتایج را انجام بده.
+                         */
+                        if (!pageExtractionStarted) {
 
-                    } else {
+                            pageExtractionStarted = true
 
-                        extractMusicPage(url)
+                            extractGoogleResults()
+                        }
+
+                        return
                     }
+
+                    /*
+                     * در مرحله بررسی سایت موسیقی هستیم.
+                     */
+                    if (
+                        expectedPageUrl.isNotBlank()
+                    ) {
+
+                        /*
+                         * بعضی سایت‌ها redirect دارند.
+                         * بنابراین URL دقیق لازم نیست یکسان باشد.
+                         * فقط مطمئن می‌شویم WebView واقعاً در
+                         * مرحله بررسی سایت است.
+                         */
+
+                        if (!pageExtractionStarted) {
+
+                            pageExtractionStarted = true
+
+                            /*
+                             * کمی صبر می‌کنیم تا JavaScript
+                             * و DOM سایت کامل‌تر شود.
+                             */
+                            searchHandler.postDelayed({
+
+                                if (
+                                    processingGeneration ==
+                                    searchGeneration &&
+                                    processingSearchPage
+                                ) {
+
+                                    extractMusicPage(url)
+                                }
+
+                            }, 350)
+                        }
+                    }
+                }
+
+                /*
+                 * Android WebView Renderer Crash
+                 *
+                 * اگر renderer خود WebView خراب شود،
+                 * به‌جای اینکه برنامه ناگهانی بسته شود،
+                 * WebView را reset می‌کنیم.
+                 */
+                override fun onRenderProcessGone(
+                    view: WebView?,
+                    detail: RenderProcessGoneDetail?
+                ): Boolean {
+
+                    processingSearchPage = false
+
+                    pageTimeoutRunnable?.let {
+                        searchHandler.removeCallbacks(it)
+                    }
+
+                    pageTimeoutRunnable = null
+
+                    runOnUiThread {
+
+                        if (!isFinishing && !isDestroyed) {
+
+                            status.text =
+                                "مرورگر داخلی دوباره راه‌اندازی شد"
+
+                            try {
+
+                                web.stopLoading()
+                                web.loadUrl("about:blank")
+
+                            } catch (
+                                _: Exception
+                            ) {
+                            }
+                        }
+                    }
+
+                    /*
+                     * true یعنی خودمان renderer را مدیریت کردیم.
+                     */
+                    return true
                 }
             }
     }
@@ -395,18 +552,14 @@ class MainActivity : Activity() {
                     fromUser: Boolean
                 ) {
 
-                    if (
-                        fromUser
-                    ) {
+                    if (fromUser) {
 
                         val duration =
                             parseTime(
                                 durationText.text.toString()
                             )
 
-                        if (
-                            duration > 0
-                        ) {
+                        if (duration > 0) {
 
                             val position =
                                 duration *
@@ -414,9 +567,7 @@ class MainActivity : Activity() {
                                 100
 
                             currentTimeText.text =
-                                formatTime(
-                                    position
-                                )
+                                formatTime(position)
                         }
                     }
                 }
@@ -495,14 +646,18 @@ class MainActivity : Activity() {
         }
     }
 
+    /*
+     * =========================================================
+     * SEARCH
+     * =========================================================
+     */
+
     private fun searchMusic() {
 
         val text =
             query.text.toString().trim()
 
-        if (
-            text.isEmpty()
-        ) {
+        if (text.isEmpty()) {
 
             Toast.makeText(
                 this,
@@ -513,7 +668,39 @@ class MainActivity : Activity() {
             return
         }
 
+        /*
+         * Search قبلی را کاملاً invalidate می‌کنیم.
+         */
         searchGeneration++
+
+        /*
+         * تمام callbackهای قبلی حذف شوند.
+         */
+        searchHandler.removeCallbacksAndMessages(null)
+
+        pageTimeoutRunnable = null
+
+        /*
+         * وضعیت WebView Search قبلی
+         */
+        processingSearchPage = false
+        processingIndex = 0
+        currentSearchItems = emptyList()
+        processingGeneration = -1
+        expectedPageUrl = ""
+        pageExtractionStarted = false
+
+        /*
+         * WebView را متوقف می‌کنیم.
+         */
+        try {
+
+            web.stopLoading()
+
+        } catch (
+            _: Exception
+        ) {
+        }
 
         songs.clear()
 
@@ -521,8 +708,7 @@ class MainActivity : Activity() {
 
         resultsContainer.removeAllViews()
 
-        titleText.text =
-            text
+        titleText.text = text
 
         artistText.text =
             "در حال جستجو..."
@@ -530,18 +716,18 @@ class MainActivity : Activity() {
         status.text =
             "در حال جستجوی سایت‌ها..."
 
-        seekBar.progress =
-            0
+        seekBar.progress = 0
 
-        currentTimeText.text =
-            "00:00"
+        currentTimeText.text = "00:00"
 
-        durationText.text =
-            "00:00"
+        durationText.text = "00:00"
 
         vinyl.clearCover()
         vinyl.stopRotation()
 
+        /*
+         * تعداد سایت‌ها را محدود می‌کنیم.
+         */
         val searchQuery =
             "\"$text\" " +
             "(site:rozmusic.com OR " +
@@ -555,187 +741,625 @@ class MainActivity : Activity() {
                 "UTF-8"
             )
 
-        web.loadUrl(
-            "https://www.google.com/search?q=$encoded&num=100"
-        )
+        /*
+         * num=20 کافی است.
+         * قبلاً 100 بود و فشار زیادی روی WebView می‌گذاشت.
+         */
+        val googleUrl =
+            "https://www.google.com/search?q=$encoded&num=20"
+
+        processingSearchPage = true
+        processingGeneration = searchGeneration
+
+        pageExtractionStarted = false
+
+        try {
+
+            web.loadUrl(googleUrl)
+
+        } catch (
+            e: Exception
+        ) {
+
+            processingSearchPage = false
+
+            status.text =
+                "خطا در باز کردن جستجو"
+
+            Toast.makeText(
+                this,
+                "خطا در WebView",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
     }
 
     private fun extractGoogleResults() {
 
+        if (
+            !processingSearchPage ||
+            processingGeneration != searchGeneration
+        ) {
+            return
+        }
+
         val script = """
             (function() {
 
-                var links =
-                    document.querySelectorAll("a");
+                try {
 
-                var found = [];
+                    var links =
+                        document.querySelectorAll("a");
 
-                for (
-                    var i = 0;
-                    i < links.length;
-                    i++
-                ) {
+                    var found = [];
 
-                    var href =
-                        links[i].href || "";
-
-                    var text =
-                        links[i].innerText || "";
-
-                    var lower =
-                        href.toLowerCase();
-
-                    if (
-                        lower.indexOf("rozmusic.com") >= 0 ||
-                        lower.indexOf("mybia2music.com") >= 0 ||
-                        lower.indexOf("musicdel.ir") >= 0 ||
-                        lower.indexOf("musics-fa.com") >= 0
+                    for (
+                        var i = 0;
+                        i < links.length;
+                        i++
                     ) {
 
+                        var href =
+                            links[i].href || "";
+
+                        var text =
+                            links[i].innerText || "";
+
+                        var lower =
+                            href.toLowerCase();
+
                         if (
-                            href.indexOf("google.com") < 0 &&
-                            found.indexOf(href) < 0
+                            lower.indexOf("rozmusic.com") >= 0 ||
+                            lower.indexOf("mybia2music.com") >= 0 ||
+                            lower.indexOf("musicdel.ir") >= 0 ||
+                            lower.indexOf("musics-fa.com") >= 0
                         ) {
 
-                            found.push(
-                                href + "|||" +
-                                text.replace(
-                                    /[\r\n]+/g,
-                                    " "
-                                )
-                            );
+                            if (
+                                href.indexOf("google.com") < 0 &&
+                                found.indexOf(href) < 0
+                            ) {
+
+                                found.push(
+                                    href + "|||" +
+                                    text.replace(
+                                        /[\r\n]+/g,
+                                        " "
+                                    )
+                                );
+                            }
                         }
                     }
-                }
 
-                MusicFinder.results(
-                    found.join("###")
-                );
+                    MusicFinder.results(
+                        found.join("###")
+                    );
+
+                } catch(e) {
+
+                    MusicFinder.results("");
+                }
 
             })();
         """.trimIndent()
 
-        web.evaluateJavascript(
-            script,
-            null
-        )
+        try {
+
+            web.evaluateJavascript(
+                script,
+                null
+            )
+
+        } catch (
+            _: Exception
+        ) {
+
+            moveToNextSearchPage()
+        }
     }
 
     private fun extractMusicPage(
         pageUrl: String
     ) {
 
+        if (
+            !processingSearchPage ||
+            processingGeneration != searchGeneration
+        ) {
+            return
+        }
+
         val script = """
             (function() {
 
-                var title = "";
-                var artist = "";
-                var cover = "";
+                try {
 
-                var metaTitle =
-                    document.querySelector(
-                        'meta[property="og:title"]'
-                    );
+                    var title = "";
+                    var artist = "";
+                    var cover = "";
 
-                if (metaTitle) {
-                    title =
-                        metaTitle.content || "";
-                }
+                    var metaTitle =
+                        document.querySelector(
+                            'meta[property="og:title"]'
+                        );
 
-                var h1 =
-                    document.querySelector("h1");
+                    if (metaTitle) {
 
-                if (
-                    !title &&
-                    h1
-                ) {
-                    title =
-                        h1.innerText || "";
-                }
+                        title =
+                            metaTitle.content || "";
+                    }
 
-                var metaArtist =
-                    document.querySelector(
-                        'meta[property="music:musician"]'
-                    );
-
-                if (metaArtist) {
-                    artist =
-                        metaArtist.content || "";
-                }
-
-                var image =
-                    document.querySelector(
-                        'meta[property="og:image"]'
-                    );
-
-                if (image) {
-                    cover =
-                        image.content || "";
-                }
-
-                var audioLinks = [];
-
-                var media =
-                    document.querySelectorAll(
-                        "audio source, audio, video source, video, a"
-                    );
-
-                for (
-                    var i = 0;
-                    i < media.length;
-                    i++
-                ) {
-
-                    var el =
-                        media[i];
-
-                    var src =
-                        el.src ||
-                        el.href ||
-                        "";
-
-                    var lower =
-                        src.toLowerCase();
+                    var h1 =
+                        document.querySelector("h1");
 
                     if (
-                        lower.indexOf(".mp3") >= 0 ||
-                        lower.indexOf(".m4a") >= 0 ||
-                        lower.indexOf(".aac") >= 0 ||
-                        lower.indexOf(".ogg") >= 0 ||
-                        lower.indexOf(".wav") >= 0 ||
-                        lower.indexOf(".flac") >= 0 ||
-                        lower.indexOf("dl.") >= 0
+                        !title &&
+                        h1
                     ) {
 
+                        title =
+                            h1.innerText || "";
+                    }
+
+                    var metaArtist =
+                        document.querySelector(
+                            'meta[property="music:musician"]'
+                        );
+
+                    if (metaArtist) {
+
+                        artist =
+                            metaArtist.content || "";
+                    }
+
+                    var image =
+                        document.querySelector(
+                            'meta[property="og:image"]'
+                        );
+
+                    if (image) {
+
+                        cover =
+                            image.content || "";
+                    }
+
+                    var audioLinks = [];
+
+                    var media =
+                        document.querySelectorAll(
+                            "audio source, audio, video source, video, a"
+                        );
+
+                    for (
+                        var i = 0;
+                        i < media.length;
+                        i++
+                    ) {
+
+                        var el =
+                            media[i];
+
+                        var src =
+                            el.src ||
+                            el.href ||
+                            "";
+
+                        var lower =
+                            src.toLowerCase();
+
                         if (
-                            audioLinks.indexOf(src) < 0
+                            lower.indexOf(".mp3") >= 0 ||
+                            lower.indexOf(".m4a") >= 0 ||
+                            lower.indexOf(".aac") >= 0 ||
+                            lower.indexOf(".ogg") >= 0 ||
+                            lower.indexOf(".wav") >= 0 ||
+                            lower.indexOf(".flac") >= 0 ||
+                            lower.indexOf("dl.") >= 0
                         ) {
 
-                            audioLinks.push(src);
+                            if (
+                                audioLinks.indexOf(src) < 0
+                            ) {
+
+                                audioLinks.push(src);
+                            }
                         }
                     }
-                }
 
-                MusicFinder.page(
-                    encodeURIComponent(title) +
-                    "###" +
-                    encodeURIComponent(artist) +
-                    "###" +
-                    encodeURIComponent(cover) +
-                    "###" +
-                    encodeURIComponent(
-                        audioLinks.join("|||")
-                    )
-                );
+                    MusicFinder.page(
+                        encodeURIComponent(title) +
+                        "###" +
+                        encodeURIComponent(artist) +
+                        "###" +
+                        encodeURIComponent(cover) +
+                        "###" +
+                        encodeURIComponent(
+                            audioLinks.join("|||")
+                        )
+                    );
+
+                } catch(e) {
+
+                    MusicFinder.page(
+                        "#######"
+                    );
+                }
 
             })();
         """.trimIndent()
 
-        web.evaluateJavascript(
-            script,
-            null
-        )
+        try {
+
+            web.evaluateJavascript(
+                script,
+                null
+            )
+
+        } catch (
+            _: Exception
+        ) {
+
+            moveToNextSearchPage()
+        }
     }
+
+    /*
+     * =========================================================
+     * JAVASCRIPT BRIDGE
+     * =========================================================
+     */
+
+    inner class Bridge {
+
+        @JavascriptInterface
+        fun results(
+            data: String
+        ) {
+
+            runOnUiThread {
+
+                if (
+                    processingGeneration !=
+                    searchGeneration
+                ) {
+                    return@runOnUiThread
+                }
+
+                if (!processingSearchPage) {
+                    return@runOnUiThread
+                }
+
+                val items =
+                    data.split("###")
+                        .map {
+                            it.trim()
+                        }
+                        .filter {
+                            it.isNotEmpty()
+                        }
+                        .distinct()
+
+                if (items.isEmpty()) {
+
+                    processingSearchPage = false
+
+                    status.text =
+                        "نتیجه‌ای پیدا نشد"
+
+                    return@runOnUiThread
+                }
+
+                status.text =
+                    "در حال بررسی نتایج..."
+
+                /*
+                 * حداکثر 15 صفحه.
+                 */
+                currentSearchItems =
+                    items.take(15)
+
+                processingIndex = 0
+
+                /*
+                 * Google تمام شده.
+                 * حالا وارد مرحله بررسی سایت‌ها می‌شویم.
+                 */
+                processingSearchPage = true
+
+                processNextResultPage()
+            }
+        }
+
+        @JavascriptInterface
+        fun page(
+            data: String
+        ) {
+
+            runOnUiThread {
+
+                /*
+                 * اگر این callback مربوط به Search قبلی است،
+                 * کاملاً نادیده گرفته شود.
+                 */
+                if (
+                    processingGeneration !=
+                    searchGeneration
+                ) {
+                    return@runOnUiThread
+                }
+
+                if (!processingSearchPage) {
+                    return@runOnUiThread
+                }
+
+                val parts =
+                    data.split("###")
+
+                if (parts.size < 4) {
+
+                    moveToNextSearchPage()
+
+                    return@runOnUiThread
+                }
+
+                val title =
+                    decode(parts[0])
+
+                val artist =
+                    decode(parts[1])
+
+                val cover =
+                    decode(parts[2])
+
+                val audioString =
+                    decode(parts[3])
+
+                val audio =
+                    audioString
+                        .split("|||")
+                        .firstOrNull {
+                            it.isNotBlank()
+                        }
+                        ?: ""
+
+                /*
+                 * اگر آهنگ پیدا نشد، مستقیم برو نتیجه بعدی.
+                 */
+                if (audio.isBlank()) {
+
+                    moveToNextSearchPage()
+
+                    return@runOnUiThread
+                }
+
+                /*
+                 * URL واقعی همین صفحه را در همین لحظه می‌گیریم.
+                 */
+                val pageUrl =
+                    web.url ?: ""
+
+                val song =
+                    SongResult(
+                        url = audio,
+
+                        title =
+                            if (title.isBlank())
+                                query.text.toString()
+                            else
+                                cleanTitle(title),
+
+                        artist =
+                            if (artist.isBlank())
+                                query.text.toString()
+                            else
+                                artist,
+
+                        site =
+                            getSiteName(pageUrl),
+
+                        cover = cover
+                    )
+
+                addSong(song)
+
+                /*
+                 * بعد از استخراج، نتیجه بعدی.
+                 */
+                moveToNextSearchPage()
+            }
+        }
+    }
+
+    /*
+     * =========================================================
+     * PROCESS SEARCH RESULTS
+     * =========================================================
+     */
+
+    private fun processNextResultPage() {
+
+        if (
+            processingGeneration !=
+            searchGeneration
+        ) {
+            return
+        }
+
+        if (!processingSearchPage) {
+            return
+        }
+
+        /*
+         * تمام نتایج تمام شده‌اند.
+         */
+        if (
+            processingIndex >=
+            currentSearchItems.size
+        ) {
+
+            finishSearch()
+
+            return
+        }
+
+        /*
+         * اگر به اندازه کافی آهنگ پیدا کردیم،
+         * دیگر لازم نیست سایت‌های بیشتری باز کنیم.
+         */
+        if (songs.size >= 10) {
+
+            finishSearch()
+
+            return
+        }
+
+        val item =
+            currentSearchItems[
+                processingIndex
+            ]
+
+        processingIndex++
+
+        val url =
+            item.substringBefore("|||").trim()
+
+        if (url.isBlank()) {
+
+            processNextResultPage()
+
+            return
+        }
+
+        /*
+         * وضعیت صفحه جدید
+         */
+        expectedPageUrl = url
+        pageExtractionStarted = false
+
+        processingGeneration =
+            searchGeneration
+
+        /*
+         * timeout برای سایت‌های کند یا خراب.
+         */
+        pageTimeoutRunnable =
+            Runnable {
+
+                if (
+                    processingSearchPage &&
+                    processingGeneration ==
+                    searchGeneration &&
+                    !pageExtractionStarted
+                ) {
+
+                    pageExtractionStarted = true
+
+                    moveToNextSearchPage()
+                }
+            }
+
+        searchHandler.postDelayed(
+            pageTimeoutRunnable!!,
+            5000
+        )
+
+        try {
+
+            web.loadUrl(url)
+
+        } catch (
+            _: Exception
+        ) {
+
+            moveToNextSearchPage()
+        }
+    }
+
+    private fun moveToNextSearchPage() {
+
+        if (
+            processingGeneration !=
+            searchGeneration
+        ) {
+            return
+        }
+
+        /*
+         * timeout قبلی را لغو کن.
+         */
+        pageTimeoutRunnable?.let {
+            searchHandler.removeCallbacks(it)
+        }
+
+        pageTimeoutRunnable = null
+
+        /*
+         * اگر callbackهای اضافی آمدند،
+         * دیگر دوباره next اجرا نشود.
+         */
+        processingSearchPage = true
+
+        pageExtractionStarted = true
+
+        /*
+         * کمی فاصله بین سایت‌ها.
+         * این کار فشار WebView را کم می‌کند.
+         */
+        searchHandler.postDelayed({
+
+            if (
+                processingGeneration ==
+                searchGeneration &&
+                processingSearchPage
+            ) {
+
+                pageExtractionStarted = false
+
+                processNextResultPage()
+            }
+
+        }, 250)
+    }
+
+    private fun finishSearch() {
+
+        if (
+            processingGeneration !=
+            searchGeneration
+        ) {
+            return
+        }
+
+        pageTimeoutRunnable?.let {
+            searchHandler.removeCallbacks(it)
+        }
+
+        pageTimeoutRunnable = null
+
+        processingSearchPage = false
+
+        status.text =
+            if (songs.isEmpty())
+                "آهنگ قابل پخش پیدا نشد"
+            else
+                "${songs.size} نتیجه پیدا شد"
+
+        if (
+            songs.isNotEmpty() &&
+            currentIndex == -1
+        ) {
+
+            currentIndex = 0
+        }
+
+        saveSearchResults()
+    }
+
+    /*
+     * =========================================================
+     * SONG LIST
+     * =========================================================
+     */
 
     private fun getSiteName(
         url: String
@@ -769,207 +1393,6 @@ class MainActivity : Activity() {
             else ->
                 "سایت موسیقی"
         }
-    }
-
-    inner class Bridge {
-
-        @JavascriptInterface
-        fun results(
-            data: String
-        ) {
-
-            runOnUiThread {
-
-                val generation =
-                    searchGeneration
-
-                val items =
-                    data.split("###")
-                        .map {
-                            it.trim()
-                        }
-                        .filter {
-                            it.isNotEmpty()
-                        }
-
-                if (
-                    items.isEmpty()
-                ) {
-
-                    status.text =
-                        "نتیجه‌ای پیدا نشد"
-
-                    return@runOnUiThread
-                }
-
-                status.text =
-                    "در حال بررسی نتایج..."
-
-                processResultPages(
-                    items.take(100),
-                    0,
-                    generation
-                )
-            }
-        }
-
-        @JavascriptInterface
-        fun page(
-            data: String
-        ) {
-
-            runOnUiThread {
-
-                val parts =
-                    data.split("###")
-
-                if (
-                    parts.size < 4
-                ) {
-                    return@runOnUiThread
-                }
-
-                val title =
-                    decode(parts[0])
-
-                val artist =
-                    decode(parts[1])
-
-                val cover =
-                    decode(parts[2])
-
-                val audioString =
-                    decode(parts[3])
-
-                val audio =
-                    audioString
-                        .split("|||")
-                        .firstOrNull {
-                            it.isNotBlank()
-                        }
-                        ?: ""
-
-                if (
-                    audio.isBlank()
-                ) {
-                    return@runOnUiThread
-                }
-
-                val pageUrl =
-                    web.url ?: ""
-
-                val song =
-                    SongResult(
-                        url = audio,
-                        title =
-                            if (
-                                title.isBlank()
-                            )
-                                query.text.toString()
-                            else
-                                cleanTitle(title),
-
-                        artist =
-                            if (
-                                artist.isBlank()
-                            )
-                                query.text.toString()
-                            else
-                                artist,
-
-                        site =
-                            getSiteName(
-                                pageUrl
-                            ),
-
-                        cover = cover
-                    )
-
-                addSong(song)
-            }
-        }
-    }
-
-    private fun processResultPages(
-        items: List<String>,
-        index: Int,
-        generation: Int
-    ) {
-
-        if (
-            generation != searchGeneration
-        ) {
-            return
-        }
-
-        if (
-            index >= items.size
-        ) {
-
-            status.text =
-                if (songs.isEmpty())
-                    "آهنگ قابل پخش پیدا نشد"
-                else
-                    "${songs.size} نتیجه پیدا شد"
-
-            if (
-                songs.isNotEmpty() &&
-                currentIndex == -1
-            ) {
-
-                currentIndex = 0
-            }
-
-            saveSearchResults()
-
-            return
-        }
-
-        val url =
-            items[index]
-                .substringBefore("|||")
-
-        if (
-            url.isBlank()
-        ) {
-
-            processResultPages(
-                items,
-                index + 1,
-                generation
-            )
-
-            return
-        }
-
-        val handler =
-            android.os.Handler(
-                mainLooper
-            )
-
-        var finished = false
-
-        val next =
-            Runnable {
-
-                if (!finished) {
-
-                    finished = true
-
-                    processResultPages(
-                        items,
-                        index + 1,
-                        generation
-                    )
-                }
-            }
-
-        handler.postDelayed(
-            next,
-            2500
-        )
-
-        web.loadUrl(url)
     }
 
     private fun addSong(
@@ -1085,7 +1508,8 @@ class MainActivity : Activity() {
 
                         if (
                             bitmap != null &&
-                            !isFinishing
+                            !isFinishing &&
+                            !isDestroyed
                         ) {
 
                             cover.setImageBitmap(
@@ -1212,8 +1636,7 @@ class MainActivity : Activity() {
                             song
                         )
 
-                        text =
-                            "♡"
+                        text = "♡"
 
                         Toast.makeText(
                             this@MainActivity,
@@ -1228,8 +1651,7 @@ class MainActivity : Activity() {
                             song
                         )
 
-                        text =
-                            "♥"
+                        text = "♥"
 
                         Toast.makeText(
                             this@MainActivity,
@@ -1256,10 +1678,14 @@ class MainActivity : Activity() {
             playSong(song)
         }
 
-        resultsContainer.addView(
-            row
-        )
+        resultsContainer.addView(row)
     }
+
+    /*
+     * =========================================================
+     * PLAYER
+     * =========================================================
+     */
 
     private fun saveCurrentSong() {
 
@@ -1334,18 +1760,14 @@ class MainActivity : Activity() {
 
     private fun nextSong() {
 
-        if (
-            songs.isEmpty()
-        ) {
+        if (songs.isEmpty()) {
             return
         }
 
         currentIndex =
             if (randomMode) {
 
-                if (
-                    songs.size == 1
-                ) {
+                if (songs.size == 1) {
 
                     0
 
@@ -1380,16 +1802,12 @@ class MainActivity : Activity() {
 
     private fun previousSong() {
 
-        if (
-            songs.isEmpty()
-        ) {
+        if (songs.isEmpty()) {
             return
         }
 
         currentIndex =
-            if (
-                currentIndex <= 0
-            )
+            if (currentIndex <= 0)
                 songs.size - 1
             else
                 currentIndex - 1
@@ -1407,9 +1825,7 @@ class MainActivity : Activity() {
         cover: String = ""
     ) {
 
-        if (
-            url.isBlank()
-        ) {
+        if (url.isBlank()) {
             return
         }
 
@@ -1443,17 +1859,30 @@ class MainActivity : Activity() {
                 )
             }
 
-        if (
-            Build.VERSION.SDK_INT >= 26
+        try {
+
+            if (
+                Build.VERSION.SDK_INT >= 26
+            ) {
+
+                startForegroundService(
+                    intent
+                )
+
+            } else {
+
+                startService(intent)
+            }
+
+        } catch (
+            _: Exception
         ) {
 
-            startForegroundService(
-                intent
-            )
-
-        } else {
-
-            startService(intent)
+            Toast.makeText(
+                this,
+                "خطا در اجرای پخش‌کننده",
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
@@ -1463,9 +1892,7 @@ class MainActivity : Activity() {
         duration: Long
     ) {
 
-        if (
-            duration > 0
-        ) {
+        if (duration > 0) {
 
             val percent =
                 (
@@ -1512,9 +1939,7 @@ class MainActivity : Activity() {
         milliseconds: Long
     ): String {
 
-        if (
-            milliseconds <= 0
-        ) {
+        if (milliseconds <= 0) {
             return "00:00"
         }
 
@@ -1543,9 +1968,7 @@ class MainActivity : Activity() {
             val parts =
                 value.split(":")
 
-            if (
-                parts.size != 2
-            ) {
+            if (parts.size != 2) {
 
                 0L
 
@@ -1571,14 +1994,18 @@ class MainActivity : Activity() {
         }
     }
 
+    /*
+     * =========================================================
+     * DOWNLOAD
+     * =========================================================
+     */
+
     private fun downloadCurrentSong() {
 
         val url =
             currentAudioUrl
 
-        if (
-            url.isBlank()
-        ) {
+        if (url.isBlank()) {
 
             Toast.makeText(
                 this,
@@ -1589,9 +2016,7 @@ class MainActivity : Activity() {
             return
         }
 
-        if (
-            downloadThread?.isAlive == true
-        ) {
+        if (downloadThread?.isAlive == true) {
 
             Toast.makeText(
                 this,
@@ -1607,14 +2032,10 @@ class MainActivity : Activity() {
                 titleText.text.toString()
             ) + ".mp3"
 
-        cancelRequested =
-            false
+        cancelRequested = false
+        pauseDownloadRequested = false
 
-        pauseDownloadRequested =
-            false
-
-        downloadProgress.progress =
-            0
+        downloadProgress.progress = 0
 
         downloadProgress.visibility =
             View.VISIBLE
@@ -1711,17 +2132,13 @@ class MainActivity : Activity() {
             !pauseDownloadRequested
 
         pauseDownloadButton.text =
-            if (
-                pauseDownloadRequested
-            )
+            if (pauseDownloadRequested)
                 "▶"
             else
                 "⏸"
 
         downloadText.text =
-            if (
-                pauseDownloadRequested
-            )
+            if (pauseDownloadRequested)
                 "دانلود متوقف شد"
             else
                 "در حال دانلود..."
@@ -1729,11 +2146,9 @@ class MainActivity : Activity() {
 
     private fun cancelDownload() {
 
-        cancelRequested =
-            true
+        cancelRequested = true
 
-        pauseDownloadRequested =
-            false
+        pauseDownloadRequested = false
 
         downloadText.text =
             "در حال لغو..."
@@ -1741,8 +2156,7 @@ class MainActivity : Activity() {
 
     private fun resetDownloadButtons() {
 
-        downloadButton.isEnabled =
-            true
+        downloadButton.isEnabled = true
 
         pauseDownloadButton.visibility =
             View.GONE
@@ -1807,8 +2221,7 @@ class MainActivity : Activity() {
             val total =
                 connection.contentLengthLong
 
-            var downloaded =
-                0L
+            var downloaded = 0L
 
             BufferedInputStream(
                 connection.inputStream
@@ -1823,9 +2236,7 @@ class MainActivity : Activity() {
 
                     while (true) {
 
-                        if (
-                            cancelRequested
-                        ) {
+                        if (cancelRequested) {
 
                             throw Exception(
                                 "CANCELLED"
@@ -1843,9 +2254,7 @@ class MainActivity : Activity() {
                         val count =
                             input.read(buffer)
 
-                        if (
-                            count == -1
-                        ) {
+                        if (count == -1) {
                             break
                         }
 
@@ -1855,12 +2264,9 @@ class MainActivity : Activity() {
                             count
                         )
 
-                        downloaded +=
-                            count
+                        downloaded += count
 
-                        if (
-                            total > 0
-                        ) {
+                        if (total > 0) {
 
                             val percent =
                                 (
@@ -1927,10 +2333,7 @@ class MainActivity : Activity() {
                     Environment.DIRECTORY_MUSIC
                 )
 
-        if (
-            !directory.exists()
-        ) {
-
+        if (!directory.exists()) {
             directory.mkdirs()
         }
 
@@ -1950,8 +2353,7 @@ class MainActivity : Activity() {
         val total =
             connection.contentLengthLong
 
-        var downloaded =
-            0L
+        var downloaded = 0L
 
         BufferedInputStream(
             connection.inputStream
@@ -1966,9 +2368,7 @@ class MainActivity : Activity() {
 
                 while (true) {
 
-                    if (
-                        cancelRequested
-                    ) {
+                    if (cancelRequested) {
 
                         file.delete()
 
@@ -1988,9 +2388,7 @@ class MainActivity : Activity() {
                     val count =
                         input.read(buffer)
 
-                    if (
-                        count == -1
-                    ) {
+                    if (count == -1) {
                         break
                     }
 
@@ -2000,12 +2398,9 @@ class MainActivity : Activity() {
                         count
                     )
 
-                    downloaded +=
-                        count
+                    downloaded += count
 
-                    if (
-                        total > 0
-                    ) {
+                    if (total > 0) {
 
                         val percent =
                             (
@@ -2034,6 +2429,12 @@ class MainActivity : Activity() {
 
         connection.disconnect()
     }
+
+    /*
+     * =========================================================
+     * HELPERS
+     * =========================================================
+     */
 
     private fun cleanTitle(
         value: String
@@ -2075,12 +2476,8 @@ class MainActivity : Activity() {
         var name =
             text.trim()
 
-        if (
-            name.isEmpty()
-        ) {
-
-            name =
-                "Music_Finder"
+        if (name.isEmpty()) {
+            name = "Music_Finder"
         }
 
         name =
@@ -2093,6 +2490,12 @@ class MainActivity : Activity() {
 
         return name.take(100)
     }
+
+    /*
+     * =========================================================
+     * SAVE / RESTORE SEARCH
+     * =========================================================
+     */
 
     private fun saveSearchResults() {
 
@@ -2138,9 +2541,7 @@ class MainActivity : Activity() {
                 ""
             ) ?: ""
 
-        if (
-            data.isBlank()
-        ) {
+        if (data.isBlank()) {
             return
         }
 
@@ -2152,9 +2553,7 @@ class MainActivity : Activity() {
                 val p =
                     it.split("|||")
 
-                if (
-                    p.size >= 5
-                ) {
+                if (p.size >= 5) {
 
                     songs.add(
                         SongResult(
@@ -2178,17 +2577,20 @@ class MainActivity : Activity() {
             )
         }
 
-        if (
-            songs.isNotEmpty()
-        ) {
+        if (songs.isNotEmpty()) {
 
-            currentIndex =
-                0
+            currentIndex = 0
 
             status.text =
                 "${songs.size} نتیجه ذخیره شده"
         }
     }
+
+    /*
+     * =========================================================
+     * ACTIVITY LIFECYCLE
+     * =========================================================
+     */
 
     override fun onResume() {
 
@@ -2199,9 +2601,7 @@ class MainActivity : Activity() {
                 MusicService.UPDATE
             )
 
-        if (
-            Build.VERSION.SDK_INT >= 33
-        ) {
+        if (Build.VERSION.SDK_INT >= 33) {
 
             registerReceiver(
                 playerReceiver,
@@ -2227,17 +2627,22 @@ class MainActivity : Activity() {
                     MusicService.ACTION_GET_POSITION
             }
 
-        if (
-            Build.VERSION.SDK_INT >= 26
+        try {
+
+            if (Build.VERSION.SDK_INT >= 26) {
+
+                startForegroundService(
+                    intent
+                )
+
+            } else {
+
+                startService(intent)
+            }
+
+        } catch (
+            _: Exception
         ) {
-
-            startForegroundService(
-                intent
-            )
-
-        } else {
-
-            startService(intent)
         }
     }
 
@@ -2259,7 +2664,31 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
 
-        web.destroy()
+        /*
+         * تمام Search callbackها را قطع کن.
+         */
+        searchGeneration++
+
+        searchHandler.removeCallbacksAndMessages(
+            null
+        )
+
+        processingSearchPage = false
+
+        pageTimeoutRunnable = null
+
+        try {
+
+            web.stopLoading()
+            web.removeJavascriptInterface(
+                "MusicFinder"
+            )
+            web.destroy()
+
+        } catch (
+            _: Exception
+        ) {
+        }
 
         executor.shutdownNow()
 
