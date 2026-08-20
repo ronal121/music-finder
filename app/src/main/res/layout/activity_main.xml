@@ -88,9 +88,10 @@
         <SeekBar
             android:id="@+id/seekBar"
             android:layout_width="match_parent"
-            android:layout_height="34dp"
-            android:layout_marginTop="8dp"
-            android:max="100"/>
+            android:layout_height="32dp"
+            android:max="100"
+            android:progress="0"
+            android:layout_marginTop="8dp"/>
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -152,7 +153,7 @@
                 android:layout_width="58dp"
                 android:layout_height="58dp"
                 android:gravity="center"
-                android:text="🔁"
+                android:text="↕"
                 android:textColor="#FFFFFF"
                 android:textSize="20sp"/>
 
