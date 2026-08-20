@@ -3,6 +3,7 @@ package com.kafshar.musicfinder
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -47,8 +48,7 @@ class MusicService : MediaSessionService() {
 
     private lateinit var player: ExoPlayer
 
-    private var mediaSession:
-        MediaSession? = null
+    private var mediaSession: MediaSession? = null
 
     private val handler =
         Handler(Looper.getMainLooper())
@@ -203,10 +203,11 @@ class MusicService : MediaSessionService() {
 
             ACTION_TOGGLE -> {
 
-                if (player.isPlaying)
+                if (player.isPlaying) {
                     player.pause()
-                else
+                } else {
                     player.play()
+                }
             }
 
             ACTION_SEEK_PERCENT -> {
@@ -243,8 +244,9 @@ class MusicService : MediaSessionService() {
         val duration =
             player.duration
 
-        if (duration <= 0)
+        if (duration <= 0) {
             return
+        }
 
         val safe =
             percent.coerceIn(
@@ -253,9 +255,7 @@ class MusicService : MediaSessionService() {
             )
 
         val position =
-            duration *
-            safe /
-            100
+            duration * safe / 100
 
         player.seekTo(position)
 
@@ -302,7 +302,7 @@ class MusicService : MediaSessionService() {
             200,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or
-            PendingIntent.FLAG_IMMUTABLE
+                    PendingIntent.FLAG_IMMUTABLE
         )
     }
 
@@ -312,6 +312,15 @@ class MusicService : MediaSessionService() {
     ): MediaSession? {
 
         return mediaSession
+    }
+
+    override fun onTaskRemoved(
+        rootIntent: Intent?
+    ) {
+
+        super.onTaskRemoved(
+            rootIntent
+        )
     }
 
     override fun onDestroy() {
