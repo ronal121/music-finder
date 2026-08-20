@@ -2,7 +2,6 @@ package com.kafshar.musicfinder
 
 import android.app.PendingIntent
 import android.content.Intent
-import android.os.Build
 import android.net.Uri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -12,7 +11,6 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
-import org.json.JSONArray
 
 class MusicService : MediaSessionService() {
 
@@ -30,26 +28,23 @@ class MusicService : MediaSessionService() {
         const val ACTION_STOP =
             "com.kafshar.musicfinder.STOP"
 
+        const val ACTION_NEXT =
+            "com.kafshar.musicfinder.NEXT"
+
+        const val ACTION_PREVIOUS =
+            "com.kafshar.musicfinder.PREVIOUS"
+
         const val ACTION_SEEK_PERCENT =
             "com.kafshar.musicfinder.SEEK_PERCENT"
 
         const val ACTION_GET_POSITION =
             "com.kafshar.musicfinder.GET_POSITION"
 
-        const val EXTRA_URL =
-            "url"
-
-        const val EXTRA_TITLE =
-            "title"
-
-        const val EXTRA_PERCENT =
-            "percent"
-
-        const val EXTRA_ARTIST =
-            "artist"
-
-        const val EXTRA_COVER =
-            "cover"
+        const val EXTRA_URL = "url"
+        const val EXTRA_TITLE = "title"
+        const val EXTRA_PERCENT = "percent"
+        const val EXTRA_ARTIST = "artist"
+        const val EXTRA_COVER = "cover"
 
         const val UPDATE =
             "com.kafshar.musicfinder.PLAYER_UPDATE"
@@ -58,10 +53,6 @@ class MusicService : MediaSessionService() {
     private lateinit var player: ExoPlayer
 
     private var mediaSession: MediaSession? = null
-
-    private var currentArtist = ""
-
-    private var autoQueueBuilt = false
 
     override fun onCreate() {
 
@@ -99,21 +90,12 @@ class MusicService : MediaSessionService() {
                 override fun onIsPlayingChanged(
                     isPlaying: Boolean
                 ) {
-
                     sendPlayerUpdate()
                 }
 
                 override fun onPlaybackStateChanged(
                     playbackState: Int
                 ) {
-
-                    if (
-                        playbackState ==
-                        Player.STATE_ENDED
-                    ) {
-
-                        playNextAutomatically()
-                    }
 
                     sendPlayerUpdate()
                 }
@@ -123,37 +105,18 @@ class MusicService : MediaSessionService() {
                     reason: Int
                 ) {
 
-                    if (
-                        mediaItem != null
-                    ) {
-
-                        val artist =
-                            mediaItem.mediaMetadata.artist
-                                ?.toString()
-                                ?: ""
-
-                        if (
-                            artist.isNotBlank()
-                        ) {
-
-                            currentArtist =
-                                artist
-                        }
+                    if (mediaItem != null) {
+                        saveToHistory(mediaItem)
                     }
 
                     sendPlayerUpdate()
                 }
 
                 override fun onPositionDiscontinuity(
-                    oldPosition:
-                        Player.PositionInfo,
-
-                    newPosition:
-                        Player.PositionInfo,
-
+                    oldPosition: Player.PositionInfo,
+                    newPosition: Player.PositionInfo,
                     reason: Int
                 ) {
-
                     sendPlayerUpdate()
                 }
             }
@@ -166,35 +129,49 @@ class MusicService : MediaSessionService() {
         startId: Int
     ): Int {
 
-        when (
-            intent?.action
-        ) {
+        when (intent?.action) {
 
             ACTION_PLAY -> {
-
                 playUrl(intent)
             }
 
             ACTION_PAUSE -> {
-
                 player.pause()
-
                 sendPlayerUpdate()
             }
 
             ACTION_TOGGLE -> {
 
-                if (
-                    player.isPlaying
-                ) {
-
+                if (player.isPlaying) {
                     player.pause()
-
                 } else {
-
                     player.play()
                 }
 
+                sendPlayerUpdate()
+            }
+
+            ACTION_NEXT -> {
+
+                if (player.hasNextMediaItem()) {
+                    player.seekToNextMediaItem()
+                } else {
+                    player.seekTo(0)
+                }
+
+                player.play()
+                sendPlayerUpdate()
+            }
+
+            ACTION_PREVIOUS -> {
+
+                if (player.hasPreviousMediaItem()) {
+                    player.seekToPreviousMediaItem()
+                } else {
+                    player.seekTo(0)
+                }
+
+                player.play()
                 sendPlayerUpdate()
             }
 
@@ -210,7 +187,6 @@ class MusicService : MediaSessionService() {
             }
 
             ACTION_GET_POSITION -> {
-
                 sendPlayerUpdate()
             }
 
@@ -236,9 +212,7 @@ class MusicService : MediaSessionService() {
                 EXTRA_URL
             )
 
-        if (
-            url.isNullOrBlank()
-        ) {
+        if (url.isNullOrBlank()) {
             return
         }
 
@@ -257,11 +231,13 @@ class MusicService : MediaSessionService() {
                 EXTRA_COVER
             ) ?: ""
 
-        currentArtist =
-            artist
-
-        autoQueueBuilt =
-            false
+        val current =
+            createMediaItem(
+                url,
+                title,
+                artist,
+                cover
+            )
 
         val queue =
             buildRelatedQueue(
@@ -271,37 +247,25 @@ class MusicService : MediaSessionService() {
                 cover
             )
 
-        if (
-            queue.isEmpty()
-        ) {
-
-            val item =
-                createMediaItem(
-                    url,
-                    title,
-                    artist,
-                    cover
-                )
-
-            player.setMediaItem(
-                item
-            )
-
-        } else {
+        if (queue.size > 1) {
 
             player.setMediaItems(
                 queue,
                 0,
                 0L
             )
+
+        } else {
+
+            player.setMediaItem(
+                current
+            )
         }
 
         player.prepare()
-
         player.play()
 
-        autoQueueBuilt =
-            true
+        saveToHistory(current)
 
         sendPlayerUpdate()
     }
@@ -337,9 +301,7 @@ class MusicService : MediaSessionService() {
                 ""
             ) ?: ""
 
-        if (
-            data.isBlank()
-        ) {
+        if (data.isBlank()) {
             return result
         }
 
@@ -352,9 +314,7 @@ class MusicService : MediaSessionService() {
                 val parts =
                     line.split("|||")
 
-                if (
-                    parts.size >= 5
-                ) {
+                if (parts.size >= 5) {
 
                     val song =
                         SongResult(
@@ -369,17 +329,12 @@ class MusicService : MediaSessionService() {
                         song.url.isNotBlank() &&
                         song.url != currentUrl
                     ) {
-
-                        candidates.add(
-                            song
-                        )
+                        candidates.add(song)
                     }
                 }
             }
 
-        if (
-            candidates.isEmpty()
-        ) {
+        if (candidates.isEmpty()) {
             return result
         }
 
@@ -399,42 +354,65 @@ class MusicService : MediaSessionService() {
                 val songArtist =
                     song.artist.lowercase()
 
-                artistWords.any {
-                    word ->
+                artistWords.any { word ->
                     songArtist.contains(word)
                 }
             }
 
+        val sameTitleStyle =
+            candidates.filter { song ->
+
+                val title =
+                    song.title.lowercase()
+
+                currentTitle
+                    .lowercase()
+                    .split(
+                        Regex("[\\s,،\\-_|]+")
+                    )
+                    .filter {
+                        it.length >= 2
+                    }
+                    .any {
+                        title.contains(it)
+                    }
+            }
+
         val source =
-            if (
-                sameArtist.isNotEmpty()
-            )
-                sameArtist
-            else
-                candidates
+            when {
 
-        val shuffled =
-            source.shuffled()
+                sameArtist.size >= 2 ->
+                    sameArtist
 
-        val selected =
-            shuffled.take(
+                sameTitleStyle.isNotEmpty() ->
+                    sameTitleStyle
+
+                sameArtist.isNotEmpty() ->
+                    sameArtist
+
+                else ->
+                    candidates
+            }
+
+        source
+            .shuffled()
+            .take(
                 minOf(
                     25,
-                    shuffled.size
+                    source.size
                 )
             )
+            .forEach { song ->
 
-        selected.forEach { song ->
-
-            result.add(
-                createMediaItem(
-                    song.url,
-                    song.title,
-                    song.artist,
-                    song.cover
+                result.add(
+                    createMediaItem(
+                        song.url,
+                        song.title,
+                        song.artist,
+                        song.cover
+                    )
                 )
-            )
-        }
+            }
 
         return result
     }
@@ -452,9 +430,7 @@ class MusicService : MediaSessionService() {
                 .setArtist(artist)
                 .apply {
 
-                    if (
-                        cover.isNotBlank()
-                    ) {
+                    if (cover.isNotBlank()) {
 
                         setArtworkUri(
                             Uri.parse(cover)
@@ -470,37 +446,77 @@ class MusicService : MediaSessionService() {
             .build()
     }
 
-    private fun playNextAutomatically() {
+    private fun saveToHistory(
+        item: MediaItem
+    ) {
 
-        if (
-            player.mediaItemCount <= 1
-        ) {
+        val url =
+            item.mediaId
+
+        if (url.isBlank()) {
             return
         }
 
-        if (
-            player.hasNextMediaItem()
-        ) {
-
-            player.seekToNextMediaItem()
-
-            player.prepare()
-
-            player.play()
-
-            sendPlayerUpdate()
-
-        } else {
-
-            player.seekTo(
-                0,
-                0L
+        val prefs =
+            getSharedPreferences(
+                "music_history",
+                MODE_PRIVATE
             )
 
-            player.play()
+        val old =
+            prefs.getString(
+                "items",
+                ""
+            ) ?: ""
 
-            sendPlayerUpdate()
+        val title =
+            item.mediaMetadata.title
+                ?.toString()
+                ?: ""
+
+        val artist =
+            item.mediaMetadata.artist
+                ?.toString()
+                ?: ""
+
+        val cover =
+            item.mediaMetadata.artworkUri
+                ?.toString()
+                ?: ""
+
+        val newLine =
+            listOf(
+                url,
+                title,
+                artist,
+                cover
+            ).joinToString("|||")
+
+        val lines =
+            old.split("\n")
+                .filter {
+                    it.isNotBlank() &&
+                    !it.startsWith("$url|||")
+                }
+                .toMutableList()
+
+        lines.add(
+            0,
+            newLine
+        )
+
+        while (lines.size > 100) {
+            lines.removeAt(
+                lines.lastIndex
+            )
         }
+
+        prefs.edit()
+            .putString(
+                "items",
+                lines.joinToString("\n")
+            )
+            .apply()
     }
 
     private fun seekPercent(
@@ -510,9 +526,7 @@ class MusicService : MediaSessionService() {
         val duration =
             player.duration
 
-        if (
-            duration <= 0
-        ) {
+        if (duration <= 0) {
             return
         }
 
@@ -524,24 +538,23 @@ class MusicService : MediaSessionService() {
 
         val position =
             duration *
-            safe /
-            100
+                    safe /
+                    100
 
-        player.seekTo(
-            position
-        )
+        player.seekTo(position)
 
         sendPlayerUpdate()
     }
 
     private fun sendPlayerUpdate() {
 
+        val item =
+            player.currentMediaItem
+
         val intent =
             Intent(UPDATE).apply {
 
-                setPackage(
-                    packageName
-                )
+                setPackage(packageName)
 
                 putExtra(
                     "playing",
@@ -560,8 +573,7 @@ class MusicService : MediaSessionService() {
 
                 putExtra(
                     "title",
-                    player.currentMediaItem
-                        ?.mediaMetadata
+                    item?.mediaMetadata
                         ?.title
                         ?.toString()
                         ?: ""
@@ -569,8 +581,7 @@ class MusicService : MediaSessionService() {
 
                 putExtra(
                     "artist",
-                    player.currentMediaItem
-                        ?.mediaMetadata
+                    item?.mediaMetadata
                         ?.artist
                         ?.toString()
                         ?: ""
@@ -615,16 +626,11 @@ class MusicService : MediaSessionService() {
         rootIntent: Intent?
     ) {
 
-        if (
-            player.isPlaying
-        ) {
-
+        if (player.isPlaying) {
             player.play()
         }
 
-        super.onTaskRemoved(
-            rootIntent
-        )
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
