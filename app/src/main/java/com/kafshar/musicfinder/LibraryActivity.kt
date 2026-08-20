@@ -3,9 +3,9 @@ package com.kafshar.musicfinder
 import android.app.Activity
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
-import android.view.View
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -25,9 +25,11 @@ class LibraryActivity : Activity() {
     override fun onCreate(
         savedInstanceState: Bundle?
     ) {
+
         super.onCreate(savedInstanceState)
 
         createLayout()
+
         loadLibrary()
     }
 
@@ -35,6 +37,7 @@ class LibraryActivity : Activity() {
 
         val root =
             LinearLayout(this).apply {
+
                 orientation =
                     LinearLayout.VERTICAL
 
@@ -45,6 +48,7 @@ class LibraryActivity : Activity() {
 
         val header =
             LinearLayout(this).apply {
+
                 orientation =
                     LinearLayout.HORIZONTAL
 
@@ -61,15 +65,22 @@ class LibraryActivity : Activity() {
 
         val backButton =
             TextView(this).apply {
-                text = "‹"
-                textSize = 36f
+
+                text =
+                    "‹"
+
+                textSize =
+                    36f
+
                 setTextColor(
                     0xFFFFFFFF.toInt()
                 )
+
                 gravity =
                     Gravity.CENTER
 
                 setOnClickListener {
+
                     finish()
                 }
             }
@@ -84,11 +95,17 @@ class LibraryActivity : Activity() {
 
         val title =
             TextView(this).apply {
-                text = "Library"
-                textSize = 23f
+
+                text =
+                    "Library"
+
+                textSize =
+                    23f
+
                 setTextColor(
                     0xFFFFFFFF.toInt()
                 )
+
                 gravity =
                     Gravity.CENTER_VERTICAL
             }
@@ -109,6 +126,7 @@ class LibraryActivity : Activity() {
 
         libraryContainer =
             LinearLayout(this).apply {
+
                 orientation =
                     LinearLayout.VERTICAL
 
@@ -121,11 +139,7 @@ class LibraryActivity : Activity() {
             }
 
         scroll.addView(
-            libraryContainer,
-            ScrollView.LayoutParams(
-                ScrollView.LayoutParams.MATCH_PARENT,
-                ScrollView.LayoutParams.WRAP_CONTENT
-            )
+            libraryContainer
         )
 
         root.addView(
@@ -147,7 +161,9 @@ class LibraryActivity : Activity() {
         val songs =
             LibraryManager.get(this)
 
-        if (songs.isEmpty()) {
+        if (
+            songs.isEmpty()
+        ) {
 
             val empty =
                 TextView(this).apply {
@@ -217,13 +233,13 @@ class LibraryActivity : Activity() {
                 )
             }
 
-        val params =
+        val rowParams =
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
 
-        params.setMargins(
+        rowParams.setMargins(
             0,
             0,
             0,
@@ -231,7 +247,7 @@ class LibraryActivity : Activity() {
         )
 
         row.layoutParams =
-            params
+            rowParams
 
         val cover =
             ImageView(this).apply {
@@ -283,8 +299,8 @@ class LibraryActivity : Activity() {
                     runOnUiThread {
 
                         if (
-                            !isFinishing &&
-                            bitmap != null
+                            bitmap != null &&
+                            !isFinishing
                         ) {
 
                             cover.setImageBitmap(
@@ -302,6 +318,7 @@ class LibraryActivity : Activity() {
 
         val textContainer =
             LinearLayout(this).apply {
+
                 orientation =
                     LinearLayout.VERTICAL
 
@@ -315,13 +332,6 @@ class LibraryActivity : Activity() {
                     0
                 )
             }
-
-        val textParams =
-            LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
-            )
 
         val title =
             TextView(this).apply {
@@ -351,7 +361,6 @@ class LibraryActivity : Activity() {
 
                 setTextColor(
                     0xFFAAAAAA.toInt()
-                )
 
                 maxLines =
                     2
@@ -362,7 +371,11 @@ class LibraryActivity : Activity() {
 
         row.addView(
             textContainer,
-            textParams
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
         )
 
         val deleteButton =
@@ -377,15 +390,15 @@ class LibraryActivity : Activity() {
                 gravity =
                     Gravity.CENTER
 
+                setTextColor(
+                    0xFFFFFFFF.toInt()
+                )
+
                 setPadding(
-                    12,
+                    10,
                     10,
                     8,
                     10
-                )
-
-                setTextColor(
-                    0xFFFFFFFF.toInt()
                 )
 
                 setOnClickListener {
@@ -453,7 +466,7 @@ class LibraryActivity : Activity() {
             }
 
         if (
-            android.os.Build.VERSION.SDK_INT >= 26
+            Build.VERSION.SDK_INT >= 26
         ) {
 
             startForegroundService(
