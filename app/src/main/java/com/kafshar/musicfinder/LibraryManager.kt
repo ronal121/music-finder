@@ -12,24 +12,31 @@ object LibraryManager {
     private const val KEY =
         "songs"
 
-    fun get(
-        context: Context
-    ): MutableList<SongResult> {
+    private const val MAX_ITEMS = 200
 
-        val prefs =
-            context.getSharedPreferences(
+    private fun prefs(
+        context: Context
+    ) =
+        context.applicationContext
+            .getSharedPreferences(
                 PREF,
                 Context.MODE_PRIVATE
             )
 
-        val raw =
-            prefs.getString(
-                KEY,
-                "[]"
-            ) ?: "[]"
+    fun get(
+        context: Context
+    ): MutableList<SongResult> {
 
         val result =
             mutableListOf<SongResult>()
+
+        val raw =
+            prefs(context)
+                .getString(
+                    KEY,
+                    "[]"
+                )
+                ?: "[]"
 
         try {
 
@@ -37,44 +44,65 @@ object LibraryManager {
                 JSONArray(raw)
 
             for (
-                i in 0 until array.length()
+                i in 0 until
+                        minOf(
+                            array.length(),
+                            MAX_ITEMS
+                        )
             ) {
 
                 val obj =
-                    array.getJSONObject(i)
+                    array.optJSONObject(i)
+                        ?: continue
+
+                val url =
+                    obj.optString("url")
+                        .trim()
+
+                if (url.isBlank()) {
+                    continue
+                }
 
                 result.add(
                     SongResult(
-                        url =
-                            obj.optString("url"),
-
+                        url = url,
                         title =
-                            obj.optString("title"),
-
+                            obj.optString(
+                                "title"
+                            ),
                         artist =
-                            obj.optString("artist"),
-
+                            obj.optString(
+                                "artist"
+                            ),
                         site =
-                            obj.optString("site"),
-
+                            obj.optString(
+                                "site"
+                            ),
                         cover =
-                            obj.optString("cover")
+                            obj.optString(
+                                "cover"
+                            )
                     )
                 )
             }
 
-        } catch (
-            _: Exception
-        ) {
+        } catch (_: Exception) {
         }
 
         return result
     }
 
+    @Synchronized
     fun add(
         context: Context,
         song: SongResult
     ) {
+
+        if (
+            song.url.isBlank()
+        ) {
+            return
+        }
 
         val list =
             get(context)
@@ -87,7 +115,15 @@ object LibraryManager {
             return
         }
 
-        list.add(song)
+        list.add(0, song)
+
+        while (
+            list.size > MAX_ITEMS
+        ) {
+            list.removeAt(
+                list.lastIndex
+            )
+        }
 
         save(
             context,
@@ -95,6 +131,7 @@ object LibraryManager {
         )
     }
 
+    @Synchronized
     fun remove(
         context: Context,
         song: SongResult
@@ -118,6 +155,12 @@ object LibraryManager {
         song: SongResult
     ): Boolean {
 
+        if (
+            song.url.isBlank()
+        ) {
+            return false
+        }
+
         return get(context).any {
             it.url == song.url
         }
@@ -128,52 +171,55 @@ object LibraryManager {
         list: List<SongResult>
     ) {
 
-        val array =
-            JSONArray()
+        try {
 
-        list.forEach {
+            val array =
+                JSONArray()
 
-            val obj =
-                JSONObject()
+            list.take(MAX_ITEMS)
+                .forEach {
 
-            obj.put(
-                "url",
-                it.url
-            )
+                    val obj =
+                        JSONObject().apply {
 
-            obj.put(
-                "title",
-                it.title
-            )
+                            put(
+                                "url",
+                                it.url
+                            )
 
-            obj.put(
-                "artist",
-                it.artist
-            )
+                            put(
+                                "title",
+                                it.title
+                            )
 
-            obj.put(
-                "site",
-                it.site
-            )
+                            put(
+                                "artist",
+                                it.artist
+                            )
 
-            obj.put(
-                "cover",
-                it.cover
-            )
+                            put(
+                                "site",
+                                it.site
+                            )
 
-            array.put(obj)
+                            put(
+                                "cover",
+                                it.cover
+                            )
+                        }
+
+                    array.put(obj)
+                }
+
+            prefs(context)
+                .edit()
+                .putString(
+                    KEY,
+                    array.toString()
+                )
+                .apply()
+
+        } catch (_: Exception) {
         }
-
-        context
-            .getSharedPreferences(
-                PREF,
-                Context.MODE_PRIVATE
-            )
-            .edit()
-            .putString(
-                KEY,
-                array.toString()
-            )
-            .apply()
     }
 }
