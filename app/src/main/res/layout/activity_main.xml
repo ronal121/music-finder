@@ -234,6 +234,22 @@
             android:textColor="#AAAAAA"
             android:visibility="gone"/>
 
+        <TextView
+            android:id="@+id/historyButton"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:gravity="center"
+            android:text="🕘 History"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"/>
+
+        <LinearLayout
+            android:id="@+id/historyContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"/>
+
         <LinearLayout
             android:id="@+id/resultsContainer"
             android:layout_width="match_parent"
