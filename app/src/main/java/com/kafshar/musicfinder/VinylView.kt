@@ -1,59 +1,30 @@
 package com.kafshar.musicfinder
 
+import android.animation.ObjectAnimator
 import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.RectF
+import android.graphics.*
 import android.util.AttributeSet
 import android.view.View
-import kotlin.math.min
+import android.view.animation.LinearInterpolator
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.Executors
 
 class VinylView @JvmOverloads constructor(
     context: Context,
-    attrs: AttributeSet? = null,
-    defStyleAttr: Int = 0
-) : View(
-    context,
-    attrs,
-    defStyleAttr
-) {
+    attrs: AttributeSet? = null
+) : View(context, attrs) {
 
-    private val vinylPaint =
+    private val paint =
         Paint(Paint.ANTI_ALIAS_FLAG)
 
-    private val groovePaint =
-        Paint(Paint.ANTI_ALIAS_FLAG)
+    private var coverBitmap: Bitmap? = null
 
-    private val centerPaint =
-        Paint(Paint.ANTI_ALIAS_FLAG)
+    private val executor =
+        Executors.newSingleThreadExecutor()
 
-    private val labelPaint =
-        Paint(Paint.ANTI_ALIAS_FLAG)
-
-    private val highlightPaint =
-        Paint(Paint.ANTI_ALIAS_FLAG)
-
-    private var rotationAngle = 0f
-
-    private val rotationRunnable =
-        object : Runnable {
-
-            override fun run() {
-
-                rotationAngle += 1.5f
-
-                if (rotationAngle >= 360f) {
-                    rotationAngle -= 360f
-                }
-
-                invalidate()
-
-                postDelayed(
-                    this,
-                    16L
-                )
-            }
-        }
+    private var rotationAnimator:
+        ObjectAnimator? = null
 
     init {
 
@@ -61,19 +32,94 @@ class VinylView @JvmOverloads constructor(
             View.LAYER_TYPE_SOFTWARE,
             null
         )
-
-        post(
-            rotationRunnable
-        )
     }
 
-    override fun onDetachedFromWindow() {
+    fun setCover(
+        url: String
+    ) {
 
-        removeCallbacks(
-            rotationRunnable
-        )
+        if (url.isBlank()) {
 
-        super.onDetachedFromWindow()
+            coverBitmap = null
+
+            invalidate()
+
+            return
+        }
+
+        executor.execute {
+
+            try {
+
+                val connection =
+                    URL(url)
+                        .openConnection()
+                        as HttpURLConnection
+
+                connection.connectTimeout =
+                    7000
+
+                connection.readTimeout =
+                    7000
+
+                connection.connect()
+
+                val bitmap =
+                    BitmapFactory.decodeStream(
+                        connection.inputStream
+                    )
+
+                connection.disconnect()
+
+                if (bitmap != null) {
+
+                    post {
+
+                        coverBitmap =
+                            bitmap
+
+                        invalidate()
+                    }
+                }
+
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    fun startRotation() {
+
+        if (
+            rotationAnimator?.isRunning == true
+        ) {
+            return
+        }
+
+        rotationAnimator =
+            ObjectAnimator.ofFloat(
+                this,
+                View.ROTATION,
+                rotation,
+                rotation + 360f
+            ).apply {
+
+                duration = 7000
+
+                interpolator =
+                    LinearInterpolator()
+
+                repeatCount =
+                    ObjectAnimator.INFINITE
+
+                start()
+            }
+    }
+
+    fun stopRotation() {
+
+        rotationAnimator?.cancel()
+
+        rotationAnimator = null
     }
 
     override fun onDraw(
@@ -82,155 +128,153 @@ class VinylView @JvmOverloads constructor(
 
         super.onDraw(canvas)
 
-        val size =
-            min(
-                width,
-                height
-            )
-
-        val centerX =
+        val cx =
             width / 2f
 
-        val centerY =
+        val cy =
             height / 2f
 
         val radius =
-            size / 2f - 8f
+            minOf(
+                width,
+                height
+            ) / 2f - 8f
 
-        canvas.save()
-
-        canvas.rotate(
-            rotationAngle,
-            centerX,
-            centerY
-        )
-
-        // سایه صفحه
-        vinylPaint.style =
+        paint.style =
             Paint.Style.FILL
 
-        vinylPaint.color =
-            0x55000000
-
-        vinylPaint.setShadowLayer(
-            18f,
-            0f,
-            8f,
-            0x88000000.toInt()
-        )
+        paint.color =
+            Color.rgb(
+                22,
+                22,
+                25
+            )
 
         canvas.drawCircle(
-            centerX,
-            centerY,
+            cx,
+            cy,
             radius,
-            vinylPaint
+            paint
         )
 
-        vinylPaint.clearShadowLayer()
-
-        // خود صفحه
-        vinylPaint.color =
-            0xFF111116.toInt()
-
-        canvas.drawCircle(
-            centerX,
-            centerY,
-            radius,
-            vinylPaint
-        )
-
-        // شیارهای صفحه
-        groovePaint.style =
+        paint.style =
             Paint.Style.STROKE
 
-        groovePaint.strokeWidth =
-            1.2f
+        paint.strokeWidth = 3f
 
-        groovePaint.color =
-            0xFF292930.toInt()
+        paint.color =
+            Color.rgb(
+                55,
+                55,
+                60
+            )
 
-        var grooveRadius =
-            radius - 12f
+        canvas.drawCircle(
+            cx,
+            cy,
+            radius - 4,
+            paint
+        )
 
-        while (
-            grooveRadius > 35f
-        ) {
+        val bitmap =
+            coverBitmap
+
+        if (bitmap != null) {
+
+            paint.style =
+                Paint.Style.FILL
+
+            val coverRadius =
+                radius * 0.56f
+
+            val src =
+                Rect(
+                    0,
+                    0,
+                    bitmap.width,
+                    bitmap.height
+                )
+
+            val dst =
+                RectF(
+                    cx - coverRadius,
+                    cy - coverRadius,
+                    cx + coverRadius,
+                    cy + coverRadius
+                )
+
+            canvas.save()
+
+            val clipPath =
+                Path()
+
+            clipPath.addCircle(
+                cx,
+                cy,
+                coverRadius,
+                Path.Direction.CW
+            )
+
+            canvas.clipPath(
+                clipPath
+            )
+
+            canvas.drawBitmap(
+                bitmap,
+                src,
+                dst,
+                paint
+            )
+
+            canvas.restore()
+
+        } else {
+
+            paint.style =
+                Paint.Style.FILL
+
+            paint.color =
+                Color.rgb(
+                    45,
+                    45,
+                    50
+                )
 
             canvas.drawCircle(
-                centerX,
-                centerY,
-                grooveRadius,
-                groovePaint
+                cx,
+                cy,
+                radius * 0.56f,
+                paint
             )
-
-            grooveRadius -= 8f
         }
 
-        // انعکاس روی صفحه
-        highlightPaint.style =
-            Paint.Style.STROKE
-
-        highlightPaint.strokeWidth =
-            2f
-
-        highlightPaint.color =
-            0x44555560
-
-        val highlightRect =
-            RectF(
-                centerX - radius + 15f,
-                centerY - radius + 15f,
-                centerX + radius - 15f,
-                centerY + radius - 15f
-            )
-
-        canvas.drawArc(
-            highlightRect,
-            210f,
-            80f,
-            false,
-            highlightPaint
-        )
-
-        // لیبل وسط صفحه
-        centerPaint.style =
-            Paint.Style.FILL
-
-        centerPaint.color =
-            0xFF24242D.toInt()
+        paint.color =
+            Color.BLACK
 
         canvas.drawCircle(
-            centerX,
-            centerY,
-            radius * 0.27f,
-            centerPaint
+            cx,
+            cy,
+            radius * 0.09f,
+            paint
         )
 
-        // مرکز لیبل
-        labelPaint.style =
-            Paint.Style.FILL
-
-        labelPaint.color =
-            0xFF8B8B96.toInt()
+        paint.color =
+            Color.WHITE
 
         canvas.drawCircle(
-            centerX,
-            centerY,
-            radius * 0.075f,
-            labelPaint
+            cx,
+            cy,
+            radius * 0.025f,
+            paint
         )
+    }
 
-        // سوراخ وسط
-        centerPaint.color =
-            0xFF050509.toInt()
+    override fun onDetachedFromWindow() {
 
-        canvas.drawCircle(
-            centerX,
-            centerY,
-            radius * 0.028f,
-            centerPaint
-        )
+        stopRotation()
 
-        canvas.restore()
+        executor.shutdownNow()
+
+        super.onDetachedFromWindow()
     }
 }
