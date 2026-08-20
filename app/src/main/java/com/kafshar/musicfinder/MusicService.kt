@@ -34,27 +34,38 @@ class MusicService : MediaSessionService() {
         const val ACTION_GET_POSITION =
             "com.kafshar.musicfinder.GET_POSITION"
 
-        const val EXTRA_URL = "url"
+        const val EXTRA_URL =
+            "url"
 
-        const val EXTRA_TITLE = "title"
+        const val EXTRA_TITLE =
+            "title"
 
-        const val EXTRA_PERCENT = "percent"
+        const val EXTRA_PERCENT =
+            "percent"
 
-        const val EXTRA_ARTIST = "artist"
+        const val EXTRA_ARTIST =
+            "artist"
 
-        const val EXTRA_COVER = "cover"
+        const val EXTRA_COVER =
+            "cover"
+
+        const val UPDATE =
+            "com.kafshar.musicfinder.PLAYER_UPDATE"
     }
 
     private lateinit var player: ExoPlayer
 
-    private var mediaSession: MediaSession? = null
+    private var mediaSession:
+            MediaSession? = null
 
     override fun onCreate() {
 
         super.onCreate()
 
         player =
-            ExoPlayer.Builder(this)
+            ExoPlayer.Builder(
+                this
+            )
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         .setContentType(
@@ -79,17 +90,20 @@ class MusicService : MediaSessionService() {
                 .build()
 
         player.addListener(
-            object : Player.Listener {
+            object :
+                Player.Listener {
 
                 override fun onIsPlayingChanged(
                     isPlaying: Boolean
                 ) {
+
                     sendPlayerUpdate()
                 }
 
                 override fun onPlaybackStateChanged(
                     playbackState: Int
                 ) {
+
                     sendPlayerUpdate()
                 }
 
@@ -97,14 +111,20 @@ class MusicService : MediaSessionService() {
                     mediaItem: MediaItem?,
                     reason: Int
                 ) {
+
                     sendPlayerUpdate()
                 }
 
                 override fun onPositionDiscontinuity(
-                    oldPosition: Player.PositionInfo,
-                    newPosition: Player.PositionInfo,
+                    oldPosition:
+                    Player.PositionInfo,
+
+                    newPosition:
+                    Player.PositionInfo,
+
                     reason: Int
                 ) {
+
                     sendPlayerUpdate()
                 }
             }
@@ -117,7 +137,9 @@ class MusicService : MediaSessionService() {
         startId: Int
     ): Int {
 
-        when (intent?.action) {
+        when (
+            intent?.action
+        ) {
 
             ACTION_PLAY -> {
 
@@ -129,24 +151,33 @@ class MusicService : MediaSessionService() {
                 val title =
                     intent.getStringExtra(
                         EXTRA_TITLE
-                    ) ?: "Music Finder"
+                    )
+                        ?: "Music Finder"
 
                 val artist =
                     intent.getStringExtra(
                         EXTRA_ARTIST
-                    ) ?: "Music Finder"
+                    )
+                        ?: "Music Finder"
 
                 val cover =
                     intent.getStringExtra(
                         EXTRA_COVER
-                    ) ?: ""
+                    )
+                        ?: ""
 
-                if (!url.isNullOrBlank()) {
+                if (
+                    !url.isNullOrBlank()
+                ) {
 
                     val metadata =
                         MediaMetadata.Builder()
-                            .setTitle(title)
-                            .setArtist(artist)
+                            .setTitle(
+                                title
+                            )
+                            .setArtist(
+                                artist
+                            )
                             .apply {
 
                                 if (
@@ -164,14 +195,20 @@ class MusicService : MediaSessionService() {
 
                     val item =
                         MediaItem.Builder()
-                            .setUri(url)
-                            .setMediaId(url)
+                            .setUri(
+                                url
+                            )
+                            .setMediaId(
+                                url
+                            )
                             .setMediaMetadata(
                                 metadata
                             )
                             .build()
 
-                    player.setMediaItem(item)
+                    player.setMediaItem(
+                        item
+                    )
 
                     player.prepare()
 
@@ -180,14 +217,20 @@ class MusicService : MediaSessionService() {
             }
 
             ACTION_PAUSE -> {
+
                 player.pause()
             }
 
             ACTION_TOGGLE -> {
 
-                if (player.isPlaying) {
+                if (
+                    player.isPlaying
+                ) {
+
                     player.pause()
+
                 } else {
+
                     player.play()
                 }
             }
@@ -200,10 +243,13 @@ class MusicService : MediaSessionService() {
                         0
                     )
 
-                seekPercent(percent)
+                seekPercent(
+                    percent
+                )
             }
 
             ACTION_GET_POSITION -> {
+
                 sendPlayerUpdate()
             }
 
@@ -242,7 +288,9 @@ class MusicService : MediaSessionService() {
                     safe /
                     100
 
-        player.seekTo(position)
+        player.seekTo(
+            position
+        )
 
         sendPlayerUpdate()
     }
@@ -251,7 +299,7 @@ class MusicService : MediaSessionService() {
 
         val intent =
             Intent(
-                "com.kafshar.musicfinder.PLAYER_UPDATE"
+                UPDATE
             ).apply {
 
                 setPackage(
@@ -274,7 +322,9 @@ class MusicService : MediaSessionService() {
                 )
             }
 
-        sendBroadcast(intent)
+        sendBroadcast(
+            intent
+        )
     }
 
     private fun createOpenAppPendingIntent():
@@ -306,11 +356,6 @@ class MusicService : MediaSessionService() {
     override fun onTaskRemoved(
         rootIntent: Intent?
     ) {
-
-        /*
-         * وقتی برنامه از Recent Apps بسته می‌شود،
-         * سرویس پخش همچنان فعال می‌ماند.
-         */
 
         super.onTaskRemoved(
             rootIntent
