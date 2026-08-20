@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -66,13 +67,14 @@ class MainActivity : Activity() {
     private lateinit var resultsContainer: LinearLayout
     private lateinit var vinyl: VinylView
 
-    private val songs = ArrayList<SongResult>()
+    private val songs =
+        ArrayList<SongResult>()
 
     private var currentIndex = -1
     private var currentAudioUrl = ""
+
     private var randomMode = false
 
-    private var searching = false
     private var searchGeneration = 0
 
     private var downloadThread: Thread? = null
@@ -327,15 +329,18 @@ class MainActivity : Activity() {
             sendServiceAction(
                 MusicService.ACTION_TOGGLE,
                 currentAudioUrl,
-                titleText.text.toString()
+                titleText.text.toString(),
+                artistText.text.toString()
             )
         }
 
         previousButton.setOnClickListener {
+
             previousSong()
         }
 
         nextButton.setOnClickListener {
+
             nextSong()
         }
 
@@ -348,8 +353,7 @@ class MainActivity : Activity() {
                 if (randomMode)
                     "🔀"
                 else
-                    "↕"
-
+                    "🔁"
         }
 
         seekBar.setOnSeekBarChangeListener(
@@ -362,14 +366,18 @@ class MainActivity : Activity() {
                     fromUser: Boolean
                 ) {
 
-                    if (fromUser) {
+                    if (
+                        fromUser
+                    ) {
 
                         val duration =
                             parseTime(
                                 durationText.text.toString()
                             )
 
-                        if (duration > 0) {
+                        if (
+                            duration > 0
+                        ) {
 
                             val position =
                                 duration *
@@ -377,7 +385,9 @@ class MainActivity : Activity() {
                                 100
 
                             currentTimeText.text =
-                                formatTime(position)
+                                formatTime(
+                                    position
+                                )
                         }
                     }
                 }
@@ -415,18 +425,22 @@ class MainActivity : Activity() {
         )
 
         downloadButton.setOnClickListener {
+
             downloadCurrentSong()
         }
 
         pauseDownloadButton.setOnClickListener {
+
             toggleDownloadPause()
         }
 
         cancelDownloadButton.setOnClickListener {
+
             cancelDownload()
         }
 
         saveButton.setOnClickListener {
+
             saveCurrentSong()
         }
 
@@ -446,7 +460,9 @@ class MainActivity : Activity() {
         val text =
             query.text.toString().trim()
 
-        if (text.isEmpty()) {
+        if (
+            text.isEmpty()
+        ) {
 
             Toast.makeText(
                 this,
@@ -458,18 +474,33 @@ class MainActivity : Activity() {
         }
 
         searchGeneration++
-        searching = true
 
         songs.clear()
+
         currentIndex = -1
 
         resultsContainer.removeAllViews()
 
-        titleText.text = text
-        artistText.text = "در حال جستجو..."
+        titleText.text =
+            text
+
+        artistText.text =
+            "در حال جستجو..."
 
         status.text =
             "در حال جستجوی سایت‌ها..."
+
+        seekBar.progress =
+            0
+
+        currentTimeText.text =
+            "00:00"
+
+        durationText.text =
+            "00:00"
+
+        vinyl.clearCover()
+        vinyl.stopRotation()
 
         val searchQuery =
             "\"$text\" " +
@@ -574,7 +605,10 @@ class MainActivity : Activity() {
                 var h1 =
                     document.querySelector("h1");
 
-                if (!title && h1) {
+                if (
+                    !title &&
+                    h1
+                ) {
                     title =
                         h1.innerText || "";
                 }
@@ -612,7 +646,8 @@ class MainActivity : Activity() {
                     i++
                 ) {
 
-                    var el = media[i];
+                    var el =
+                        media[i];
 
                     var src =
                         el.src ||
@@ -666,20 +701,29 @@ class MainActivity : Activity() {
         url: String
     ): String {
 
-        val lower = url.lowercase()
+        val lower =
+            url.lowercase()
 
         return when {
 
-            lower.contains("rozmusic.com") ->
+            lower.contains(
+                "rozmusic.com"
+            ) ->
                 "RozMusic"
 
-            lower.contains("mybia2music.com") ->
+            lower.contains(
+                "mybia2music.com"
+            ) ->
                 "Bia2Music"
 
-            lower.contains("musicdel.ir") ->
+            lower.contains(
+                "musicdel.ir"
+            ) ->
                 "Musicdel"
 
-            lower.contains("musics-fa.com") ->
+            lower.contains(
+                "musics-fa.com"
+            ) ->
                 "Musics-FA"
 
             else ->
@@ -690,7 +734,9 @@ class MainActivity : Activity() {
     inner class Bridge {
 
         @JavascriptInterface
-        fun results(data: String) {
+        fun results(
+            data: String
+        ) {
 
             runOnUiThread {
 
@@ -699,10 +745,16 @@ class MainActivity : Activity() {
 
                 val items =
                     data.split("###")
-                        .map { it.trim() }
-                        .filter { it.isNotEmpty() }
+                        .map {
+                            it.trim()
+                        }
+                        .filter {
+                            it.isNotEmpty()
+                        }
 
-                if (items.isEmpty()) {
+                if (
+                    items.isEmpty()
+                ) {
 
                     status.text =
                         "نتیجه‌ای پیدا نشد"
@@ -722,14 +774,18 @@ class MainActivity : Activity() {
         }
 
         @JavascriptInterface
-        fun page(data: String) {
+        fun page(
+            data: String
+        ) {
 
             runOnUiThread {
 
                 val parts =
                     data.split("###")
 
-                if (parts.size < 4) {
+                if (
+                    parts.size < 4
+                ) {
                     return@runOnUiThread
                 }
 
@@ -753,7 +809,9 @@ class MainActivity : Activity() {
                         }
                         ?: ""
 
-                if (audio.isBlank()) {
+                if (
+                    audio.isBlank()
+                ) {
                     return@runOnUiThread
                 }
 
@@ -764,17 +822,26 @@ class MainActivity : Activity() {
                     SongResult(
                         url = audio,
                         title =
-                            if (title.isBlank())
+                            if (
+                                title.isBlank()
+                            )
                                 query.text.toString()
                             else
                                 cleanTitle(title),
+
                         artist =
-                            if (artist.isBlank())
+                            if (
+                                artist.isBlank()
+                            )
                                 query.text.toString()
                             else
                                 artist,
+
                         site =
-                            getSiteName(pageUrl),
+                            getSiteName(
+                                pageUrl
+                            ),
+
                         cover = cover
                     )
 
@@ -799,8 +866,6 @@ class MainActivity : Activity() {
             index >= items.size
         ) {
 
-            searching = false
-
             status.text =
                 if (songs.isEmpty())
                     "آهنگ قابل پخش پیدا نشد"
@@ -813,10 +878,6 @@ class MainActivity : Activity() {
             ) {
 
                 currentIndex = 0
-
-                playSong(
-                    songs[0]
-                )
             }
 
             saveSearchResults()
@@ -828,7 +889,9 @@ class MainActivity : Activity() {
             items[index]
                 .substringBefore("|||")
 
-        if (url.isBlank()) {
+        if (
+            url.isBlank()
+        ) {
 
             processResultPages(
                 items,
@@ -839,19 +902,34 @@ class MainActivity : Activity() {
             return
         }
 
-        web.loadUrl(url)
-
-        android.os.Handler(
-            mainLooper
-        ).postDelayed({
-
-            processResultPages(
-                items,
-                index + 1,
-                generation
+        val handler =
+            android.os.Handler(
+                mainLooper
             )
 
-        }, 1200)
+        var finished = false
+
+        val next =
+            Runnable {
+
+                if (!finished) {
+
+                    finished = true
+
+                    processResultPages(
+                        items,
+                        index + 1,
+                        generation
+                    )
+                }
+            }
+
+        handler.postDelayed(
+            next,
+            2500
+        )
+
+        web.loadUrl(url)
     }
 
     private fun addSong(
@@ -880,34 +958,64 @@ class MainActivity : Activity() {
     ) {
 
         val row =
-            LinearLayout(this)
+            LinearLayout(this).apply {
 
-        row.orientation =
-            LinearLayout.HORIZONTAL
+                orientation =
+                    LinearLayout.HORIZONTAL
 
-        row.gravity =
-            android.view.Gravity.CENTER_VERTICAL
+                gravity =
+                    Gravity.CENTER_VERTICAL
 
-        row.setPadding(
-            14,
-            14,
-            14,
-            14
-        )
+                setPadding(
+                    12,
+                    12,
+                    12,
+                    12
+                )
 
-        val cover =
-            ImageView(this)
+                setBackgroundColor(
+                    0xFF15151D.toInt()
+                )
+            }
 
-        cover.layoutParams =
+        val rowParams =
             LinearLayout.LayoutParams(
-                65,
-                65
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
             )
 
-        cover.scaleType =
-            ImageView.ScaleType.CENTER_CROP
+        rowParams.setMargins(
+            0,
+            0,
+            0,
+            8
+        )
 
-        if (song.cover.isNotBlank()) {
+        row.layoutParams =
+            rowParams
+
+        val cover =
+            ImageView(this).apply {
+
+                scaleType =
+                    ImageView.ScaleType.CENTER_CROP
+
+                setBackgroundColor(
+                    0xFF22222A.toInt()
+                )
+            }
+
+        row.addView(
+            cover,
+            LinearLayout.LayoutParams(
+                62,
+                62
+            )
+        )
+
+        if (
+            song.cover.isNotBlank()
+        ) {
 
             executor.execute {
 
@@ -924,6 +1032,8 @@ class MainActivity : Activity() {
                     connection.readTimeout =
                         5000
 
+                    connection.connect()
+
                     val bitmap =
                         BitmapFactory.decodeStream(
                             connection.inputStream
@@ -933,121 +1043,164 @@ class MainActivity : Activity() {
 
                     runOnUiThread {
 
-                        if (bitmap != null) {
-                            cover.setImageBitmap(bitmap)
+                        if (
+                            bitmap != null
+                        ) {
+
+                            cover.setImageBitmap(
+                                bitmap
+                            )
                         }
                     }
 
-                } catch (_: Exception) {
+                } catch (
+                    _: Exception
+                ) {
                 }
             }
         }
 
         val textLayout =
-            LinearLayout(this)
+            LinearLayout(this).apply {
 
-        textLayout.orientation =
-            LinearLayout.VERTICAL
+                orientation =
+                    LinearLayout.VERTICAL
 
-        textLayout.layoutParams =
+                setPadding(
+                    14,
+                    0,
+                    8,
+                    0
+                )
+            }
+
+        val textParams =
             LinearLayout.LayoutParams(
                 0,
-                -2,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
                 1f
             )
 
         val title =
-            TextView(this)
+            TextView(this).apply {
 
-        title.text =
-            "${index + 1}. ${song.title}"
+                text =
+                    "${index + 1}. ${song.title}"
 
-        title.textSize = 15f
+                textSize =
+                    15f
 
-        title.setTextColor(
-            0xFFFFFFFF.toInt()
-        )
+                setTextColor(
+                    0xFFFFFFFF.toInt()
+                )
+
+                maxLines =
+                    2
+            }
 
         val info =
-            TextView(this)
+            TextView(this).apply {
 
-        info.text =
-            "${song.artist}  •  ${song.site}"
+                text =
+                    "${song.artist} • ${song.site}"
 
-        info.textSize = 12f
+                textSize =
+                    12f
 
-        info.setTextColor(
-            0xFFAAAAAA.toInt()
-        )
-
-        val save =
-            TextView(this)
-
-        save.text =
-            if (
-                LibraryManager.contains(
-                    this,
-                    song
-                )
-            )
-                "♥"
-            else
-                "♡"
-
-        save.textSize = 26f
-
-        save.setPadding(
-            12,
-            8,
-            8,
-            8
-        )
-
-        save.setOnClickListener {
-
-            if (
-                LibraryManager.contains(
-                    this,
-                    song
-                )
-            ) {
-
-                LibraryManager.removeSong(
-                    this,
-                    song
+                setTextColor(
+                    0xFFAAAAAA.toInt()
                 )
 
-                save.text = "♡"
-
-                Toast.makeText(
-                    this,
-                    "از کتابخانه حذف شد",
-                    Toast.LENGTH_SHORT
-                ).show()
-
-            } else {
-
-                LibraryManager.saveSong(
-                    this,
-                    song
-                )
-
-                save.text = "♥"
-
-                Toast.makeText(
-                    this,
-                    "به کتابخانه اضافه شد",
-                    Toast.LENGTH_SHORT
-                ).show()
+                maxLines =
+                    2
             }
-        }
 
         textLayout.addView(title)
         textLayout.addView(info)
 
-        row.addView(cover)
-        row.addView(textLayout)
-        row.addView(save)
+        row.addView(
+            textLayout,
+            textParams
+        )
+
+        val save =
+            TextView(this).apply {
+
+                text =
+                    if (
+                        LibraryManager.contains(
+                            this@MainActivity,
+                            song
+                        )
+                    )
+                        "♥"
+                    else
+                        "♡"
+
+                textSize =
+                    25f
+
+                setTextColor(
+                    0xFFFFFFFF.toInt()
+                )
+
+                gravity =
+                    Gravity.CENTER
+
+                setPadding(
+                    10,
+                    8,
+                    8,
+                    8
+                )
+
+                setOnClickListener {
+
+                    if (
+                        LibraryManager.contains(
+                            this@MainActivity,
+                            song
+                        )
+                    ) {
+
+                        LibraryManager.remove(
+                            this@MainActivity,
+                            song
+                        )
+
+                        text = "♡"
+
+                        Toast.makeText(
+                            this@MainActivity,
+                            "از کتابخانه حذف شد",
+                            Toast.LENGTH_SHORT
+                        ).show()
+
+                    } else {
+
+                        LibraryManager.add(
+                            this@MainActivity,
+                            song
+                        )
+
+                        text = "♥"
+
+                        Toast.makeText(
+                            this@MainActivity,
+                            "به کتابخانه اضافه شد",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
+
+        row.addView(
+            save,
+            LinearLayout.LayoutParams(
+                52,
+                62
+            )
+        )
 
         row.setOnClickListener {
 
@@ -1057,7 +1210,9 @@ class MainActivity : Activity() {
             playSong(song)
         }
 
-        resultsContainer.addView(row)
+        resultsContainer.addView(
+            row
+        )
     }
 
     private fun saveCurrentSong() {
@@ -1072,7 +1227,7 @@ class MainActivity : Activity() {
         val song =
             songs[currentIndex]
 
-        LibraryManager.saveSong(
+        LibraryManager.add(
             this,
             song
         )
@@ -1095,16 +1250,32 @@ class MainActivity : Activity() {
             song.title
 
         artistText.text =
-            "${song.artist}  •  ${song.site}"
+            "${song.artist} • ${song.site}"
+
+        currentTimeText.text =
+            "00:00"
+
+        durationText.text =
+            "00:00"
+
+        seekBar.progress =
+            0
 
         status.text =
             "در حال پخش..."
 
-        vinyl.setCover(
-            song.cover
-        )
+        if (
+            song.cover.isNotBlank()
+        ) {
 
-        vinyl.startRotation()
+            vinyl.setCover(
+                song.cover
+            )
+
+        } else {
+
+            vinyl.clearCover()
+        }
 
         sendServiceAction(
             MusicService.ACTION_PLAY,
@@ -1117,22 +1288,31 @@ class MainActivity : Activity() {
 
     private fun nextSong() {
 
-        if (songs.isEmpty()) {
+        if (
+            songs.isEmpty()
+        ) {
             return
         }
 
         currentIndex =
             if (randomMode) {
 
-                if (songs.size == 1) {
+                if (
+                    songs.size == 1
+                ) {
+
                     0
+
                 } else {
 
                     var next: Int
 
                     do {
+
                         next =
-                            (0 until songs.size).random()
+                            (0 until songs.size)
+                                .random()
+
                     } while (
                         next == currentIndex
                     )
@@ -1142,8 +1322,9 @@ class MainActivity : Activity() {
 
             } else {
 
-                (currentIndex + 1) %
-                    songs.size
+                (
+                    currentIndex + 1
+                ) % songs.size
             }
 
         playSong(
@@ -1153,12 +1334,16 @@ class MainActivity : Activity() {
 
     private fun previousSong() {
 
-        if (songs.isEmpty()) {
+        if (
+            songs.isEmpty()
+        ) {
             return
         }
 
         currentIndex =
-            if (currentIndex <= 0)
+            if (
+                currentIndex <= 0
+            )
                 songs.size - 1
             else
                 currentIndex - 1
@@ -1176,7 +1361,9 @@ class MainActivity : Activity() {
         cover: String = ""
     ) {
 
-        if (url.isBlank()) {
+        if (
+            url.isBlank()
+        ) {
             return
         }
 
@@ -1186,7 +1373,8 @@ class MainActivity : Activity() {
                 MusicService::class.java
             ).apply {
 
-                this.action = action
+                this.action =
+                    action
 
                 putExtra(
                     MusicService.EXTRA_URL,
@@ -1213,7 +1401,9 @@ class MainActivity : Activity() {
             Build.VERSION.SDK_INT >= 26
         ) {
 
-            startForegroundService(intent)
+            startForegroundService(
+                intent
+            )
 
         } else {
 
@@ -1227,16 +1417,21 @@ class MainActivity : Activity() {
         duration: Long
     ) {
 
-        if (duration > 0) {
+        if (
+            duration > 0
+        ) {
 
             val percent =
                 (
                     position.toDouble() /
                     duration.toDouble() *
-                    100
+                    100.0
                 )
                     .toInt()
-                    .coerceIn(0, 100)
+                    .coerceIn(
+                        0,
+                        100
+                    )
 
             seekBar.progress =
                 percent
@@ -1271,7 +1466,9 @@ class MainActivity : Activity() {
         milliseconds: Long
     ): String {
 
-        if (milliseconds <= 0) {
+        if (
+            milliseconds <= 0
+        ) {
             return "00:00"
         }
 
@@ -1300,7 +1497,9 @@ class MainActivity : Activity() {
             val parts =
                 value.split(":")
 
-            if (parts.size != 2) {
+            if (
+                parts.size != 2
+            ) {
                 0L
             } else {
 
@@ -1316,7 +1515,9 @@ class MainActivity : Activity() {
                 ) * 1000
             }
 
-        } catch (_: Exception) {
+        } catch (
+            _: Exception
+        ) {
 
             0L
         }
@@ -1327,7 +1528,9 @@ class MainActivity : Activity() {
         val url =
             currentAudioUrl
 
-        if (url.isBlank()) {
+        if (
+            url.isBlank()
+        ) {
 
             Toast.makeText(
                 this,
@@ -1356,10 +1559,14 @@ class MainActivity : Activity() {
                 titleText.text.toString()
             ) + ".mp3"
 
-        cancelRequested = false
-        pauseDownloadRequested = false
+        cancelRequested =
+            false
 
-        downloadProgress.progress = 0
+        pauseDownloadRequested =
+            false
+
+        downloadProgress.progress =
+            0
 
         downloadProgress.visibility =
             View.VISIBLE
@@ -1409,20 +1616,28 @@ class MainActivity : Activity() {
 
                     runOnUiThread {
 
-                        downloadProgress.progress = 100
-                        downloadText.text = "100%"
-                        status.text = "دانلود کامل شد ✓"
+                        downloadProgress.progress =
+                            100
+
+                        downloadText.text =
+                            "100%"
+
+                        status.text =
+                            "دانلود کامل شد ✓"
 
                         resetDownloadButtons()
                     }
 
-                } catch (e: Exception) {
+                } catch (
+                    e: Exception
+                ) {
 
                     runOnUiThread {
 
                         status.text =
                             if (
-                                e.message == "CANCELLED"
+                                e.message ==
+                                "CANCELLED"
                             )
                                 "دانلود لغو شد"
                             else
@@ -1448,13 +1663,17 @@ class MainActivity : Activity() {
             !pauseDownloadRequested
 
         pauseDownloadButton.text =
-            if (pauseDownloadRequested)
+            if (
+                pauseDownloadRequested
+            )
                 "▶"
             else
                 "⏸"
 
         downloadText.text =
-            if (pauseDownloadRequested)
+            if (
+                pauseDownloadRequested
+            )
                 "دانلود متوقف شد"
             else
                 "در حال دانلود..."
@@ -1462,8 +1681,11 @@ class MainActivity : Activity() {
 
     private fun cancelDownload() {
 
-        cancelRequested = true
-        pauseDownloadRequested = false
+        cancelRequested =
+            true
+
+        pauseDownloadRequested =
+            false
 
         downloadText.text =
             "در حال لغو..."
@@ -1471,7 +1693,8 @@ class MainActivity : Activity() {
 
     private fun resetDownloadButtons() {
 
-        downloadButton.isEnabled = true
+        downloadButton.isEnabled =
+            true
 
         pauseDownloadButton.visibility =
             View.GONE
@@ -1514,7 +1737,9 @@ class MainActivity : Activity() {
                 android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
                 values
             )
-                ?: throw Exception("CREATE_FAILED")
+                ?: throw Exception(
+                    "CREATE_FAILED"
+                )
 
         try {
 
@@ -1523,14 +1748,19 @@ class MainActivity : Activity() {
                     .openConnection()
                         as HttpURLConnection
 
-            connection.connectTimeout = 15000
-            connection.readTimeout = 30000
+            connection.connectTimeout =
+                15000
+
+            connection.readTimeout =
+                30000
+
             connection.connect()
 
             val total =
                 connection.contentLengthLong
 
-            var downloaded = 0L
+            var downloaded =
+                0L
 
             BufferedInputStream(
                 connection.inputStream
@@ -1540,61 +1770,73 @@ class MainActivity : Activity() {
                     .openOutputStream(uri)
                     ?.use { output ->
 
-                        val buffer =
-                            ByteArray(8192)
+                    val buffer =
+                        ByteArray(8192)
 
-                        while (true) {
+                    while (true) {
 
-                            if (cancelRequested) {
-                                throw Exception("CANCELLED")
-                            }
+                        if (
+                            cancelRequested
+                        ) {
 
-                            while (
-                                pauseDownloadRequested &&
-                                !cancelRequested
-                            ) {
-                                Thread.sleep(200)
-                            }
-
-                            val count =
-                                input.read(buffer)
-
-                            if (count == -1) {
-                                break
-                            }
-
-                            output.write(
-                                buffer,
-                                0,
-                                count
+                            throw Exception(
+                                "CANCELLED"
                             )
+                        }
 
-                            downloaded += count
+                        while (
+                            pauseDownloadRequested &&
+                            !cancelRequested
+                        ) {
 
-                            if (total > 0) {
+                            Thread.sleep(200)
+                        }
 
-                                val percent =
-                                    (
-                                        downloaded.toDouble() /
-                                        total.toDouble() *
-                                        100
-                                    ).toInt()
+                        val count =
+                            input.read(buffer)
 
-                                runOnUiThread {
+                        if (
+                            count == -1
+                        ) {
+                            break
+                        }
 
-                                    downloadProgress.progress =
-                                        percent
+                        output.write(
+                            buffer,
+                            0,
+                            count
+                        )
 
-                                    if (
-                                        !pauseDownloadRequested
-                                    ) {
-                                        downloadText.text =
-                                            "$percent%"
-                                    }
+                        downloaded +=
+                            count
+
+                        if (
+                            total > 0
+                        ) {
+
+                            val percent =
+                                (
+                                    downloaded.toDouble() /
+                                    total.toDouble() *
+                                    100
+                                ).toInt()
+
+                            runOnUiThread {
+
+                                downloadProgress.progress =
+                                    percent
+
+                                if (
+                                    !pauseDownloadRequested
+                                ) {
+
+                                    downloadText.text =
+                                        "$percent%"
                                 }
                             }
                         }
                     }
+                }
             }
 
             connection.disconnect()
@@ -1612,7 +1854,9 @@ class MainActivity : Activity() {
                 null
             )
 
-        } catch (e: Exception) {
+        } catch (
+            e: Exception
+        ) {
 
             contentResolver.delete(
                 uri,
@@ -1630,11 +1874,14 @@ class MainActivity : Activity() {
     ) {
 
         val directory =
-            Environment.getExternalStoragePublicDirectory(
-                Environment.DIRECTORY_MUSIC
-            )
+            Environment
+                .getExternalStoragePublicDirectory(
+                    Environment.DIRECTORY_MUSIC
+                )
 
-        if (!directory.exists()) {
+        if (
+            !directory.exists()
+        ) {
             directory.mkdirs()
         }
 
@@ -1654,7 +1901,8 @@ class MainActivity : Activity() {
         val total =
             connection.contentLengthLong
 
-        var downloaded = 0L
+        var downloaded =
+            0L
 
         BufferedInputStream(
             connection.inputStream
@@ -1669,7 +1917,9 @@ class MainActivity : Activity() {
 
                 while (true) {
 
-                    if (cancelRequested) {
+                    if (
+                        cancelRequested
+                    ) {
 
                         file.delete()
 
@@ -1682,13 +1932,16 @@ class MainActivity : Activity() {
                         pauseDownloadRequested &&
                         !cancelRequested
                     ) {
+
                         Thread.sleep(200)
                     }
 
                     val count =
                         input.read(buffer)
 
-                    if (count == -1) {
+                    if (
+                        count == -1
+                    ) {
                         break
                     }
 
@@ -1698,9 +1951,12 @@ class MainActivity : Activity() {
                         count
                     )
 
-                    downloaded += count
+                    downloaded +=
+                        count
 
-                    if (total > 0) {
+                    if (
+                        total > 0
+                    ) {
 
                         val percent =
                             (
@@ -1755,7 +2011,9 @@ class MainActivity : Activity() {
                 "UTF-8"
             )
 
-        } catch (_: Exception) {
+        } catch (
+            _: Exception
+        ) {
 
             value
         }
@@ -1768,8 +2026,11 @@ class MainActivity : Activity() {
         var name =
             text.trim()
 
-        if (name.isEmpty()) {
-            name = "Music_Finder"
+        if (
+            name.isEmpty()
+        ) {
+            name =
+                "Music_Finder"
         }
 
         name =
@@ -1792,7 +2053,9 @@ class MainActivity : Activity() {
             )
 
         val data =
-            songs.joinToString("\n") {
+            songs.joinToString(
+                separator = "\n"
+            ) {
 
                 listOf(
                     it.url,
@@ -1800,7 +2063,8 @@ class MainActivity : Activity() {
                     it.artist,
                     it.site,
                     it.cover
-                ).joinToString("|||")
+                )
+                    .joinToString("|||")
             }
 
         prefs.edit()
@@ -1825,7 +2089,9 @@ class MainActivity : Activity() {
                 ""
             ) ?: ""
 
-        if (data.isBlank()) {
+        if (
+            data.isBlank()
+        ) {
             return
         }
 
@@ -1837,7 +2103,9 @@ class MainActivity : Activity() {
                 val p =
                     it.split("|||")
 
-                if (p.size >= 5) {
+                if (
+                    p.size >= 5
+                ) {
 
                     songs.add(
                         SongResult(
@@ -1861,9 +2129,12 @@ class MainActivity : Activity() {
             )
         }
 
-        if (songs.isNotEmpty()) {
+        if (
+            songs.isNotEmpty()
+        ) {
 
-            currentIndex = 0
+            currentIndex =
+                0
 
             status.text =
                 "${songs.size} نتیجه ذخیره شده"
@@ -1879,7 +2150,9 @@ class MainActivity : Activity() {
                 MusicService.UPDATE
             )
 
-        if (Build.VERSION.SDK_INT >= 33) {
+        if (
+            Build.VERSION.SDK_INT >= 33
+        ) {
 
             registerReceiver(
                 playerReceiver,
@@ -1895,39 +2168,35 @@ class MainActivity : Activity() {
             )
         }
 
-        try {
+        startService(
+            Intent(
+                this,
+                MusicService::class.java
+            ).apply {
 
-            val intent =
-                Intent(
-                    this,
-                    MusicService::class.java
-                ).apply {
-
-                    action =
-                        MusicService.ACTION_GET_POSITION
-                }
-
-            startService(intent)
-
-        } catch (_: Exception) {
-        }
+                action =
+                    MusicService.ACTION_GET_POSITION
+            }
+        )
     }
 
     override fun onPause() {
 
         try {
+
             unregisterReceiver(
                 playerReceiver
             )
-        } catch (_: Exception) {
+
+        } catch (
+            _: Exception
+        ) {
         }
 
         super.onPause()
     }
 
     override fun onDestroy() {
-
-        vinyl.stopRotation()
 
         web.destroy()
 
