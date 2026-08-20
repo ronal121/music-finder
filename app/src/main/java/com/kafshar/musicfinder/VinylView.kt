@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.View
@@ -19,7 +20,10 @@ class VinylView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     private val paint =
-        Paint(Paint.ANTI_ALIAS_FLAG)
+        Paint(
+            Paint.ANTI_ALIAS_FLAG or
+                    Paint.FILTER_BITMAP_FLAG
+        )
 
     private var coverBitmap: Bitmap? = null
 
@@ -35,13 +39,17 @@ class VinylView @JvmOverloads constructor(
 
             override fun run() {
 
-                if (!rotating) {
+                if (
+                    !rotating
+                ) {
                     return
                 }
 
                 rotation += 1.2f
 
-                if (rotation >= 360f) {
+                if (
+                    rotation >= 360f
+                ) {
                     rotation -= 360f
                 }
 
@@ -62,7 +70,9 @@ class VinylView @JvmOverloads constructor(
 
         invalidate()
 
-        if (url.isBlank()) {
+        if (
+            url.isBlank()
+        ) {
             return
         }
 
@@ -98,14 +108,25 @@ class VinylView @JvmOverloads constructor(
                     invalidate()
                 }
 
-            } catch (_: Exception) {
+            } catch (
+                _: Exception
+            ) {
             }
         }
     }
 
+    fun clearCover() {
+
+        coverBitmap = null
+
+        invalidate()
+    }
+
     fun startRotation() {
 
-        if (rotating) {
+        if (
+            rotating
+        ) {
             return
         }
 
@@ -141,6 +162,12 @@ class VinylView @JvmOverloads constructor(
                 height
             )
 
+        if (
+            size <= 0
+        ) {
+            return
+        }
+
         val left =
             (width - size) / 2f
 
@@ -167,36 +194,73 @@ class VinylView @JvmOverloads constructor(
             Paint.Style.FILL
 
         paint.color =
-            0xFF090909.toInt()
+            0xFF080808.toInt()
 
-        canvas.drawOval(
-            rect,
+        canvas.drawCircle(
+            rect.centerX(),
+            rect.centerY(),
+            size / 2f,
+            paint
+        )
+
+        paint.color =
+            0xFF151515.toInt()
+
+        canvas.drawCircle(
+            rect.centerX(),
+            rect.centerY(),
+            size * 0.43f,
+            paint
+        )
+
+        paint.color =
+            0xFF202020.toInt()
+
+        canvas.drawCircle(
+            rect.centerX(),
+            rect.centerY(),
+            size * 0.37f,
             paint
         )
 
         val bitmap =
             coverBitmap
 
-        if (bitmap != null) {
+        if (
+            bitmap != null
+        ) {
 
             val coverSize =
                 size * 0.68f
 
-            val coverLeft =
-                rect.centerX() -
-                coverSize / 2f
-
-            val coverTop =
-                rect.centerY() -
-                coverSize / 2f
-
             val coverRect =
                 RectF(
-                    coverLeft,
-                    coverTop,
-                    coverLeft + coverSize,
-                    coverTop + coverSize
+                    rect.centerX() -
+                            coverSize / 2f,
+
+                    rect.centerY() -
+                            coverSize / 2f,
+
+                    rect.centerX() +
+                            coverSize / 2f,
+
+                    rect.centerY() +
+                            coverSize / 2f
                 )
+
+            val path =
+                Path()
+
+            path.addCircle(
+                rect.centerX(),
+                rect.centerY(),
+                coverSize / 2f,
+                Path.Direction.CW
+            )
+
+            canvas.save()
+
+            canvas.clipPath(path)
 
             canvas.drawBitmap(
                 bitmap,
@@ -205,21 +269,17 @@ class VinylView @JvmOverloads constructor(
                 paint
             )
 
+            canvas.restore()
+
         } else {
 
             paint.color =
-                0xFF222222.toInt()
+                0xFF292929.toInt()
 
-            val inner =
-                RectF(
-                    rect.left + size * 0.16f,
-                    rect.top + size * 0.16f,
-                    rect.right - size * 0.16f,
-                    rect.bottom - size * 0.16f
-                )
-
-            canvas.drawOval(
-                inner,
+            canvas.drawCircle(
+                rect.centerX(),
+                rect.centerY(),
+                size * 0.34f,
                 paint
             )
         }
