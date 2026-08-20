@@ -1,14 +1,17 @@
 package com.kafshar.musicfinder
 
-import android.animation.ObjectAnimator
 import android.content.Context
-import android.graphics.*
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.View
-import android.view.animation.LinearInterpolator
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
+import kotlin.math.min
 
 class VinylView @JvmOverloads constructor(
     context: Context,
@@ -20,30 +23,46 @@ class VinylView @JvmOverloads constructor(
 
     private var coverBitmap: Bitmap? = null
 
+    private var rotation = 0f
+
+    private var rotating = false
+
     private val executor =
         Executors.newSingleThreadExecutor()
 
-    private var rotationAnimator:
-        ObjectAnimator? = null
+    private val rotationRunnable =
+        object : Runnable {
 
-    init {
+            override fun run() {
 
-        setLayerType(
-            View.LAYER_TYPE_SOFTWARE,
-            null
-        )
-    }
+                if (!rotating) {
+                    return
+                }
+
+                rotation += 1.2f
+
+                if (rotation >= 360f) {
+                    rotation -= 360f
+                }
+
+                invalidate()
+
+                postDelayed(
+                    this,
+                    16
+                )
+            }
+        }
 
     fun setCover(
         url: String
     ) {
 
+        coverBitmap = null
+
+        invalidate()
+
         if (url.isBlank()) {
-
-            coverBitmap = null
-
-            invalidate()
-
             return
         }
 
@@ -54,13 +73,13 @@ class VinylView @JvmOverloads constructor(
                 val connection =
                     URL(url)
                         .openConnection()
-                        as HttpURLConnection
+                            as HttpURLConnection
 
                 connection.connectTimeout =
-                    7000
+                    8000
 
                 connection.readTimeout =
-                    7000
+                    8000
 
                 connection.connect()
 
@@ -71,15 +90,12 @@ class VinylView @JvmOverloads constructor(
 
                 connection.disconnect()
 
-                if (bitmap != null) {
+                post {
 
-                    post {
+                    coverBitmap =
+                        bitmap
 
-                        coverBitmap =
-                            bitmap
-
-                        invalidate()
-                    }
+                    invalidate()
                 }
 
             } catch (_: Exception) {
@@ -89,37 +105,28 @@ class VinylView @JvmOverloads constructor(
 
     fun startRotation() {
 
-        if (
-            rotationAnimator?.isRunning == true
-        ) {
+        if (rotating) {
             return
         }
 
-        rotationAnimator =
-            ObjectAnimator.ofFloat(
-                this,
-                View.ROTATION,
-                rotation,
-                rotation + 360f
-            ).apply {
+        rotating = true
 
-                duration = 7000
+        removeCallbacks(
+            rotationRunnable
+        )
 
-                interpolator =
-                    LinearInterpolator()
-
-                repeatCount =
-                    ObjectAnimator.INFINITE
-
-                start()
-            }
+        post(
+            rotationRunnable
+        )
     }
 
     fun stopRotation() {
 
-        rotationAnimator?.cancel()
+        rotating = false
 
-        rotationAnimator = null
+        removeCallbacks(
+            rotationRunnable
+        )
     }
 
     override fun onDraw(
@@ -128,51 +135,42 @@ class VinylView @JvmOverloads constructor(
 
         super.onDraw(canvas)
 
-        val cx =
-            width / 2f
-
-        val cy =
-            height / 2f
-
-        val radius =
-            minOf(
+        val size =
+            min(
                 width,
                 height
-            ) / 2f - 8f
+            )
+
+        val left =
+            (width - size) / 2f
+
+        val top =
+            (height - size) / 2f
+
+        val rect =
+            RectF(
+                left,
+                top,
+                left + size,
+                top + size
+            )
+
+        canvas.save()
+
+        canvas.rotate(
+            rotation,
+            rect.centerX(),
+            rect.centerY()
+        )
 
         paint.style =
             Paint.Style.FILL
 
         paint.color =
-            Color.rgb(
-                22,
-                22,
-                25
-            )
+            0xFF090909.toInt()
 
-        canvas.drawCircle(
-            cx,
-            cy,
-            radius,
-            paint
-        )
-
-        paint.style =
-            Paint.Style.STROKE
-
-        paint.strokeWidth = 3f
-
-        paint.color =
-            Color.rgb(
-                55,
-                55,
-                60
-            )
-
-        canvas.drawCircle(
-            cx,
-            cy,
-            radius - 4,
+        canvas.drawOval(
+            rect,
             paint
         )
 
@@ -181,92 +179,72 @@ class VinylView @JvmOverloads constructor(
 
         if (bitmap != null) {
 
-            paint.style =
-                Paint.Style.FILL
+            val coverSize =
+                size * 0.68f
 
-            val coverRadius =
-                radius * 0.56f
+            val coverLeft =
+                rect.centerX() -
+                coverSize / 2f
 
-            val src =
-                Rect(
-                    0,
-                    0,
-                    bitmap.width,
-                    bitmap.height
-                )
+            val coverTop =
+                rect.centerY() -
+                coverSize / 2f
 
-            val dst =
+            val coverRect =
                 RectF(
-                    cx - coverRadius,
-                    cy - coverRadius,
-                    cx + coverRadius,
-                    cy + coverRadius
+                    coverLeft,
+                    coverTop,
+                    coverLeft + coverSize,
+                    coverTop + coverSize
                 )
-
-            canvas.save()
-
-            val clipPath =
-                Path()
-
-            clipPath.addCircle(
-                cx,
-                cy,
-                coverRadius,
-                Path.Direction.CW
-            )
-
-            canvas.clipPath(
-                clipPath
-            )
 
             canvas.drawBitmap(
                 bitmap,
-                src,
-                dst,
+                null,
+                coverRect,
                 paint
             )
 
-            canvas.restore()
-
         } else {
 
-            paint.style =
-                Paint.Style.FILL
-
             paint.color =
-                Color.rgb(
-                    45,
-                    45,
-                    50
+                0xFF222222.toInt()
+
+            val inner =
+                RectF(
+                    rect.left + size * 0.16f,
+                    rect.top + size * 0.16f,
+                    rect.right - size * 0.16f,
+                    rect.bottom - size * 0.16f
                 )
 
-            canvas.drawCircle(
-                cx,
-                cy,
-                radius * 0.56f,
+            canvas.drawOval(
+                inner,
                 paint
             )
         }
 
         paint.color =
-            Color.BLACK
+            0xFF111111.toInt()
 
         canvas.drawCircle(
-            cx,
-            cy,
-            radius * 0.09f,
+            rect.centerX(),
+            rect.centerY(),
+            size * 0.045f,
             paint
         )
 
         paint.color =
-            Color.WHITE
+            0xFFCCCCCC.toInt()
 
         canvas.drawCircle(
-            cx,
-            cy,
-            radius * 0.025f,
+            rect.centerX(),
+            rect.centerY(),
+            size * 0.012f,
             paint
         )
+
+        canvas.restore()
     }
 
     override fun onDetachedFromWindow() {
