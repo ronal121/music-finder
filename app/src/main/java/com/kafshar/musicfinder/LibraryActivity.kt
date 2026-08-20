@@ -2,8 +2,8 @@ package com.kafshar.musicfinder
 
 import android.app.Activity
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.ImageView
@@ -17,15 +17,26 @@ import java.util.concurrent.Executors
 
 class LibraryActivity : Activity() {
 
-    private lateinit var libraryContainer: LinearLayout
+    private lateinit var libraryContainer:
+            LinearLayout
 
     private val executor =
-        Executors.newCachedThreadPool()
+        Executors.newFixedThreadPool(2)
+
+    private val imageCache =
+        HashMap<String, Bitmap>()
+
+    private var destroyed = false
 
     override fun onCreate(
         savedInstanceState: Bundle?
     ) {
-        super.onCreate(savedInstanceState)
+
+        super.onCreate(
+            savedInstanceState
+        )
+
+        destroyed = false
 
         createLayout()
         loadLibrary()
@@ -33,39 +44,51 @@ class LibraryActivity : Activity() {
 
     private fun createLayout() {
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(
-                0xFF0D0D12.toInt()
-            )
-        }
+        val root =
+            LinearLayout(this).apply {
 
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+                orientation =
+                    LinearLayout.VERTICAL
 
-            setPadding(
-                16,
-                16,
-                16,
-                16
-            )
-        }
-
-        val backButton = TextView(this).apply {
-            text = "‹"
-            textSize = 36f
-
-            setTextColor(
-                0xFFFFFFFF.toInt()
-            )
-
-            gravity = Gravity.CENTER
-
-            setOnClickListener {
-                finish()
+                setBackgroundColor(
+                    0xFF0D0D12.toInt()
+                )
             }
-        }
+
+        val header =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.HORIZONTAL
+
+                gravity =
+                    Gravity.CENTER_VERTICAL
+
+                setPadding(
+                    16,
+                    16,
+                    16,
+                    16
+                )
+            }
+
+        val backButton =
+            TextView(this).apply {
+
+                text = "‹"
+                textSize = 36f
+
+                setTextColor(
+                    0xFFFFFFFF.toInt()
+                )
+
+                gravity =
+                    Gravity.CENTER
+
+                setOnClickListener {
+                    finish()
+                }
+            }
 
         header.addView(
             backButton,
@@ -75,16 +98,19 @@ class LibraryActivity : Activity() {
             )
         )
 
-        val title = TextView(this).apply {
-            text = "Library"
-            textSize = 23f
+        val title =
+            TextView(this).apply {
 
-            setTextColor(
-                0xFFFFFFFF.toInt()
-            )
+                text = "Library"
+                textSize = 23f
 
-            gravity = Gravity.CENTER_VERTICAL
-        }
+                setTextColor(
+                    0xFFFFFFFF.toInt()
+                )
+
+                gravity =
+                    Gravity.CENTER_VERTICAL
+            }
 
         header.addView(
             title,
@@ -103,7 +129,8 @@ class LibraryActivity : Activity() {
             )
         )
 
-        val scroll = ScrollView(this)
+        val scroll =
+            ScrollView(this)
 
         libraryContainer =
             LinearLayout(this).apply {
@@ -137,10 +164,16 @@ class LibraryActivity : Activity() {
 
     private fun loadLibrary() {
 
+        if (destroyed) return
+
         libraryContainer.removeAllViews()
 
         val songs =
-            LibraryManager.get(this)
+            try {
+                LibraryManager.get(this)
+            } catch (_: Exception) {
+                mutableListOf()
+            }
 
         if (songs.isEmpty()) {
 
@@ -150,8 +183,7 @@ class LibraryActivity : Activity() {
                     text =
                         "کتابخانه خالی است"
 
-                    textSize =
-                        17f
+                    textSize = 17f
 
                     setTextColor(
                         0xFFAAAAAA.toInt()
@@ -169,23 +201,22 @@ class LibraryActivity : Activity() {
                 }
 
             libraryContainer.addView(
-                empty,
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
+                empty
             )
 
             return
         }
 
-        songs.forEachIndexed { index, song ->
+        songs.take(200)
+            .forEachIndexed {
+                    index,
+                    song ->
 
-            addSongView(
-                song,
-                index
-            )
-        }
+                addSongView(
+                    song,
+                    index
+                )
+            }
     }
 
     private fun addSongView(
@@ -251,49 +282,10 @@ class LibraryActivity : Activity() {
             )
         )
 
-        if (song.cover.isNotBlank()) {
-
-            executor.execute {
-
-                try {
-
-                    val connection =
-                        URL(song.cover)
-                            .openConnection()
-                                as HttpURLConnection
-
-                    connection.connectTimeout =
-                        5000
-
-                    connection.readTimeout =
-                        5000
-
-                    connection.connect()
-
-                    val bitmap =
-                        BitmapFactory.decodeStream(
-                            connection.inputStream
-                        )
-
-                    connection.disconnect()
-
-                    runOnUiThread {
-
-                        if (
-                            bitmap != null &&
-                            !isFinishing
-                        ) {
-
-                            cover.setImageBitmap(
-                                bitmap
-                            )
-                        }
-                    }
-
-                } catch (_: Exception) {
-                }
-            }
-        }
+        loadCover(
+            song.cover,
+            cover
+        )
 
         val textContainer =
             LinearLayout(this).apply {
@@ -325,8 +317,7 @@ class LibraryActivity : Activity() {
                 text =
                     "${index + 1}. ${song.title}"
 
-                textSize =
-                    16f
+                textSize = 16f
 
                 setTextColor(
                     0xFFFFFFFF.toInt()
@@ -341,8 +332,7 @@ class LibraryActivity : Activity() {
                 text =
                     "${song.artist} • ${song.site}"
 
-                textSize =
-                    12f
+                textSize = 12f
 
                 setTextColor(
                     0xFFAAAAAA.toInt()
@@ -351,21 +341,8 @@ class LibraryActivity : Activity() {
                 maxLines = 2
             }
 
-        textContainer.addView(
-            title,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        )
-
-        textContainer.addView(
-            artist,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        )
+        textContainer.addView(title)
+        textContainer.addView(artist)
 
         row.addView(
             textContainer,
@@ -375,11 +352,8 @@ class LibraryActivity : Activity() {
         val deleteButton =
             TextView(this).apply {
 
-                text =
-                    "🗑"
-
-                textSize =
-                    22f
+                text = "🗑"
+                textSize = 22f
 
                 gravity =
                     Gravity.CENTER
@@ -396,7 +370,6 @@ class LibraryActivity : Activity() {
                 )
 
                 setOnClickListener {
-
                     deleteSong(song)
                 }
             }
@@ -410,8 +383,107 @@ class LibraryActivity : Activity() {
         )
 
         row.setOnClickListener {
-
             playSong(song)
+        }
+    }
+
+    private fun loadCover(
+        url: String,
+        target: ImageView
+    ) {
+
+        if (
+            url.isBlank() ||
+            destroyed
+        ) {
+            return
+        }
+
+        imageCache[url]?.let {
+
+            if (!it.isRecycled) {
+                target.setImageBitmap(it)
+            }
+
+            return
+        }
+
+        executor.execute {
+
+            var connection:
+                    HttpURLConnection? = null
+
+            try {
+
+                connection =
+                    URL(url)
+                        .openConnection()
+                            as? HttpURLConnection
+                        ?: return@execute
+
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+                connection.instanceFollowRedirects = true
+
+                connection.connect()
+
+                if (
+                    connection.responseCode !in
+                    200..299
+                ) {
+                    return@execute
+                }
+
+                val bytes =
+                    connection.inputStream.use {
+                        it.readBytes()
+                    }
+
+                if (bytes.isEmpty()) {
+                    return@execute
+                }
+
+                val options =
+                    BitmapFactory.Options().apply {
+                        inSampleSize = 2
+                        inPreferredConfig =
+                            Bitmap.Config.RGB_565
+                    }
+
+                val bitmap =
+                    BitmapFactory.decodeByteArray(
+                        bytes,
+                        0,
+                        bytes.size,
+                        options
+                    )
+
+                if (
+                    bitmap != null &&
+                    !destroyed
+                ) {
+
+                    imageCache[url] =
+                        bitmap
+
+                    runOnUiThread {
+
+                        if (!destroyed) {
+                            target.setImageBitmap(
+                                bitmap
+                            )
+                        }
+                    }
+                }
+
+            } catch (_: Exception) {
+            } finally {
+
+                try {
+                    connection?.disconnect()
+                } catch (_: Exception) {
+                }
+            }
         }
     }
 
@@ -419,81 +491,110 @@ class LibraryActivity : Activity() {
         song: SongResult
     ) {
 
-        if (song.url.isBlank()) {
+        if (
+            destroyed ||
+            song.url.isBlank()
+        ) {
             return
         }
 
-        val intent =
-            Intent(
-                this,
-                MusicService::class.java
-            ).apply {
+        try {
 
-                action =
-                    MusicService.ACTION_PLAY
+            val intent =
+                Intent(
+                    this,
+                    MusicService::class.java
+                ).apply {
 
-                putExtra(
-                    MusicService.EXTRA_URL,
-                    song.url
-                )
+                    action =
+                        MusicService.ACTION_PLAY
 
-                putExtra(
-                    MusicService.EXTRA_TITLE,
-                    song.title
-                )
+                    putExtra(
+                        MusicService.EXTRA_URL,
+                        song.url
+                    )
 
-                putExtra(
-                    MusicService.EXTRA_ARTIST,
-                    song.artist
-                )
+                    putExtra(
+                        MusicService.EXTRA_TITLE,
+                        song.title
+                    )
 
-                putExtra(
-                    MusicService.EXTRA_COVER,
-                    song.cover
-                )
-            }
+                    putExtra(
+                        MusicService.EXTRA_ARTIST,
+                        song.artist
+                    )
 
-        if (Build.VERSION.SDK_INT >= 26) {
+                    putExtra(
+                        MusicService.EXTRA_COVER,
+                        song.cover
+                    )
+                }
 
             startForegroundService(
                 intent
             )
 
-        } else {
+            Toast.makeText(
+                this,
+                "در حال پخش: ${song.title}",
+                Toast.LENGTH_SHORT
+            ).show()
 
-            startService(
-                intent
-            )
+        } catch (_: Exception) {
+
+            Toast.makeText(
+                this,
+                "پخش آهنگ انجام نشد",
+                Toast.LENGTH_SHORT
+            ).show()
         }
-
-        Toast.makeText(
-            this,
-            "در حال پخش: ${song.title}",
-            Toast.LENGTH_SHORT
-        ).show()
     }
 
     private fun deleteSong(
         song: SongResult
     ) {
 
-        LibraryManager.remove(
-            this,
-            song
-        )
+        try {
 
-        Toast.makeText(
-            this,
-            "از کتابخانه حذف شد",
-            Toast.LENGTH_SHORT
-        ).show()
+            LibraryManager.remove(
+                this,
+                song
+            )
 
-        loadLibrary()
+            Toast.makeText(
+                this,
+                "از کتابخانه حذف شد",
+                Toast.LENGTH_SHORT
+            ).show()
+
+            loadLibrary()
+
+        } catch (_: Exception) {
+
+            Toast.makeText(
+                this,
+                "حذف انجام نشد",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
     }
 
     override fun onDestroy() {
 
-        executor.shutdownNow()
+        destroyed = true
+
+        try {
+            executor.shutdownNow()
+        } catch (_: Exception) {
+        }
+
+        imageCache.values.forEach {
+            if (!it.isRecycled) {
+                it.recycle()
+            }
+        }
+
+        imageCache.clear()
 
         super.onDestroy()
     }
