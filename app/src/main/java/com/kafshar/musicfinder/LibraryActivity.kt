@@ -5,14 +5,19 @@ import android.content.Intent
 import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.view.Gravity
-import android.widget.*
+import android.view.View
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
 
 class LibraryActivity : Activity() {
 
-    private lateinit var container: LinearLayout
+    private lateinit var libraryContainer: LinearLayout
 
     private val executor =
         Executors.newCachedThreadPool()
@@ -20,114 +25,241 @@ class LibraryActivity : Activity() {
     override fun onCreate(
         savedInstanceState: Bundle?
     ) {
-
         super.onCreate(savedInstanceState)
 
-        setContentView(
-            R.layout.activity_library
-        )
+        createLayout()
 
-        container =
-            findViewById(
-                R.id.libraryContainer
-            )
-
-        findViewById<TextView>(
-            R.id.backButton
-        ).setOnClickListener {
-
-            finish()
-        }
-
-        updateLibrary()
+        loadLibrary()
     }
 
-    private fun updateLibrary() {
+    private fun createLayout() {
 
-        container.removeAllViews()
+        val root =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.VERTICAL
+
+                setBackgroundColor(
+                    0xFF0D0D12.toInt()
+                )
+            }
+
+        val header =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.HORIZONTAL
+
+                gravity =
+                    Gravity.CENTER_VERTICAL
+
+                setPadding(
+                    16,
+                    16,
+                    16,
+                    16
+                )
+            }
+
+        val backButton =
+            TextView(this).apply {
+
+                text = "‹"
+
+                textSize = 38f
+
+                setTextColor(
+                    0xFFFFFFFF.toInt()
+                )
+
+                gravity =
+                    Gravity.CENTER
+
+                setPadding(
+                    8,
+                    0,
+                    18,
+                    0
+                )
+
+                setOnClickListener {
+
+                    finish()
+                }
+            }
+
+        val title =
+            TextView(this).apply {
+
+                text = "کتابخانه"
+
+                textSize = 23f
+
+                setTextColor(
+                    0xFFFFFFFF.toInt()
+                )
+
+                gravity =
+                    Gravity.CENTER_VERTICAL
+
+                layoutParams =
+                    LinearLayout.LayoutParams(
+                        0,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        1f
+                    )
+            }
+
+        header.addView(
+            backButton
+        )
+
+        header.addView(
+            title
+        )
+
+        root.addView(
+            header
+        )
+
+        val scroll =
+            ScrollView(this).apply {
+
+                layoutParams =
+                    LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        0,
+                        1f
+                    )
+            }
+
+        libraryContainer =
+            LinearLayout(this).apply {
+
+                orientation =
+                    LinearLayout.VERTICAL
+
+                setPadding(
+                    10,
+                    5,
+                    10,
+                    20
+                )
+            }
+
+        scroll.addView(
+            libraryContainer
+        )
+
+        root.addView(
+            scroll
+        )
+
+        setContentView(root)
+    }
+
+    private fun loadLibrary() {
+
+        libraryContainer.removeAllViews()
 
         val songs =
-            LibraryManager.getSongs(
-                this
-            )
+            LibraryManager.getSongs(this)
 
         if (songs.isEmpty()) {
 
             val empty =
-                TextView(this)
+                TextView(this).apply {
 
-            empty.text =
-                "کتابخانه خالی است"
+                    text =
+                        "کتابخانه خالی است"
 
-            empty.textSize = 18f
+                    textSize = 17f
 
-            empty.gravity =
-                Gravity.CENTER
+                    setTextColor(
+                        0xFFAAAAAA.toInt()
+                    )
 
-            empty.setTextColor(
-                0xFFAAAAAA.toInt()
+                    gravity =
+                        Gravity.CENTER
+
+                    setPadding(
+                        20,
+                        80,
+                        20,
+                        80
+                    )
+                }
+
+            libraryContainer.addView(
+                empty
             )
-
-            empty.setPadding(
-                20,
-                80,
-                20,
-                80
-            )
-
-            container.addView(empty)
 
             return
         }
 
-        songs.forEachIndexed {
-                index,
-                song ->
+        songs.forEach { song ->
 
-            addSongRow(
-                song,
-                index
-            )
+            addSongView(song)
         }
     }
 
-    private fun addSongRow(
-        song: SongResult,
-        index: Int
+    private fun addSongView(
+        song: SongResult
     ) {
 
         val row =
-            LinearLayout(this)
+            LinearLayout(this).apply {
 
-        row.orientation =
-            LinearLayout.HORIZONTAL
+                orientation =
+                    LinearLayout.HORIZONTAL
 
-        row.setPadding(
-            12,
-            14,
-            12,
-            14
-        )
+                gravity =
+                    Gravity.CENTER_VERTICAL
 
-        val cover =
-            ImageView(this)
+                setPadding(
+                    12,
+                    12,
+                    12,
+                    12
+                )
 
-        cover.layoutParams =
-            LinearLayout.LayoutParams(
-                70,
-                70
-            ).apply {
-                setMargins(
-                    0,
-                    0,
-                    14,
-                    0
+                setBackgroundColor(
+                    0xFF15151C.toInt()
                 )
             }
 
-        cover.setImageResource(
-            android.R.drawable.ic_menu_gallery
+        val params =
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+
+        params.setMargins(
+            4,
+            5,
+            4,
+            5
         )
+
+        row.layoutParams = params
+
+        val cover =
+            ImageView(this).apply {
+
+                layoutParams =
+                    LinearLayout.LayoutParams(
+                        65,
+                        65
+                    )
+
+                scaleType =
+                    ImageView.ScaleType.CENTER_CROP
+
+                setImageResource(
+                    android.R.drawable.ic_media_play
+                )
+            }
 
         if (song.cover.isNotBlank()) {
 
@@ -138,7 +270,7 @@ class LibraryActivity : Activity() {
                     val connection =
                         URL(song.cover)
                             .openConnection()
-                            as HttpURLConnection
+                                as HttpURLConnection
 
                     connection.connectTimeout =
                         5000
@@ -146,161 +278,210 @@ class LibraryActivity : Activity() {
                     connection.readTimeout =
                         5000
 
+                    connection.connect()
+
                     val bitmap =
                         BitmapFactory.decodeStream(
                             connection.inputStream
                         )
 
+                    connection.disconnect()
+
                     runOnUiThread {
 
-                        if (bitmap != null)
-                            cover.setImageBitmap(bitmap)
-                    }
+                        if (
+                            bitmap != null
+                        ) {
 
-                    connection.disconnect()
+                            cover.setImageBitmap(
+                                bitmap
+                            )
+                        }
+                    }
 
                 } catch (_: Exception) {
                 }
             }
         }
 
-        val middle =
-            LinearLayout(this)
+        val textLayout =
+            LinearLayout(this).apply {
 
-        middle.orientation =
-            LinearLayout.VERTICAL
+                orientation =
+                    LinearLayout.VERTICAL
 
-        middle.layoutParams =
-            LinearLayout.LayoutParams(
-                0,
-                -2,
-                1f
-            )
+                gravity =
+                    Gravity.CENTER_VERTICAL
 
-        val title =
-            TextView(this)
+                setPadding(
+                    12,
+                    0,
+                    8,
+                    0
 
-        title.text =
-            "${index + 1}. ${song.title}"
+                layoutParams =
+                    LinearLayout.LayoutParams(
+                        0,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        1f
+                    )
+            }
 
-        title.textSize = 16f
+        val songTitle =
+            TextView(this).apply {
 
-        title.setTextColor(
-            0xFFFFFFFF.toInt()
-        )
+                text =
+                    song.title
+
+                textSize = 16f
+
+                setTextColor(
+                    0xFFFFFFFF.toInt()
+                )
+            }
 
         val info =
-            TextView(this)
+            TextView(this).apply {
 
-        info.text =
-            "${song.artist} • ${song.site}"
+                text =
+                    "${song.artist} • ${song.site}"
 
-        info.textSize = 12f
+                textSize = 12f
 
-        info.setTextColor(
-            0xFFAAAAAA.toInt()
+                setTextColor(
+                    0xFFAAAAAA.toInt()
+                )
+
+                setPadding(
+                    0,
+                    5,
+                    0,
+                    0
+                )
+            }
+
+        textLayout.addView(
+            songTitle
         )
 
-        middle.addView(title)
-        middle.addView(info)
-
-        val play =
-            TextView(this)
-
-        play.text = "▶"
-
-        play.textSize = 22f
-
-        play.gravity =
-            Gravity.CENTER
-
-        play.setPadding(
-            14,
-            0,
-            14,
-            0
+        textLayout.addView(
+            info
         )
 
-        play.setOnClickListener {
+        val deleteButton =
+            TextView(this).apply {
 
-            val intent =
-                Intent(
-                    this,
-                    MusicService::class.java
-                ).apply {
+                text = "🗑"
 
-                    action =
-                        MusicService.ACTION_PLAY
+                textSize = 23f
 
-                    putExtra(
-                        MusicService.EXTRA_URL,
-                        song.url
-                    )
+                setTextColor(
+                    0xFFFF5555.toInt()
+                )
 
-                    putExtra(
-                        MusicService.EXTRA_TITLE,
-                        song.title
-                    )
+                gravity =
+                    Gravity.CENTER
 
-                    putExtra(
-                        MusicService.EXTRA_ARTIST,
-                        song.artist
-                    )
+                setPadding(
+                    12,
+                    12,
+                    8,
+                    12
+                )
 
-                    putExtra(
-                        MusicService.EXTRA_COVER,
-                        song.cover
-                    )
+                setOnClickListener {
+
+                    deleteSong(song)
                 }
+            }
 
-            startService(intent)
-
-            Toast.makeText(
-                this,
-                "در حال پخش: ${song.title}",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-
-        val delete =
-            TextView(this)
-
-        delete.text = "🗑"
-
-        delete.textSize = 20f
-
-        delete.gravity =
-            Gravity.CENTER
-
-        delete.setPadding(
-            14,
-            0,
-            8,
-            0
+        row.addView(
+            cover
         )
 
-        delete.setOnClickListener {
+        row.addView(
+            textLayout
+        )
 
-            LibraryManager.remove(
-                this,
-                song
-            )
+        row.addView(
+            deleteButton
+        )
 
-            Toast.makeText(
-                this,
-                "آهنگ از کتابخانه حذف شد",
-                Toast.LENGTH_SHORT
-            ).show()
+        row.setOnClickListener {
 
-            updateLibrary()
+            playSong(song)
         }
 
-        row.addView(cover)
-        row.addView(middle)
-        row.addView(play)
-        row.addView(delete)
+        libraryContainer.addView(
+            row
+        )
+    }
 
-        container.addView(row)
+    private fun deleteSong(
+        song: SongResult
+    ) {
+
+        LibraryManager.removeSong(
+            this,
+            song
+        )
+
+        Toast.makeText(
+            this,
+            "از کتابخانه حذف شد",
+            Toast.LENGTH_SHORT
+        ).show()
+
+        loadLibrary()
+    }
+
+    private fun playSong(
+        song: SongResult
+    ) {
+
+        if (
+            song.url.isBlank()
+        ) {
+            return
+        }
+
+        val intent =
+            Intent(
+                this,
+                MusicService::class.java
+            ).apply {
+
+                action =
+                    MusicService.ACTION_PLAY
+
+                putExtra(
+                    MusicService.EXTRA_URL,
+                    song.url
+                )
+
+                putExtra(
+                    MusicService.EXTRA_TITLE,
+                    song.title
+                )
+
+                putExtra(
+                    MusicService.EXTRA_ARTIST,
+                    song.artist
+                )
+
+                putExtra(
+                    MusicService.EXTRA_COVER,
+                    song.cover
+                )
+            }
+
+        startService(intent)
+
+        Toast.makeText(
+            this,
+            "در حال پخش: ${song.title}",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     override fun onDestroy() {
