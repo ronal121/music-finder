@@ -5,6 +5,8 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.*
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.os.*
 import android.provider.MediaStore
@@ -19,7 +21,7 @@ import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
-import java.util.Locale
+import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
 data class SongResult(
@@ -33,42 +35,46 @@ data class SongResult(
 class MainActivity : Activity() {
 
     private lateinit var web: WebView
-
     private lateinit var query: EditText
     private lateinit var status: TextView
-
     private lateinit var titleText: TextView
     private lateinit var artistText: TextView
-
     private lateinit var playButton: TextView
     private lateinit var previousButton: TextView
     private lateinit var nextButton: TextView
     private lateinit var randomButton: TextView
-
+    private lateinit var saveButton: TextView
+    private lateinit var libraryButton: TextView
     private lateinit var downloadButton: TextView
     private lateinit var pauseDownloadButton: TextView
     private lateinit var cancelDownloadButton: TextView
-
     private lateinit var downloadProgress: ProgressBar
     private lateinit var downloadText: TextView
-
     private lateinit var progress: SeekBar
     private lateinit var currentTime: TextView
     private lateinit var durationText: TextView
-
     private lateinit var resultsContainer: LinearLayout
+    private lateinit var vinyl: VinylView
 
-    private val songs =
-        ArrayList<SongResult>()
+    private val songs = ArrayList<SongResult>()
+
+    private val executor =
+        Executors.newFixedThreadPool(4)
+
+    private val handler =
+        Handler(Looper.getMainLooper())
 
     private var currentIndex = -1
 
     private var currentAudioUrl = ""
 
+    private var currentSong: SongResult? = null
+
     private var randomMode = false
 
     private var searchGeneration = 0
 
+    @Volatile
     private var cancelRequested = false
 
     @Volatile
@@ -76,17 +82,9 @@ class MainActivity : Activity() {
 
     private var downloadThread: Thread? = null
 
-    private val prefs by lazy {
-        getSharedPreferences(
-            "music_finder",
-            MODE_PRIVATE
-        )
-    }
+    private var vinylAngle = 0f
 
-    private val handler =
-        Handler(Looper.getMainLooper())
-
-    private val playerReceiver =
+    private val receiver =
         object : BroadcastReceiver() {
 
             override fun onReceive(
@@ -96,7 +94,7 @@ class MainActivity : Activity() {
 
                 if (
                     intent?.action !=
-                    "com.kafshar.musicfinder.PLAYER_UPDATE"
+                    MusicService.UPDATE
                 ) {
                     return
                 }
@@ -107,16 +105,16 @@ class MainActivity : Activity() {
                         false
                     )
 
-                val position =
+                val pos =
                     intent.getLongExtra(
                         "position",
-                        0
+                        0L
                     )
 
-                val duration =
+                val dur =
                     intent.getLongExtra(
                         "duration",
-                        0
+                        0L
                     )
 
                 playButton.text =
@@ -125,20 +123,63 @@ class MainActivity : Activity() {
                     else
                         "▶"
 
-                if (duration > 0) {
+                if (dur > 0) {
 
                     progress.progress =
                         (
-                            position.toDouble() /
-                                    duration.toDouble() *
+                            pos.toDouble() /
+                                    dur.toDouble() *
                                     100
-                            ).toInt()
+                            )
+                            .toInt()
+                            .coerceIn(
+                                0,
+                                100
+                            )
 
                     currentTime.text =
-                        formatTime(position)
+                        formatTime(pos)
 
                     durationText.text =
-                        formatTime(duration)
+                        formatTime(dur)
+                }
+
+                if (playing) {
+
+                    vinylAngle =
+                        (vinylAngle + 2f) % 360f
+
+                    vinyl.setRotationAngle(
+                        vinylAngle
+                    )
+
+                    handler.postDelayed(
+                        {
+                            receiver.onReceive(
+                                this@MainActivity,
+                                Intent(
+                                    MusicService.UPDATE
+                                ).apply {
+
+                                    putExtra(
+                                        "playing",
+                                        true
+                                    )
+
+                                    putExtra(
+                                        "position",
+                                        pos
+                                    )
+
+                                    putExtra(
+                                        "duration",
+                                        dur
+                                    )
+                                }
+                            )
+                        },
+                        1000
+                    )
                 }
             }
         }
@@ -148,38 +189,68 @@ class MainActivity : Activity() {
         savedInstanceState: Bundle?
     ) {
 
-        super.onCreate(savedInstanceState)
+        super.onCreate(
+            savedInstanceState
+        )
 
         setContentView(
             R.layout.activity_main
         )
 
         query =
-            findViewById(R.id.query)
+            findViewById(
+                R.id.query
+            )
 
         status =
-            findViewById(R.id.status)
+            findViewById(
+                R.id.status
+            )
 
         titleText =
-            findViewById(R.id.titleText)
+            findViewById(
+                R.id.titleText
+            )
 
         artistText =
-            findViewById(R.id.artistText)
+            findViewById(
+                R.id.artistText
+            )
 
         playButton =
-            findViewById(R.id.playButton)
+            findViewById(
+                R.id.playButton
+            )
 
         previousButton =
-            findViewById(R.id.previousButton)
+            findViewById(
+                R.id.previousButton
+            )
 
         nextButton =
-            findViewById(R.id.nextButton)
+            findViewById(
+                R.id.nextButton
+            )
 
         randomButton =
-            findViewById(R.id.randomButton)
+            findViewById(
+                R.id.randomButton
+            )
+
+        saveButton =
+            findViewById(
+                R.id.saveButton
+            )
+
+        libraryButton =
+            findViewById(
+                R.id.libraryButton
+            )
 
         downloadButton =
-            findViewById(R.id.downloadButton)
+            findViewById(
+                R.id.downloadButton
+            )
 
         pauseDownloadButton =
             findViewById(
@@ -221,10 +292,17 @@ class MainActivity : Activity() {
                 R.id.resultsContainer
             )
 
-        web =
-            findViewById(R.id.web)
+        vinyl =
+            findViewById(
+                R.id.vinyl
+            )
 
-        registerPlayerReceiver()
+        web =
+            findViewById(
+                R.id.web
+            )
+
+        registerReceiverCompat()
 
         requestNotificationPermission()
 
@@ -232,20 +310,20 @@ class MainActivity : Activity() {
 
         setupButtons()
 
-        loadSavedResults()
+        restoreResults()
 
         status.text =
             if (songs.isEmpty())
                 "نام آهنگ یا خواننده را جستجو کنید"
             else
-                "${songs.size} نتیجه ذخیره شده"
+                "${songs.size} نتیجه آماده است"
     }
 
-    private fun registerPlayerReceiver() {
+    private fun registerReceiverCompat() {
 
-        val filter =
+        val f =
             IntentFilter(
-                "com.kafshar.musicfinder.PLAYER_UPDATE"
+                MusicService.UPDATE
             )
 
         if (
@@ -253,16 +331,16 @@ class MainActivity : Activity() {
         ) {
 
             registerReceiver(
-                playerReceiver,
-                filter,
+                receiver,
+                f,
                 RECEIVER_NOT_EXPORTED
             )
 
         } else {
 
             registerReceiver(
-                playerReceiver,
-                filter
+                receiver,
+                f
             )
         }
     }
@@ -289,23 +367,19 @@ class MainActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
 
-        web.settings.apply {
+        web.settings.javaScriptEnabled =
+            true
 
-            javaScriptEnabled = true
+        web.settings.domStorageEnabled =
+            true
 
-            domStorageEnabled = true
+        web.settings.databaseEnabled =
+            true
 
-            databaseEnabled = true
-
-            mediaPlaybackRequiresUserGesture =
-                false
-
-            userAgentString =
-                "Mozilla/5.0 (Linux; Android 12) " +
-                        "AppleWebKit/537.36 " +
-                        "(KHTML, like Gecko) " +
-                        "Chrome/128 Mobile Safari/537.36"
-        }
+        web.settings.userAgentString =
+            "Mozilla/5.0 (Linux; Android 12) " +
+                    "AppleWebKit/537.36 " +
+                    "Chrome/128 Mobile Safari/537.36"
 
         web.addJavascriptInterface(
             Bridge(),
@@ -314,14 +388,6 @@ class MainActivity : Activity() {
 
         web.webViewClient =
             object : WebViewClient() {
-
-                override fun shouldOverrideUrlLoading(
-                    view: WebView,
-                    request: WebResourceRequest
-                ): Boolean {
-
-                    return false
-                }
 
                 override fun onPageFinished(
                     view: WebView,
@@ -336,9 +402,24 @@ class MainActivity : Activity() {
 
                         extractGoogleResults()
 
-                    } else {
+                    } else if (
+                        url.contains(
+                            "rozmusic.com"
+                        ) ||
+                        url.contains(
+                            "mybia2music.com"
+                        ) ||
+                        url.contains(
+                            "musicdel.ir"
+                        ) ||
+                        url.contains(
+                            "musics-fa.com"
+                        )
+                    ) {
 
-                        extractMusicPage(url)
+                        extractMusicPage(
+                            url
+                        )
                     }
                 }
             }
@@ -354,10 +435,12 @@ class MainActivity : Activity() {
         }
 
         query.setOnEditorActionListener {
-                _, actionId, _ ->
+                _,
+                action,
+                _ ->
 
             if (
-                actionId ==
+                action ==
                 EditorInfo.IME_ACTION_SEARCH
             ) {
 
@@ -374,16 +457,14 @@ class MainActivity : Activity() {
         playButton.setOnClickListener {
 
             if (
-                currentAudioUrl.isBlank()
+                currentAudioUrl.isNotBlank()
             ) {
-                return@setOnClickListener
-            }
 
-            sendServiceAction(
-                MusicService.ACTION_TOGGLE,
-                currentAudioUrl,
-                titleText.text.toString()
-            )
+                sendService(
+                    MusicService.ACTION_TOGGLE,
+                    currentSong
+                )
+            }
         }
 
         previousButton.setOnClickListener {
@@ -406,18 +487,46 @@ class MainActivity : Activity() {
                     "🔀"
                 else
                     "↕"
+        }
 
+        saveButton.setOnClickListener {
+
+            currentSong?.let {
+
+                LibraryManager.add(
+                    this,
+                    it
+                )
+
+                saveButton.text =
+                    "✓ ذخیره شد"
+
+                Toast.makeText(
+                    this,
+                    "به کتابخانه اضافه شد",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
+        libraryButton.setOnClickListener {
+
+            startActivity(
+                Intent(
+                    this,
+                    LibraryActivity::class.java
+                )
+            )
         }
 
         downloadButton.setOnClickListener {
 
             if (
-                downloadThread?.isAlive == true
+                downloadThread?.isAlive != true
             ) {
-                return@setOnClickListener
-            }
 
-            downloadCurrentSong()
+                downloadCurrentSong()
+            }
         }
 
         pauseDownloadButton.setOnClickListener {
@@ -435,27 +544,24 @@ class MainActivity : Activity() {
                 SeekBar.OnSeekBarChangeListener {
 
                 override fun onProgressChanged(
-                    seekBar: SeekBar?,
-                    value: Int,
+                    s: SeekBar?,
+                    p: Int,
                     fromUser: Boolean
                 ) {
 
-                    if (!fromUser) {
-                        return
-                    }
+                    if (fromUser) {
 
-                    sendSeek(
-                        value
-                    )
+                        sendSeek(p)
+                    }
                 }
 
                 override fun onStartTrackingTouch(
-                    seekBar: SeekBar?
+                    s: SeekBar?
                 ) {
                 }
 
                 override fun onStopTrackingTouch(
-                    seekBar: SeekBar?
+                    s: SeekBar?
                 ) {
                 }
             }
@@ -465,13 +571,17 @@ class MainActivity : Activity() {
     private fun searchMusic() {
 
         val text =
-            query.text.toString().trim()
+            query.text
+                .toString()
+                .trim()
 
-        if (text.isEmpty()) {
+        if (
+            text.isEmpty()
+        ) {
 
             Toast.makeText(
                 this,
-                "نام آهنگ را وارد کنید",
+                "نام آهنگ یا خواننده را وارد کنید",
                 Toast.LENGTH_SHORT
             ).show()
 
@@ -486,86 +596,88 @@ class MainActivity : Activity() {
 
         resultsContainer.removeAllViews()
 
-        titleText.text =
+        status.text =
             "در حال جستجو..."
 
+        titleText.text =
+            "نتایج برای: $text"
+
         artistText.text =
-            text
+            "جستجوی گسترده در سایت‌ها"
 
-        status.text =
-            "در حال جستجوی سایت‌ها..."
-
-        val searchQuery =
-            "\"$text\" " +
-                    "(site:rozmusic.com OR " +
-                    "site:mybia2music.com OR " +
-                    "site:musicdel.ir OR " +
-                    "site:musics-fa.com)"
-
-        val encoded =
+        val q =
             URLEncoder.encode(
-                searchQuery,
+                "$text " +
+                        "(site:rozmusic.com OR " +
+                        "site:mybia2music.com OR " +
+                        "site:musicdel.ir OR " +
+                        "site:musics-fa.com)",
                 "UTF-8"
             )
 
         web.loadUrl(
-            "https://www.google.com/search?q=$encoded&num=30"
+            "https://www.google.com/search?q=$q&num=50"
         )
     }
 
     private fun extractGoogleResults() {
 
-        val script = """
-            (function() {
-
-                var links =
+        web.evaluateJavascript(
+            """
+            (function(){
+                var a =
                     document.querySelectorAll("a");
 
-                var found = [];
+                var out = [];
 
-                for (
+                for(
                     var i = 0;
-                    i < links.length;
+                    i < a.length;
                     i++
-                ) {
+                ){
 
-                    var href =
-                        links[i].href || "";
+                    var h =
+                        a[i].href || "";
 
-                    var text =
-                        links[i].innerText || "";
+                    var l =
+                        h.toLowerCase();
 
-                    var lower =
-                        href.toLowerCase();
+                    if(
+                        (
+                            l.indexOf(
+                                "rozmusic.com"
+                            ) >= 0 ||
 
-                    if (
-                        lower.indexOf("rozmusic.com") >= 0 ||
-                        lower.indexOf("mybia2music.com") >= 0 ||
-                        lower.indexOf("musicdel.ir") >= 0 ||
-                        lower.indexOf("musics-fa.com") >= 0
-                    ) {
+                            l.indexOf(
+                                "mybia2music.com"
+                            ) >= 0 ||
 
-                        if (
-                            href.indexOf("google.com") < 0 &&
-                            found.indexOf(href) < 0
-                        ) {
+                            l.indexOf(
+                                "musicdel.ir"
+                            ) >= 0 ||
 
-                            found.push(
-                                href
-                            );
-                        }
+                            l.indexOf(
+                                "musics-fa.com"
+                            ) >= 0
+                        ) &&
+
+                        h.indexOf(
+                            "google.com"
+                        ) < 0 &&
+
+                        out.indexOf(h) < 0
+                    ){
+
+                        out.push(h);
                     }
                 }
 
                 MusicFinder.results(
-                    found.join("###")
+                    out.join("###")
                 );
 
             })();
-        """.trimIndent()
-
-        web.evaluateJavascript(
-            script,
+            """.trimIndent(),
             null
         )
     }
@@ -574,44 +686,41 @@ class MainActivity : Activity() {
         pageUrl: String
     ) {
 
-        val script = """
-            (function() {
+        web.evaluateJavascript(
+            """
+            (function(){
 
-                var title = "";
+                var t = "";
+                var a = "";
+                var c = "";
 
-                var artist = "";
-
-                var cover = "";
-
-                var metaTitle =
+                var m =
                     document.querySelector(
                         'meta[property="og:title"]'
                     );
 
-                if (metaTitle) {
-                    title =
-                        metaTitle.content || "";
-                }
+                if(m)
+                    t =
+                        m.content || "";
 
-                var h1 =
+                var h =
                     document.querySelector("h1");
 
-                if (!title && h1) {
+                if(
+                    !t &&
+                    h
+                )
+                    t =
+                        h.innerText || "";
 
-                    title =
-                        h1.innerText || "";
-                }
-
-                var image =
+                var im =
                     document.querySelector(
                         'meta[property="og:image"]'
                     );
 
-                if (image) {
-
-                    cover =
-                        image.content || "";
-                }
+                if(im)
+                    c =
+                        im.content || "";
 
                 var audioLinks = [];
 
@@ -620,11 +729,11 @@ class MainActivity : Activity() {
                         "audio source, audio, video source, video, a"
                     );
 
-                for (
+                for(
                     var i = 0;
                     i < media.length;
                     i++
-                ) {
+                ){
 
                     var el =
                         media[i];
@@ -637,19 +746,41 @@ class MainActivity : Activity() {
                     var lower =
                         src.toLowerCase();
 
-                    if (
-                        lower.indexOf(".mp3") >= 0 ||
-                        lower.indexOf(".m4a") >= 0 ||
-                        lower.indexOf(".aac") >= 0 ||
-                        lower.indexOf(".ogg") >= 0 ||
-                        lower.indexOf(".wav") >= 0 ||
-                        lower.indexOf(".flac") >= 0 ||
-                        lower.indexOf("dl.") >= 0
-                    ) {
+                    if(
+                        lower.indexOf(
+                            ".mp3"
+                        ) >= 0 ||
 
-                        if (
-                            audioLinks.indexOf(src) < 0
-                        ) {
+                        lower.indexOf(
+                            ".m4a"
+                        ) >= 0 ||
+
+                        lower.indexOf(
+                            ".aac"
+                        ) >= 0 ||
+
+                        lower.indexOf(
+                            ".ogg"
+                        ) >= 0 ||
+
+                        lower.indexOf(
+                            ".wav"
+                        ) >= 0 ||
+
+                        lower.indexOf(
+                            ".flac"
+                        ) >= 0 ||
+
+                        lower.indexOf(
+                            "dl."
+                        ) >= 0
+                    ){
+
+                        if(
+                            audioLinks.indexOf(
+                                src
+                            ) < 0
+                        ){
 
                             audioLinks.push(src);
                         }
@@ -657,11 +788,11 @@ class MainActivity : Activity() {
                 }
 
                 MusicFinder.page(
-                    encodeURIComponent(title) +
+                    encodeURIComponent(t) +
                     "###" +
-                    encodeURIComponent(artist) +
+                    encodeURIComponent(a) +
                     "###" +
-                    encodeURIComponent(cover) +
+                    encodeURIComponent(c) +
                     "###" +
                     encodeURIComponent(
                         audioLinks.join("|||")
@@ -669,10 +800,7 @@ class MainActivity : Activity() {
                 );
 
             })();
-        """.trimIndent()
-
-        web.evaluateJavascript(
-            script,
+            """.trimIndent(),
             null
         )
     }
@@ -707,7 +835,7 @@ class MainActivity : Activity() {
                 "Musics-FA"
 
             else ->
-                "Music Site"
+                "سایت موسیقی"
         }
     }
 
@@ -721,15 +849,15 @@ class MainActivity : Activity() {
             runOnUiThread {
 
                 val items =
-                    data.split("###")
+                    data.split(
+                        "###"
+                    )
                         .map {
                             it.trim()
                         }
                         .filter {
                             it.isNotEmpty()
                         }
-                        .distinct()
-                        .take(30)
 
                 if (
                     items.isEmpty()
@@ -744,8 +872,11 @@ class MainActivity : Activity() {
                 status.text =
                     "در حال بررسی ${items.size} نتیجه..."
 
+                val limited =
+                    items.take(50)
+
                 processResultPages(
-                    items,
+                    limited,
                     0,
                     searchGeneration
                 )
@@ -760,7 +891,9 @@ class MainActivity : Activity() {
             runOnUiThread {
 
                 val parts =
-                    data.split("###")
+                    data.split(
+                        "###"
+                    )
 
                 if (
                     parts.size < 4
@@ -769,16 +902,24 @@ class MainActivity : Activity() {
                 }
 
                 val title =
-                    decode(parts[0])
+                    decode(
+                        parts[0]
+                    )
 
                 val artist =
-                    decode(parts[1])
+                    decode(
+                        parts[1]
+                    )
 
                 val cover =
-                    decode(parts[2])
+                    decode(
+                        parts[2]
+                    )
 
                 val audioString =
-                    decode(parts[3])
+                    decode(
+                        parts[3]
+                    )
 
                 val audio =
                     audioString
@@ -800,26 +941,31 @@ class MainActivity : Activity() {
                 val song =
                     SongResult(
                         url = audio,
+
                         title =
-                            cleanTitle(
-                                if (
-                                    title.isBlank()
-                                )
-                                    query.text.toString()
-                                else
+                            if (
+                                title.isBlank()
+                            )
+                                query.text
+                                    .toString()
+                            else
+                                cleanTitle(
                                     title
-                            ),
+                                ),
+
                         artist =
                             if (
                                 artist.isBlank()
                             )
-                                query.text.toString()
+                                "Music Finder"
                             else
                                 artist,
+
                         site =
                             getSiteName(
                                 pageUrl
                             ),
+
                         cover = cover
                     )
 
@@ -835,7 +981,8 @@ class MainActivity : Activity() {
     ) {
 
         if (
-            generation != searchGeneration
+            generation !=
+            searchGeneration
         ) {
             return
         }
@@ -845,7 +992,9 @@ class MainActivity : Activity() {
         ) {
 
             status.text =
-                if (songs.isEmpty())
+                if (
+                    songs.isEmpty()
+                )
                     "آهنگ قابل پخش پیدا نشد"
                 else
                     "${songs.size} نتیجه پیدا شد"
@@ -862,26 +1011,70 @@ class MainActivity : Activity() {
                 )
             }
 
+            saveResults()
+
             return
         }
 
-        val url =
+        val item =
             items[index]
 
-        web.loadUrl(url)
+        val url =
+            item.substringBefore(
+                "|||"
+            )
 
-        /*
-         * منتظر سایت قبلی نمی‌مانیم.
-         * بعد از حدود ۱.۲ ثانیه نتیجه بعدی بررسی می‌شود.
-         */
+        if (
+            url.isBlank()
+        ) {
+
+            processResultPages(
+                items,
+                index + 1,
+                generation
+            )
+
+            return
+        }
+
+        val handler =
+            Handler(
+                mainLooper
+            )
+
+        var finished =
+            false
+
+        val timeout =
+            Runnable {
+
+                if (!finished) {
+
+                    finished = true
+
+                    processResultPages(
+                        items,
+                        index + 1,
+                        generation
+                    )
+                }
+            }
+
+        handler.postDelayed(
+            timeout,
+            5000
+        )
+
+        web.loadUrl(
+            url
+        )
 
         handler.postDelayed(
             {
 
-                if (
-                    generation ==
-                    searchGeneration
-                ) {
+                if (!finished) {
+
+                    finished = true
 
                     processResultPages(
                         items,
@@ -909,12 +1102,12 @@ class MainActivity : Activity() {
 
         songs.add(song)
 
-        saveResults()
-
         addSongView(
             song,
             songs.size - 1
         )
+
+        saveResults()
     }
 
     private fun addSongView(
@@ -926,56 +1119,28 @@ class MainActivity : Activity() {
             LinearLayout(this)
 
         row.orientation =
-            LinearLayout.HORIZONTAL
-
-        row.gravity =
-            Gravity.CENTER_VERTICAL
+            LinearLayout.VERTICAL
 
         row.setPadding(
+            18,
             14,
-            12,
-            14,
-            12
+            18,
+            14
         )
 
-        val number =
-            TextView(this)
-
-        number.text =
-            "${index + 1}"
-
-        number.textSize =
-            13f
-
-        number.gravity =
-            Gravity.CENTER
-
-        number.setTextColor(
-            Color.WHITE
-        )
-
-        val numberParams =
-            LinearLayout.LayoutParams(
-                40,
-                40
+        row.setBackgroundColor(
+            Color.rgb(
+                24,
+                24,
+                31
             )
-
-        row.addView(
-            number,
-            numberParams
         )
-
-        val textBox =
-            LinearLayout(this)
-
-        textBox.orientation =
-            LinearLayout.VERTICAL
 
         val title =
             TextView(this)
 
         title.text =
-            song.title
+            "${index + 1}. ${song.title}"
 
         title.textSize =
             15f
@@ -994,28 +1159,31 @@ class MainActivity : Activity() {
             12f
 
         info.setTextColor(
-            0xFFAAAAAA.toInt()
+            Color.rgb(
+                170,
+                170,
+                170
+            )
         )
 
-        textBox.addView(title)
-
-        textBox.addView(info)
+        row.addView(
+            title
+        )
 
         row.addView(
-            textBox,
-            LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
-            )
+            info
         )
 
         row.setOnClickListener {
 
             currentIndex =
-                songs.indexOf(song)
+                songs.indexOf(
+                    song
+                )
 
-            playSong(song)
+            playSong(
+                song
+            )
         }
 
         resultsContainer.addView(
@@ -1023,9 +1191,45 @@ class MainActivity : Activity() {
         )
     }
 
+    private fun cleanTitle(
+        value: String
+    ): String {
+
+        return value
+            .replace(
+                Regex(
+                    "دانلود|آهنگ|موزیک|\\|.*"
+                ),
+                ""
+            )
+            .trim()
+    }
+
+    private fun decode(
+        value: String
+    ): String {
+
+        return try {
+
+            java.net.URLDecoder.decode(
+                value,
+                "UTF-8"
+            )
+
+        } catch (
+            _: Exception
+        ) {
+
+            value
+        }
+    }
+
     private fun playSong(
         song: SongResult
     ) {
+
+        currentSong =
+            song
 
         currentAudioUrl =
             song.url
@@ -1039,12 +1243,69 @@ class MainActivity : Activity() {
         status.text =
             "در حال پخش..."
 
-        sendServiceAction(
+        saveButton.text =
+            if (
+                LibraryManager.contains(
+                    this,
+                    song
+                )
+            )
+                "✓ ذخیره شد"
+            else
+                "♡ ذخیره"
+
+        if (
+            song.cover.isNotBlank()
+        ) {
+
+            thread {
+
+                try {
+
+                    val connection =
+                        URL(
+                            song.cover
+                        )
+                            .openConnection()
+                            as HttpURLConnection
+
+                    connection.connectTimeout =
+                        10000
+
+                    connection.readTimeout =
+                        10000
+
+                    connection.connect()
+
+                    val bitmap =
+                        BitmapFactory.decodeStream(
+                            connection.inputStream
+                        )
+
+                    connection.disconnect()
+
+                    if (
+                        bitmap != null
+                    ) {
+
+                        runOnUiThread {
+
+                            vinyl.setCover(
+                                bitmap
+                            )
+                        }
+                    }
+
+                } catch (
+                    _: Exception
+                ) {
+                }
+            }
+        }
+
+        sendService(
             MusicService.ACTION_PLAY,
-            song.url,
-            song.title,
-            song.artist,
-            song.cover
+            song
         )
     }
 
@@ -1057,34 +1318,41 @@ class MainActivity : Activity() {
         }
 
         currentIndex =
-            if (randomMode) {
+            if (
+                randomMode
+            ) {
 
-                if (songs.size == 1) {
-
+                if (
+                    songs.size == 1
+                )
                     0
+                else {
 
-                } else {
-
-                    var nextIndex: Int
+                    var next: Int
 
                     do {
 
-                        nextIndex =
-                            songs.indices.random()
+                        next =
+                            (
+                                0 until
+                                        songs.size
+                                )
+                                .random()
 
                     } while (
-                        nextIndex ==
+                        next ==
                         currentIndex
                     )
 
-                    nextIndex
+                    next
                 }
 
             } else {
 
                 (
                     currentIndex + 1
-                ) % songs.size
+                ) %
+                        songs.size
             }
 
         playSong(
@@ -1113,16 +1381,13 @@ class MainActivity : Activity() {
         )
     }
 
-    private fun sendServiceAction(
+    private fun sendService(
         action: String,
-        url: String,
-        title: String,
-        artist: String = "Music Finder",
-        cover: String = ""
+        song: SongResult?
     ) {
 
         if (
-            url.isBlank()
+            song == null
         ) {
             return
         }
@@ -1138,22 +1403,22 @@ class MainActivity : Activity() {
 
                 putExtra(
                     MusicService.EXTRA_URL,
-                    url
+                    song.url
                 )
 
                 putExtra(
                     MusicService.EXTRA_TITLE,
-                    title
+                    song.title
                 )
 
                 putExtra(
                     MusicService.EXTRA_ARTIST,
-                    artist
+                    song.artist
                 )
 
                 putExtra(
                     MusicService.EXTRA_COVER,
-                    cover
+                    song.cover
                 )
             }
 
@@ -1202,17 +1467,46 @@ class MainActivity : Activity() {
 
         } else {
 
-            startService(intent)
+            startService(
+                intent
+            )
         }
+    }
+
+    private fun formatTime(
+        millis: Long
+    ): String {
+
+        if (
+            millis <= 0
+        ) {
+            return "00:00"
+        }
+
+        val totalSeconds =
+            millis / 1000
+
+        val minutes =
+            totalSeconds / 60
+
+        val seconds =
+            totalSeconds % 60
+
+        return String.format(
+            "%02d:%02d",
+            minutes,
+            seconds
+        )
     }
 
     private fun downloadCurrentSong() {
 
-        val url =
-            currentAudioUrl
+        val song =
+            currentSong
 
         if (
-            url.isBlank()
+            song == null ||
+            song.url.isBlank()
         ) {
 
             Toast.makeText(
@@ -1227,6 +1521,13 @@ class MainActivity : Activity() {
         if (
             downloadThread?.isAlive == true
         ) {
+
+            Toast.makeText(
+                this,
+                "یک دانلود در حال انجام است",
+                Toast.LENGTH_SHORT
+            ).show()
+
             return
         }
 
@@ -1235,6 +1536,11 @@ class MainActivity : Activity() {
 
         pauseDownloadRequested =
             false
+
+        val name =
+            makeSafeFileName(
+                song.title
+            ) + ".mp3"
 
         downloadProgress.progress =
             0
@@ -1263,11 +1569,6 @@ class MainActivity : Activity() {
         status.text =
             "در حال دانلود..."
 
-        val fileName =
-            makeSafeFileName(
-                titleText.text.toString()
-            ) + ".mp3"
-
         downloadThread =
             thread {
 
@@ -1278,15 +1579,15 @@ class MainActivity : Activity() {
                     ) {
 
                         downloadMediaStore(
-                            url,
-                            fileName
+                            song.url,
+                            name
                         )
 
                     } else {
 
                         downloadOld(
-                            url,
-                            fileName
+                            song.url,
+                            name
                         )
                     }
 
@@ -1301,7 +1602,14 @@ class MainActivity : Activity() {
                         status.text =
                             "دانلود کامل شد ✓"
 
-                        resetDownloadButtons()
+                        downloadButton.isEnabled =
+                            true
+
+                        pauseDownloadButton.visibility =
+                            View.GONE
+
+                        cancelDownloadButton.visibility =
+                            View.GONE
                     }
 
                 } catch (
@@ -1310,19 +1618,28 @@ class MainActivity : Activity() {
 
                     runOnUiThread {
 
-                        status.text =
-                            when (
-                                e.message
-                            ) {
+                        if (
+                            e.message ==
+                            "CANCELLED"
+                        ) {
 
-                                "CANCELLED" ->
-                                    "دانلود لغو شد"
+                            status.text =
+                                "دانلود لغو شد"
 
-                                else ->
-                                    "دانلود ناموفق بود"
-                            }
+                        } else {
 
-                        resetDownloadButtons()
+                            status.text =
+                                "دانلود ناموفق بود"
+                        }
+
+                        downloadButton.isEnabled =
+                            true
+
+                        pauseDownloadButton.visibility =
+                            View.GONE
+
+                        cancelDownloadButton.visibility =
+                            View.GONE
                     }
                 }
             }
@@ -1330,33 +1647,24 @@ class MainActivity : Activity() {
 
     private fun toggleDownloadPause() {
 
-        if (
-            downloadThread?.isAlive != true
-        ) {
-            return
-        }
-
         pauseDownloadRequested =
             !pauseDownloadRequested
 
-        if (
-            pauseDownloadRequested
-        ) {
-
-            pauseDownloadButton.text =
+        pauseDownloadButton.text =
+            if (
+                pauseDownloadRequested
+            )
                 "▶"
-
-            status.text =
-                "دانلود متوقف شد"
-
-        } else {
-
-            pauseDownloadButton.text =
+            else
                 "Ⅱ"
 
-            status.text =
-                "ادامه دانلود..."
-        }
+        status.text =
+            if (
+                pauseDownloadRequested
+            )
+                "دانلود متوقف شده"
+            else
+                "در حال دانلود..."
     }
 
     private fun cancelDownload() {
@@ -1367,31 +1675,11 @@ class MainActivity : Activity() {
         pauseDownloadRequested =
             false
 
+        downloadText.text =
+            "در حال لغو..."
+
         status.text =
             "در حال لغو دانلود..."
-
-        cancelDownloadButton.isEnabled =
-            false
-    }
-
-    private fun waitIfPaused() {
-
-        while (
-            pauseDownloadRequested &&
-            !cancelRequested
-        ) {
-
-            Thread.sleep(150)
-        }
-
-        if (
-            cancelRequested
-        ) {
-
-            throw Exception(
-                "CANCELLED"
-            )
-        }
     }
 
     private fun downloadMediaStore(
@@ -1447,16 +1735,6 @@ class MainActivity : Activity() {
 
             connection.connect()
 
-            if (
-                connection.responseCode !in
-                200..299
-            ) {
-
-                throw Exception(
-                    "HTTP_ERROR"
-                )
-            }
-
             val total =
                 connection.contentLengthLong
 
@@ -1472,11 +1750,30 @@ class MainActivity : Activity() {
                     ?.use { output ->
 
                         val buffer =
-                            ByteArray(16384)
+                            ByteArray(
+                                8192
+                            )
 
                         while (true) {
 
-                            waitIfPaused()
+                            if (
+                                cancelRequested
+                            ) {
+
+                                throw Exception(
+                                    "CANCELLED"
+                                )
+                            }
+
+                            while (
+                                pauseDownloadRequested &&
+                                !cancelRequested
+                            ) {
+
+                                Thread.sleep(
+                                    200
+                                )
+                            }
 
                             val count =
                                 input.read(
@@ -1507,7 +1804,8 @@ class MainActivity : Activity() {
                                         downloaded.toDouble() /
                                                 total.toDouble() *
                                                 100
-                                        ).toInt()
+                                        )
+                                        .toInt()
 
                                 runOnUiThread {
 
@@ -1556,6 +1854,28 @@ class MainActivity : Activity() {
         fileName: String
     ) {
 
+        if (
+            checkSelfPermission(
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+
+            runOnUiThread {
+
+                requestPermissions(
+                    arrayOf(
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    ),
+                    501
+                )
+            }
+
+            throw Exception(
+                "PERMISSION"
+            )
+        }
+
         val directory =
             Environment
                 .getExternalStoragePublicDirectory(
@@ -1565,6 +1885,7 @@ class MainActivity : Activity() {
         if (
             !directory.exists()
         ) {
+
             directory.mkdirs()
         }
 
@@ -1587,201 +1908,88 @@ class MainActivity : Activity() {
         var downloaded =
             0L
 
-        try {
+        BufferedInputStream(
+            connection.inputStream
+        ).use { input ->
 
-            BufferedInputStream(
-                connection.inputStream
-            ).use { input ->
+            FileOutputStream(
+                file
+            ).use { output ->
 
-                FileOutputStream(
-                    file
-                ).use { output ->
+                val buffer =
+                    ByteArray(
+                        8192
+                    )
 
-                    val buffer =
-                        ByteArray(16384)
+                while (true) {
 
-                    while (true) {
+                    if (
+                        cancelRequested
+                    ) {
 
-                        waitIfPaused()
+                        file.delete()
 
-                        val count =
-                            input.read(
-                                buffer
-                            )
+                        throw Exception(
+                            "CANCELLED"
+                        )
+                    }
 
-                        if (
-                            count == -1
-                        ) {
-                            break
-                        }
+                    while (
+                        pauseDownloadRequested &&
+                        !cancelRequested
+                    ) {
 
-                        output.write(
-                            buffer,
-                            0,
-                            count
+                        Thread.sleep(
+                            200
+                        )
+                    }
+
+                    val count =
+                        input.read(
+                            buffer
                         )
 
-                        downloaded +=
-                            count
+                    if (
+                        count == -1
+                    ) {
+                        break
+                    }
 
-                        if (
-                            total > 0
-                        ) {
+                    output.write(
+                        buffer,
+                        0,
+                        count
+                    )
 
-                            val percent =
-                                (
-                                    downloaded.toDouble() /
-                                            total.toDouble() *
-                                            100
-                                    ).toInt()
+                    downloaded +=
+                        count
 
-                            runOnUiThread {
+                    if (
+                        total > 0
+                    ) {
 
-                                downloadProgress.progress =
-                                    percent
+                        val percent =
+                            (
+                                downloaded.toDouble() /
+                                        total.toDouble() *
+                                        100
+                                )
+                                .toInt()
 
-                                downloadText.text =
-                                    "$percent%"
-                            }
+                        runOnUiThread {
+
+                            downloadProgress.progress =
+                                percent
+
+                            downloadText.text =
+                                "$percent%"
                         }
                     }
                 }
             }
-
-        } catch (
-            e: Exception
-        ) {
-
-            file.delete()
-
-            throw e
-        } finally {
-
-            connection.disconnect()
-        }
-    }
-
-    private fun resetDownloadButtons() {
-
-        downloadButton.isEnabled =
-            true
-
-        pauseDownloadButton.visibility =
-            View.GONE
-
-        cancelDownloadButton.visibility =
-            View.GONE
-
-        downloadProgress.visibility =
-            View.GONE
-
-        downloadText.visibility =
-            View.GONE
-
-        downloadThread =
-            null
-    }
-
-    private fun saveResults() {
-
-        val data =
-            songs.joinToString("\n") {
-
-                listOf(
-                    it.url,
-                    it.title,
-                    it.artist,
-                    it.site,
-                    it.cover
-                ).joinToString("|||")
-            }
-
-        prefs.edit()
-            .putString(
-                "songs",
-                data
-            )
-            .apply()
-    }
-
-    private fun loadSavedResults() {
-
-        val data =
-            prefs.getString(
-                "songs",
-                ""
-            ) ?: ""
-
-        if (
-            data.isBlank()
-        ) {
-            return
         }
 
-        data.split("\n")
-            .forEachIndexed {
-                    index,
-                    line ->
-
-                val p =
-                    line.split("|||")
-
-                if (
-                    p.size >= 5
-                ) {
-
-                    val song =
-                        SongResult(
-                            p[0],
-                            p[1],
-                            p[2],
-                            p[3],
-                            p[4]
-                        )
-
-                    songs.add(
-                        song
-                    )
-
-                    addSongView(
-                        song,
-                        index
-                    )
-                }
-            }
-    }
-
-    private fun cleanTitle(
-        value: String
-    ): String {
-
-        return value
-            .replace(
-                Regex(
-                    "دانلود|آهنگ|موزیک|\\|.*"
-                ),
-                ""
-            )
-            .trim()
-    }
-
-    private fun decode(
-        value: String
-    ): String {
-
-        return try {
-
-            java.net.URLDecoder.decode(
-                value,
-                "UTF-8"
-            )
-
-        } catch (
-            _: Exception
-        ) {
-
-            value
-        }
+        connection.disconnect()
     }
 
     private fun makeSafeFileName(
@@ -1807,50 +2015,181 @@ class MainActivity : Activity() {
                 "_"
             )
 
-        return name.take(100)
+        return name.take(
+            100
+        )
     }
 
-    private fun formatTime(
-        millis: Long
-    ): String {
+    private fun saveResults() {
+
+        val prefs =
+            getSharedPreferences(
+                "music_finder_results",
+                MODE_PRIVATE
+            )
+
+        val data =
+            songs.joinToString(
+                "|||SONG|||"
+            ) {
+
+                listOf(
+                    it.url,
+                    it.title,
+                    it.artist,
+                    it.site,
+                    it.cover
+                )
+                    .joinToString(
+                        "|||FIELD|||"
+                    )
+            }
+
+        prefs.edit()
+            .putString(
+                "songs",
+                data
+            )
+            .apply()
+    }
+
+    private fun restoreResults() {
+
+        val prefs =
+            getSharedPreferences(
+                "music_finder_results",
+                MODE_PRIVATE
+            )
+
+        val data =
+            prefs.getString(
+                "songs",
+                ""
+            )
+                ?: ""
 
         if (
-            millis <= 0
+            data.isBlank()
         ) {
-            return "0:00"
+            return
         }
 
-        val totalSeconds =
-            millis / 1000
-
-        val minutes =
-            totalSeconds / 60
-
-        val seconds =
-            totalSeconds % 60
-
-        return String.format(
-            Locale.US,
-            "%d:%02d",
-            minutes,
-            seconds
+        data.split(
+            "|||SONG|||"
         )
+            .forEach { item ->
+
+                val p =
+                    item.split(
+                        "|||FIELD|||"
+                    )
+
+                if (
+                    p.size >= 5
+                ) {
+
+                    val song =
+                        SongResult(
+                            url = p[0],
+                            title = p[1],
+                            artist = p[2],
+                            site = p[3],
+                            cover = p[4]
+                        )
+
+                    if (
+                        songs.none {
+                            it.url ==
+                            song.url
+                        }
+                    ) {
+
+                        songs.add(
+                            song
+                        )
+                    }
+                }
+            }
+
+        resultsContainer.removeAllViews()
+
+        songs.forEachIndexed {
+                index,
+                song ->
+
+            addSongView(
+                song,
+                index
+            )
+        }
+
+        if (
+            songs.isNotEmpty()
+        ) {
+
+            currentIndex =
+                0
+        }
+    }
+
+    override fun onResume() {
+
+        super.onResume()
+
+        sendServiceGetPosition()
+    }
+
+    private fun sendServiceGetPosition() {
+
+        try {
+
+            val intent =
+                Intent(
+                    this,
+                    MusicService::class.java
+                ).apply {
+
+                    action =
+                        MusicService.ACTION_GET_POSITION
+                }
+
+            if (
+                Build.VERSION.SDK_INT >= 26
+            ) {
+
+                startForegroundService(
+                    intent
+                )
+
+            } else {
+
+                startService(
+                    intent
+                )
+            }
+
+        } catch (
+            _: Exception
+        ) {
+        }
     }
 
     override fun onDestroy() {
 
         try {
+
             unregisterReceiver(
-                playerReceiver
+                receiver
             )
-        } catch (_: Exception) {
+
+        } catch (
+            _: Exception
+        ) {
         }
 
-        /*
-         * سرویس موسیقی را متوقف نمی‌کنیم.
-         */
-
         web.destroy()
+
+        executor.shutdownNow()
 
         super.onDestroy()
     }
