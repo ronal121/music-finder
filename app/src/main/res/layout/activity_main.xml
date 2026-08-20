@@ -58,179 +58,192 @@
             android:textColor="#AAAAAA"
             android:gravity="center"/>
 
-        <com.kafshar.musicfinder.VinylView
-            android:id="@+id/vinyl"
-            android:layout_width="250dp"
-            android:layout_height="250dp"
-            android:layout_gravity="center"
-            android:layout_marginTop="8dp"/>
-
-        <TextView
-            android:id="@+id/titleText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Music Finder"
-            android:textColor="#FFFFFF"
-            android:textSize="20sp"
-            android:textStyle="bold"
-            android:gravity="center"
-            android:paddingTop="10dp"/>
-
-        <TextView
-            android:id="@+id/artistText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textColor="#AAAAAA"
-            android:textSize="13sp"
-            android:gravity="center"
-            android:padding="4dp"/>
-
-        <SeekBar
-            android:id="@+id/progress"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:max="100"/>
+        <!-- PLAYER PANEL -->
 
         <LinearLayout
+            android:id="@+id/playerPanel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:orientation="vertical"
+            android:visibility="visible">
+
+            <com.kafshar.musicfinder.VinylView
+                android:id="@+id/vinyl"
+                android:layout_width="250dp"
+                android:layout_height="250dp"
+                android:layout_gravity="center"
+                android:layout_marginTop="8dp"/>
 
             <TextView
-                android:id="@+id/currentTime"
-                android:layout_width="0dp"
+                android:id="@+id/titleText"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="00:00"
-                android:textColor="#AAAAAA"/>
+                android:text="Music Finder"
+                android:textColor="#FFFFFF"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:paddingTop="10dp"/>
 
             <TextView
-                android:id="@+id/duration"
-                android:layout_width="wrap_content"
+                android:id="@+id/artistText"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="00:00"
-                android:textColor="#AAAAAA"/>
-
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:orientation="horizontal">
-
-            <TextView
-                android:id="@+id/previousButton"
-                android:layout_width="58dp"
-                android:layout_height="58dp"
+                android:textColor="#AAAAAA"
+                android:textSize="13sp"
                 android:gravity="center"
-                android:text="⏮"
-                android:textColor="#FFFFFF"
-                android:textSize="22sp"/>
+                android:padding="4dp"/>
 
-            <TextView
-                android:id="@+id/playButton"
-                android:layout_width="66dp"
-                android:layout_height="66dp"
+            <SeekBar
+                android:id="@+id/seekBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/currentTimeText"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="00:00"
+                    android:textColor="#AAAAAA"/>
+
+                <TextView
+                    android:id="@+id/durationText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="00:00"
+                    android:textColor="#AAAAAA"/>
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
                 android:gravity="center"
-                android:text="▶"
-                android:textColor="#FFFFFF"
-                android:textSize="26sp"/>
+                android:orientation="horizontal">
 
-            <TextView
-                android:id="@+id/nextButton"
-                android:layout_width="58dp"
-                android:layout_height="58dp"
-                android:gravity="center"
-                android:text="⏭"
-                android:textColor="#FFFFFF"
-                android:textSize="22sp"/>
+                <TextView
+                    android:id="@+id/previousButton"
+                    android:layout_width="58dp"
+                    android:layout_height="58dp"
+                    android:gravity="center"
+                    android:text="⏮"
+                    android:textColor="#FFFFFF"
+                    android:textSize="22sp"/>
 
-            <TextView
-                android:id="@+id/randomButton"
-                android:layout_width="58dp"
-                android:layout_height="58dp"
-                android:gravity="center"
-                android:text="↕"
-                android:textColor="#FFFFFF"
-                android:textSize="20sp"/>
+                <TextView
+                    android:id="@+id/playButton"
+                    android:layout_width="66dp"
+                    android:layout_height="66dp"
+                    android:gravity="center"
+                    android:text="▶"
+                    android:textColor="#FFFFFF"
+                    android:textSize="26sp"/>
 
-        </LinearLayout>
+                <TextView
+                    android:id="@+id/nextButton"
+                    android:layout_width="58dp"
+                    android:layout_height="58dp"
+                    android:gravity="center"
+                    android:text="⏭"
+                    android:textColor="#FFFFFF"
+                    android:textSize="22sp"/>
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center">
+                <TextView
+                    android:id="@+id/randomButton"
+                    android:layout_width="58dp"
+                    android:layout_height="58dp"
+                    android:gravity="center"
+                    android:text="↕"
+                    android:textColor="#FFFFFF"
+                    android:textSize="20sp"/>
 
-            <TextView
-                android:id="@+id/saveButton"
-                android:layout_width="wrap_content"
-                android:layout_height="48dp"
-                android:gravity="center"
-                android:padding="14dp"
-                android:text="♡ ذخیره"
-                android:textColor="#FFFFFF"/>
+            </LinearLayout>
 
-            <TextView
-                android:id="@+id/libraryButton"
-                android:layout_width="wrap_content"
-                android:layout_height="48dp"
-                android:gravity="center"
-                android:padding="14dp"
-                android:text="📚 Library"
-                android:textColor="#FFFFFF"/>
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center">
 
-        </LinearLayout>
+                <TextView
+                    android:id="@+id/saveButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:gravity="center"
+                    android:padding="14dp"
+                    android:text="♡ ذخیره"
+                    android:textColor="#FFFFFF"/>
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center">
+                <TextView
+                    android:id="@+id/libraryButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:gravity="center"
+                    android:padding="14dp"
+                    android:text="📚 Library"
+                    android:textColor="#FFFFFF"/>
 
-            <TextView
-                android:id="@+id/downloadButton"
-                android:layout_width="wrap_content"
-                android:layout_height="48dp"
-                android:gravity="center"
-                android:padding="14dp"
-                android:text="⬇ دانلود"
-                android:textColor="#FFFFFF"/>
+            </LinearLayout>
 
-            <TextView
-                android:id="@+id/pauseDownloadButton"
-                android:layout_width="52dp"
-                android:layout_height="48dp"
-                android:gravity="center"
-                android:text="Ⅱ"
-                android:textColor="#FFFFFF"
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center">
+
+                <TextView
+                    android:id="@+id/downloadButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:gravity="center"
+                    android:padding="14dp"
+                    android:text="⬇ دانلود"
+                    android:textColor="#FFFFFF"/>
+
+                <TextView
+                    android:id="@+id/pauseDownloadButton"
+                    android:layout_width="52dp"
+                    android:layout_height="48dp"
+                    android:gravity="center"
+                    android:text="Ⅱ"
+                    android:textColor="#FFFFFF"
+                    android:visibility="gone"/>
+
+                <TextView
+                    android:id="@+id/cancelDownloadButton"
+                    android:layout_width="52dp"
+                    android:layout_height="48dp"
+                    android:gravity="center"
+                    android:text="✕"
+                    android:textColor="#FFFFFF"
+                    android:visibility="gone"/>
+
+            </LinearLayout>
+
+            <ProgressBar
+                android:id="@+id/downloadProgress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="8dp"
+                android:max="100"
                 android:visibility="gone"/>
 
             <TextView
-                android:id="@+id/cancelDownloadButton"
-                android:layout_width="52dp"
-                android:layout_height="48dp"
+                android:id="@+id/downloadText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
                 android:gravity="center"
-                android:text="✕"
-                android:textColor="#FFFFFF"
+                android:textColor="#AAAAAA"
                 android:visibility="gone"/>
 
         </LinearLayout>
 
-        <ProgressBar
-            android:id="@+id/downloadProgress"
-            style="?android:attr/progressBarStyleHorizontal"
-            android:layout_width="match_parent"
-            android:layout_height="8dp"
-            android:max="100"
-            android:visibility="gone"/>
-
-        <TextView
-            android:id="@+id/downloadText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center"
-            android:textColor="#AAAAAA"
-            android:visibility="gone"/>
+        <!-- SEARCH RESULTS -->
 
         <LinearLayout
             android:id="@+id/resultsContainer"
@@ -238,6 +251,55 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:layout_marginTop="12dp"/>
+
+        <!-- LIBRARY PANEL -->
+
+        <LinearLayout
+            android:id="@+id/libraryPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#15151D"
+            android:padding="12dp"
+            android:layout_marginTop="16dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="کتابخانه"
+                    android:textColor="#FFFFFF"
+                    android:textSize="20sp"
+                    android:textStyle="bold"/>
+
+                <TextView
+                    android:id="@+id/closeLibraryButton"
+                    android:layout_width="50dp"
+                    android:layout_height="50dp"
+                    android:gravity="center"
+                    android:text="✕"
+                    android:textColor="#FFFFFF"
+                    android:textSize="22sp"/>
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/libraryContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="8dp"/>
+
+        </LinearLayout>
+
+        <!-- HIDDEN WEBVIEW -->
 
         <WebView
             android:id="@+id/web"
