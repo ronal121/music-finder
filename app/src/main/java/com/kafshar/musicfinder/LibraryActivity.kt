@@ -25,11 +25,9 @@ class LibraryActivity : Activity() {
     override fun onCreate(
         savedInstanceState: Bundle?
     ) {
-
         super.onCreate(savedInstanceState)
 
         createLayout()
-
         loadLibrary()
     }
 
@@ -37,77 +35,40 @@ class LibraryActivity : Activity() {
 
         val root =
             LinearLayout(this).apply {
-
-                orientation =
-                    LinearLayout.VERTICAL
-
-                setBackgroundColor(
-                    0xFF0D0D12.toInt()
-                )
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(0xFF0D0D12.toInt())
             }
 
         val header =
             LinearLayout(this).apply {
-
-                orientation =
-                    LinearLayout.HORIZONTAL
-
-                gravity =
-                    Gravity.CENTER_VERTICAL
-
-                setPadding(
-                    16,
-                    16,
-                    16,
-                    16
-                )
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(16, 16, 16, 16)
             }
 
         val backButton =
             TextView(this).apply {
-
-                text =
-                    "‹"
-
-                textSize =
-                    36f
-
-                setTextColor(
-                    0xFFFFFFFF.toInt()
-                )
-
-                gravity =
-                    Gravity.CENTER
+                text = "‹"
+                textSize = 36f
+                setTextColor(0xFFFFFFFF.toInt())
+                gravity = Gravity.CENTER
 
                 setOnClickListener {
-
                     finish()
                 }
             }
 
         header.addView(
             backButton,
-            LinearLayout.LayoutParams(
-                55,
-                55
-            )
+            LinearLayout.LayoutParams(55, 55)
         )
 
         val title =
             TextView(this).apply {
-
-                text =
-                    "Library"
-
-                textSize =
-                    23f
-
-                setTextColor(
-                    0xFFFFFFFF.toInt()
-                )
-
-                gravity =
-                    Gravity.CENTER_VERTICAL
+                text = "Library"
+                textSize = 23f
+                setTextColor(0xFFFFFFFF.toInt())
+                gravity = Gravity.CENTER_VERTICAL
             }
 
         header.addView(
@@ -126,21 +87,11 @@ class LibraryActivity : Activity() {
 
         libraryContainer =
             LinearLayout(this).apply {
-
-                orientation =
-                    LinearLayout.VERTICAL
-
-                setPadding(
-                    12,
-                    8,
-                    12,
-                    30
-                )
+                orientation = LinearLayout.VERTICAL
+                setPadding(12, 8, 12, 30)
             }
 
-        scroll.addView(
-            libraryContainer
-        )
+        scroll.addView(libraryContainer)
 
         root.addView(
             scroll,
@@ -161,49 +112,24 @@ class LibraryActivity : Activity() {
         val songs =
             LibraryManager.get(this)
 
-        if (
-            songs.isEmpty()
-        ) {
+        if (songs.isEmpty()) {
 
             val empty =
                 TextView(this).apply {
-
-                    text =
-                        "کتابخانه خالی است"
-
-                    textSize =
-                        17f
-
-                    setTextColor(
-                        0xFFAAAAAA.toInt()
-                    )
-
-                    gravity =
-                        Gravity.CENTER
-
-                    setPadding(
-                        20,
-                        80,
-                        20,
-                        80
-                    )
+                    text = "کتابخانه خالی است"
+                    textSize = 17f
+                    setTextColor(0xFFAAAAAA.toInt())
+                    gravity = Gravity.CENTER
+                    setPadding(20, 80, 20, 80)
                 }
 
-            libraryContainer.addView(
-                empty
-            )
+            libraryContainer.addView(empty)
 
             return
         }
 
-        songs.forEachIndexed {
-                index,
-                song ->
-
-            addSongView(
-                song,
-                index
-            )
+        songs.forEachIndexed { index, song ->
+            addSongView(song, index)
         }
     }
 
@@ -214,23 +140,10 @@ class LibraryActivity : Activity() {
 
         val row =
             LinearLayout(this).apply {
-
-                orientation =
-                    LinearLayout.HORIZONTAL
-
-                gravity =
-                    Gravity.CENTER_VERTICAL
-
-                setPadding(
-                    12,
-                    12,
-                    12,
-                    12
-                )
-
-                setBackgroundColor(
-                    0xFF15151D.toInt()
-                )
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(12, 12, 12, 12)
+                setBackgroundColor(0xFF15151D.toInt())
             }
 
         val rowParams =
@@ -239,38 +152,22 @@ class LibraryActivity : Activity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
 
-        rowParams.setMargins(
-            0,
-            0,
-            0,
-            10
-        )
+        rowParams.setMargins(0, 0, 0, 10)
 
-        row.layoutParams =
-            rowParams
+        row.layoutParams = rowParams
 
         val cover =
             ImageView(this).apply {
-
-                scaleType =
-                    ImageView.ScaleType.CENTER_CROP
-
-                setBackgroundColor(
-                    0xFF22222A.toInt()
-                )
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setBackgroundColor(0xFF22222A.toInt())
             }
 
         row.addView(
             cover,
-            LinearLayout.LayoutParams(
-                70,
-                70
-            )
+            LinearLayout.LayoutParams(70, 70)
         )
 
-        if (
-            song.cover.isNotBlank()
-        ) {
+        if (song.cover.isNotBlank()) {
 
             executor.execute {
 
@@ -278,15 +175,10 @@ class LibraryActivity : Activity() {
 
                     val connection =
                         URL(song.cover)
-                            .openConnection()
-                                as HttpURLConnection
+                            .openConnection() as HttpURLConnection
 
-                    connection.connectTimeout =
-                        5000
-
-                    connection.readTimeout =
-                        5000
-
+                    connection.connectTimeout = 5000
+                    connection.readTimeout = 5000
                     connection.connect()
 
                     val bitmap =
@@ -302,68 +194,36 @@ class LibraryActivity : Activity() {
                             bitmap != null &&
                             !isFinishing
                         ) {
-
-                            cover.setImageBitmap(
-                                bitmap
-                            )
+                            cover.setImageBitmap(bitmap)
                         }
                     }
 
-                } catch (
-                    _: Exception
-                ) {
+                } catch (_: Exception) {
                 }
             }
         }
 
         val textContainer =
             LinearLayout(this).apply {
-
-                orientation =
-                    LinearLayout.VERTICAL
-
-                gravity =
-                    Gravity.CENTER_VERTICAL
-
-                setPadding(
-                    14,
-                    0,
-                    8,
-                    0
-                )
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(14, 0, 8, 0)
             }
 
         val title =
             TextView(this).apply {
-
-                text =
-                    "${index + 1}. ${song.title}"
-
-                textSize =
-                    16f
-
-                setTextColor(
-                    0xFFFFFFFF.toInt()
-                )
-
-                maxLines =
-                    2
+                text = "${index + 1}. ${song.title}"
+                textSize = 16f
+                setTextColor(0xFFFFFFFF.toInt())
+                maxLines = 2
             }
 
         val artist =
             TextView(this).apply {
-
-                text =
-                    "${song.artist} • ${song.site}"
-
-                textSize =
-                    12f
-
-                setTextColor(
-                    0xFFAAAAAA.toInt()
-
-                maxLines =
-                    2
+                text = "${song.artist} • ${song.site}"
+                textSize = 12f
+                setTextColor(0xFFAAAAAA.toInt())
+                maxLines = 2
             }
 
         textContainer.addView(title)
@@ -380,19 +240,10 @@ class LibraryActivity : Activity() {
 
         val deleteButton =
             TextView(this).apply {
-
-                text =
-                    "🗑"
-
-                textSize =
-                    22f
-
-                gravity =
-                    Gravity.CENTER
-
-                setTextColor(
-                    0xFFFFFFFF.toInt()
-                )
+                text = "🗑"
+                textSize = 22f
+                gravity = Gravity.CENTER
+                setTextColor(0xFFFFFFFF.toInt())
 
                 setPadding(
                     10,
@@ -402,7 +253,6 @@ class LibraryActivity : Activity() {
                 )
 
                 setOnClickListener {
-
                     deleteSong(song)
                 }
             }
@@ -416,22 +266,17 @@ class LibraryActivity : Activity() {
         )
 
         row.setOnClickListener {
-
             playSong(song)
         }
 
-        libraryContainer.addView(
-            row
-        )
+        libraryContainer.addView(row)
     }
 
     private fun playSong(
         song: SongResult
     ) {
 
-        if (
-            song.url.isBlank()
-        ) {
+        if (song.url.isBlank()) {
             return
         }
 
@@ -465,13 +310,9 @@ class LibraryActivity : Activity() {
                 )
             }
 
-        if (
-            Build.VERSION.SDK_INT >= 26
-        ) {
+        if (Build.VERSION.SDK_INT >= 26) {
 
-            startForegroundService(
-                intent
-            )
+            startForegroundService(intent)
 
         } else {
 
