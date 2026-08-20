@@ -1,12 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
+
 <resources>
-    <color name="bg">#080D14</color>
-    <color name="panel">#111A25</color>
-    <color name="panel2">#162231</color>
-    <color name="purple">#8B6CFF</color>
-    <color name="purple2">#6F55E8</color>
-    <color name="pink">#E83E78</color>
-    <color name="white">#F5F7FB</color>
-    <color name="muted">#8C97A8</color>
-    <color name="line">#273242</color>
+
+    <color name="bg">#0B0B0F</color>
+    <color name="surface">#14141A</color>
+    <color name="surface_2">#1B1B23</color>
+
+    <color name="white">#FFFFFF</color>
+    <color name="text_primary">#FFFFFF</color>
+    <color name="muted">#A7A7B0</color>
+
+    <color name="accent">#B8FF3D</color>
+    <color name="accent_dark">#8BC52A</color>
+
+    <color name="line">#292930</color>
+    <color name="transparent">#00000000</color>
+
+    <!-- Backward compatibility with existing resources -->
+    <color name="panel">#14141A</color>
+    <color name="panel2">#1B1B23</color>
+    <color name="purple">#B8FF3D</color>
+    <color name="purple2">#8BC52A</color>
+    <color name="pink">#B8FF3D</color>
+
 </resources>
