@@ -88,10 +88,10 @@
         <SeekBar
             android:id="@+id/seekBar"
             android:layout_width="match_parent"
-            android:layout_height="32dp"
+            android:layout_height="24dp"
+            android:layout_marginTop="8dp"
             android:max="100"
-            android:progress="0"
-            android:layout_marginTop="8dp"/>
+            android:progress="0"/>
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -153,7 +153,7 @@
                 android:layout_width="58dp"
                 android:layout_height="58dp"
                 android:gravity="center"
-                android:text="↕"
+                android:text="🔁"
                 android:textColor="#FFFFFF"
                 android:textSize="20sp"/>
 
@@ -203,7 +203,7 @@
                 android:layout_width="52dp"
                 android:layout_height="48dp"
                 android:gravity="center"
-                android:text="Ⅱ"
+                android:text="⏸"
                 android:textColor="#FFFFFF"
                 android:visibility="gone"/>
 
