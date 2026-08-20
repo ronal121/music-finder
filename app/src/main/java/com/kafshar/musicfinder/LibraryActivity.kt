@@ -28,7 +28,6 @@ class LibraryActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         createLayout()
-
         loadLibrary()
     }
 
@@ -36,7 +35,6 @@ class LibraryActivity : Activity() {
 
         val root =
             LinearLayout(this).apply {
-
                 orientation =
                     LinearLayout.VERTICAL
 
@@ -47,7 +45,6 @@ class LibraryActivity : Activity() {
 
         val header =
             LinearLayout(this).apply {
-
                 orientation =
                     LinearLayout.HORIZONTAL
 
@@ -64,96 +61,80 @@ class LibraryActivity : Activity() {
 
         val backButton =
             TextView(this).apply {
-
                 text = "‹"
-
-                textSize = 38f
-
+                textSize = 36f
                 setTextColor(
                     0xFFFFFFFF.toInt()
                 )
-
                 gravity =
                     Gravity.CENTER
 
-                setPadding(
-                    8,
-                    0,
-                    18,
-                    0
-                )
-
                 setOnClickListener {
-
                     finish()
                 }
             }
 
+        header.addView(
+            backButton,
+            LinearLayout.LayoutParams(
+                55,
+                55
+            )
+        )
+
         val title =
             TextView(this).apply {
-
-                text = "کتابخانه"
-
+                text = "Library"
                 textSize = 23f
-
                 setTextColor(
                     0xFFFFFFFF.toInt()
                 )
-
                 gravity =
                     Gravity.CENTER_VERTICAL
-
-                layoutParams =
-                    LinearLayout.LayoutParams(
-                        0,
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        1f
-                    )
             }
 
         header.addView(
-            backButton
+            title,
+            LinearLayout.LayoutParams(
+                0,
+                55,
+                1f
+            )
         )
 
-        header.addView(
-            title
-        )
-
-        root.addView(
-            header
-        )
+        root.addView(header)
 
         val scroll =
-            ScrollView(this).apply {
-
-                layoutParams =
-                    LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        0,
-                        1f
-                    )
-            }
+            ScrollView(this)
 
         libraryContainer =
             LinearLayout(this).apply {
-
                 orientation =
                     LinearLayout.VERTICAL
 
                 setPadding(
-                    10,
-                    5,
-                    10,
-                    20
+                    12,
+                    8,
+                    12,
+                    30
                 )
             }
 
         scroll.addView(
-            libraryContainer
+            libraryContainer,
+            ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT,
+                ScrollView.LayoutParams.WRAP_CONTENT
+            )
         )
 
         root.addView(
-            scroll
+            scroll,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
         )
 
         setContentView(root)
@@ -164,7 +145,7 @@ class LibraryActivity : Activity() {
         libraryContainer.removeAllViews()
 
         val songs =
-            LibraryManager.getSongs(this)
+            LibraryManager.get(this)
 
         if (songs.isEmpty()) {
 
@@ -174,7 +155,8 @@ class LibraryActivity : Activity() {
                     text =
                         "کتابخانه خالی است"
 
-                    textSize = 17f
+                    textSize =
+                        17f
 
                     setTextColor(
                         0xFFAAAAAA.toInt()
@@ -198,14 +180,20 @@ class LibraryActivity : Activity() {
             return
         }
 
-        songs.forEach { song ->
+        songs.forEachIndexed {
+                index,
+                song ->
 
-            addSongView(song)
+            addSongView(
+                song,
+                index
+            )
         }
     }
 
     private fun addSongView(
-        song: SongResult
+        song: SongResult,
+        index: Int
     ) {
 
         val row =
@@ -225,7 +213,7 @@ class LibraryActivity : Activity() {
                 )
 
                 setBackgroundColor(
-                    0xFF15151C.toInt()
+                    0xFF15151D.toInt()
                 )
             }
 
@@ -236,32 +224,37 @@ class LibraryActivity : Activity() {
             )
 
         params.setMargins(
-            4,
-            5,
-            4,
-            5
+            0,
+            0,
+            0,
+            10
         )
 
-        row.layoutParams = params
+        row.layoutParams =
+            params
 
         val cover =
             ImageView(this).apply {
 
-                layoutParams =
-                    LinearLayout.LayoutParams(
-                        65,
-                        65
-                    )
-
                 scaleType =
                     ImageView.ScaleType.CENTER_CROP
 
-                setImageResource(
-                    android.R.drawable.ic_media_play
+                setBackgroundColor(
+                    0xFF22222A.toInt()
                 )
             }
 
-        if (song.cover.isNotBlank()) {
+        row.addView(
+            cover,
+            LinearLayout.LayoutParams(
+                70,
+                70
+            )
+        )
+
+        if (
+            song.cover.isNotBlank()
+        ) {
 
             executor.execute {
 
@@ -290,6 +283,7 @@ class LibraryActivity : Activity() {
                     runOnUiThread {
 
                         if (
+                            !isFinishing &&
                             bitmap != null
                         ) {
 
@@ -299,14 +293,15 @@ class LibraryActivity : Activity() {
                         }
                     }
 
-                } catch (_: Exception) {
+                } catch (
+                    _: Exception
+                ) {
                 }
             }
         }
 
-        val textLayout =
+        val textContainer =
             LinearLayout(this).apply {
-
                 orientation =
                     LinearLayout.VERTICAL
 
@@ -314,79 +309,83 @@ class LibraryActivity : Activity() {
                     Gravity.CENTER_VERTICAL
 
                 setPadding(
-                    12,
+                    14,
                     0,
                     8,
                     0
-
-                layoutParams =
-                    LinearLayout.LayoutParams(
-                        0,
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        1f
-                    )
+                )
             }
 
-        val songTitle =
+        val textParams =
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+
+        val title =
             TextView(this).apply {
 
                 text =
-                    song.title
+                    "${index + 1}. ${song.title}"
 
-                textSize = 16f
+                textSize =
+                    16f
 
                 setTextColor(
                     0xFFFFFFFF.toInt()
                 )
+
+                maxLines =
+                    2
             }
 
-        val info =
+        val artist =
             TextView(this).apply {
 
                 text =
                     "${song.artist} • ${song.site}"
 
-                textSize = 12f
+                textSize =
+                    12f
 
                 setTextColor(
                     0xFFAAAAAA.toInt()
                 )
 
-                setPadding(
-                    0,
-                    5,
-                    0,
-                    0
-                )
+                maxLines =
+                    2
             }
 
-        textLayout.addView(
-            songTitle
-        )
+        textContainer.addView(title)
+        textContainer.addView(artist)
 
-        textLayout.addView(
-            info
+        row.addView(
+            textContainer,
+            textParams
         )
 
         val deleteButton =
             TextView(this).apply {
 
-                text = "🗑"
+                text =
+                    "🗑"
 
-                textSize = 23f
-
-                setTextColor(
-                    0xFFFF5555.toInt()
-                )
+                textSize =
+                    22f
 
                 gravity =
                     Gravity.CENTER
 
                 setPadding(
                     12,
-                    12,
+                    10,
                     8,
-                    12
+                    10
+                )
+
+                setTextColor(
+                    0xFFFFFFFF.toInt()
                 )
 
                 setOnClickListener {
@@ -396,15 +395,11 @@ class LibraryActivity : Activity() {
             }
 
         row.addView(
-            cover
-        )
-
-        row.addView(
-            textLayout
-        )
-
-        row.addView(
-            deleteButton
+            deleteButton,
+            LinearLayout.LayoutParams(
+                55,
+                70
+            )
         )
 
         row.setOnClickListener {
@@ -415,24 +410,6 @@ class LibraryActivity : Activity() {
         libraryContainer.addView(
             row
         )
-    }
-
-    private fun deleteSong(
-        song: SongResult
-    ) {
-
-        LibraryManager.removeSong(
-            this,
-            song
-        )
-
-        Toast.makeText(
-            this,
-            "از کتابخانه حذف شد",
-            Toast.LENGTH_SHORT
-        ).show()
-
-        loadLibrary()
     }
 
     private fun playSong(
@@ -475,13 +452,42 @@ class LibraryActivity : Activity() {
                 )
             }
 
-        startService(intent)
+        if (
+            android.os.Build.VERSION.SDK_INT >= 26
+        ) {
+
+            startForegroundService(
+                intent
+            )
+
+        } else {
+
+            startService(intent)
+        }
 
         Toast.makeText(
             this,
             "در حال پخش: ${song.title}",
             Toast.LENGTH_SHORT
         ).show()
+    }
+
+    private fun deleteSong(
+        song: SongResult
+    ) {
+
+        LibraryManager.remove(
+            this,
+            song
+        )
+
+        Toast.makeText(
+            this,
+            "از کتابخانه حذف شد",
+            Toast.LENGTH_SHORT
+        ).show()
+
+        loadLibrary()
     }
 
     override fun onDestroy() {
