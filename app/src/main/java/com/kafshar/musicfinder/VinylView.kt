@@ -11,6 +11,7 @@ import android.util.AttributeSet
 import android.view.View
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.math.min
 
@@ -25,14 +26,15 @@ class VinylView @JvmOverloads constructor(
                     Paint.FILTER_BITMAP_FLAG
         )
 
-    private var coverBitmap: Bitmap? = null
-
-    private var rotation = 0f
-
-    private var rotating = false
-
-    private val executor =
+    private val executor:
+            ExecutorService =
         Executors.newSingleThreadExecutor()
+
+    private var coverBitmap: Bitmap? = null
+    private var rotation = 0f
+    private var rotating = false
+    private var destroyed = false
+    private var requestedCoverUrl = ""
 
     private val rotationRunnable =
         object : Runnable {
@@ -40,7 +42,8 @@ class VinylView @JvmOverloads constructor(
             override fun run() {
 
                 if (
-                    !rotating
+                    !rotating ||
+                    destroyed
                 ) {
                     return
                 }
@@ -57,7 +60,7 @@ class VinylView @JvmOverloads constructor(
 
                 postDelayed(
                     this,
-                    16
+                    16L
                 )
             }
         }
@@ -66,58 +69,150 @@ class VinylView @JvmOverloads constructor(
         url: String
     ) {
 
-        coverBitmap = null
+        requestedCoverUrl = url
 
+        coverBitmap = null
         invalidate()
 
         if (
-            url.isBlank()
+            url.isBlank() ||
+            destroyed
         ) {
             return
         }
 
         executor.execute {
 
+            var connection:
+                    HttpURLConnection? = null
+
             try {
 
-                val connection =
+                connection =
                     URL(url)
                         .openConnection()
-                            as HttpURLConnection
+                            as? HttpURLConnection
+                        ?: return@execute
 
-                connection.connectTimeout =
-                    8000
-
-                connection.readTimeout =
-                    8000
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+                connection.instanceFollowRedirects = true
 
                 connection.connect()
 
+                if (
+                    connection.responseCode !in
+                    200..299
+                ) {
+                    return@execute
+                }
+
+                val bytes =
+                    connection.inputStream.use {
+                        it.readBytes()
+                    }
+
+                if (
+                    bytes.isEmpty()
+                ) {
+                    return@execute
+                }
+
+                val bounds =
+                    BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
+                    }
+
+                BitmapFactory.decodeByteArray(
+                    bytes,
+                    0,
+                    bytes.size,
+                    bounds
+                )
+
+                val maxSize = 700
+
+                var sample = 1
+
+                while (
+                    bounds.outWidth / sample >
+                    maxSize ||
+                    bounds.outHeight / sample >
+                    maxSize
+                ) {
+                    sample *= 2
+                }
+
+                val options =
+                    BitmapFactory.Options().apply {
+                        inSampleSize = sample
+                        inPreferredConfig =
+                            Bitmap.Config.RGB_565
+                    }
+
                 val bitmap =
-                    BitmapFactory.decodeStream(
-                        connection.inputStream
+                    BitmapFactory.decodeByteArray(
+                        bytes,
+                        0,
+                        bytes.size,
+                        options
                     )
 
-                connection.disconnect()
+                if (
+                    bitmap == null ||
+                    destroyed
+                ) {
+                    return@execute
+                }
 
                 post {
 
-                    coverBitmap =
-                        bitmap
+                    if (
+                        destroyed ||
+                        requestedCoverUrl != url
+                    ) {
+                        bitmap.recycle()
+                        return@post
+                    }
+
+                    coverBitmap?.let {
+                        if (!it.isRecycled) {
+                            it.recycle()
+                        }
+                    }
+
+                    coverBitmap = bitmap
 
                     invalidate()
                 }
 
-            } catch (
-                _: Exception
-            ) {
+            } catch (_: Exception) {
+
+            } finally {
+
+                try {
+                    connection?.disconnect()
+                } catch (_: Exception) {
+                }
             }
         }
     }
 
     fun clearCover() {
 
+        requestedCoverUrl = ""
+
+        val old =
+            coverBitmap
+
         coverBitmap = null
+
+        if (
+            old != null &&
+            !old.isRecycled
+        ) {
+            old.recycle()
+        }
 
         invalidate()
     }
@@ -125,6 +220,7 @@ class VinylView @JvmOverloads constructor(
     fun startRotation() {
 
         if (
+            destroyed ||
             rotating
         ) {
             return
@@ -162,9 +258,7 @@ class VinylView @JvmOverloads constructor(
                 height
             )
 
-        if (
-            size <= 0
-        ) {
+        if (size <= 0) {
             return
         }
 
@@ -227,7 +321,8 @@ class VinylView @JvmOverloads constructor(
             coverBitmap
 
         if (
-            bitmap != null
+            bitmap != null &&
+            !bitmap.isRecycled
         ) {
 
             val coverSize =
@@ -237,13 +332,10 @@ class VinylView @JvmOverloads constructor(
                 RectF(
                     rect.centerX() -
                             coverSize / 2f,
-
                     rect.centerY() -
                             coverSize / 2f,
-
                     rect.centerX() +
                             coverSize / 2f,
-
                     rect.centerY() +
                             coverSize / 2f
                 )
@@ -309,9 +401,27 @@ class VinylView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
 
+        destroyed = true
+
         stopRotation()
 
-        executor.shutdownNow()
+        removeCallbacks(
+            rotationRunnable
+        )
+
+        try {
+            executor.shutdownNow()
+        } catch (_: Exception) {
+        }
+
+        coverBitmap?.let {
+
+            if (!it.isRecycled) {
+                it.recycle()
+            }
+        }
+
+        coverBitmap = null
 
         super.onDetachedFromWindow()
     }
