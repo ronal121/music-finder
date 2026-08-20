@@ -6,57 +6,35 @@ import org.json.JSONObject
 
 object LibraryManager {
 
-    private const val PREF =
-        "music_finder_library"
+    private const val PREF = "music_finder_library"
+    private const val KEY = "songs"
 
-    private const val KEY =
-        "songs"
+    fun getSongs(context: Context): MutableList<SongResult> {
 
-    fun getSongs(
-        context: Context
-    ): MutableList<SongResult> {
+        val prefs = context.getSharedPreferences(
+            PREF,
+            Context.MODE_PRIVATE
+        )
 
-        val prefs =
-            context.getSharedPreferences(
-                PREF,
-                Context.MODE_PRIVATE
-            )
+        val raw = prefs.getString(KEY, "[]") ?: "[]"
 
-        val raw =
-            prefs.getString(
-                KEY,
-                "[]"
-            ) ?: "[]"
-
-        val result =
-            mutableListOf<SongResult>()
+        val result = mutableListOf<SongResult>()
 
         try {
 
-            val array =
-                JSONArray(raw)
+            val array = JSONArray(raw)
 
             for (i in 0 until array.length()) {
 
-                val obj =
-                    array.getJSONObject(i)
+                val obj = array.getJSONObject(i)
 
                 result.add(
                     SongResult(
-                        url =
-                            obj.optString("url"),
-
-                        title =
-                            obj.optString("title"),
-
-                        artist =
-                            obj.optString("artist"),
-
-                        site =
-                            obj.optString("site"),
-
-                        cover =
-                            obj.optString("cover")
+                        url = obj.optString("url"),
+                        title = obj.optString("title"),
+                        artist = obj.optString("artist"),
+                        site = obj.optString("site"),
+                        cover = obj.optString("cover")
                     )
                 )
             }
@@ -72,40 +50,38 @@ object LibraryManager {
         song: SongResult
     ) {
 
-        val list =
-            getSongs(context)
+        val songs = getSongs(context)
 
         if (
-            list.any {
+            songs.any {
                 it.url == song.url
             }
         ) {
             return
         }
 
-        list.add(song)
+        songs.add(song)
 
-        save(
+        saveSongs(
             context,
-            list
+            songs
         )
     }
 
-    fun remove(
+    fun removeSong(
         context: Context,
         song: SongResult
     ) {
 
-        val list =
-            getSongs(context)
+        val songs = getSongs(context)
 
-        list.removeAll {
+        songs.removeAll {
             it.url == song.url
         }
 
-        save(
+        saveSongs(
             context,
-            list
+            songs
         )
     }
 
@@ -114,30 +90,46 @@ object LibraryManager {
         song: SongResult
     ): Boolean {
 
-        return getSongs(context)
-            .any {
-                it.url == song.url
-            }
+        return getSongs(context).any {
+            it.url == song.url
+        }
     }
 
-    private fun save(
+    private fun saveSongs(
         context: Context,
         songs: List<SongResult>
     ) {
 
-        val array =
-            JSONArray()
+        val array = JSONArray()
 
-        songs.forEach {
+        songs.forEach { song ->
 
-            val obj =
-                JSONObject()
+            val obj = JSONObject()
 
-            obj.put("url", it.url)
-            obj.put("title", it.title)
-            obj.put("artist", it.artist)
-            obj.put("site", it.site)
-            obj.put("cover", it.cover)
+            obj.put(
+                "url",
+                song.url
+            )
+
+            obj.put(
+                "title",
+                song.title
+            )
+
+            obj.put(
+                "artist",
+                song.artist
+            )
+
+            obj.put(
+                "site",
+                song.site
+            )
+
+            obj.put(
+                "cover",
+                song.cover
+            )
 
             array.put(obj)
         }
