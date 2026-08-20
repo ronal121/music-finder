@@ -36,9 +36,7 @@ object LibraryManager {
             val array =
                 JSONArray(raw)
 
-            for (
-                i in 0 until array.length()
-            ) {
+            for (i in 0 until array.length()) {
 
                 val obj =
                     array.getJSONObject(i)
@@ -46,36 +44,24 @@ object LibraryManager {
                 result.add(
                     SongResult(
                         url =
-                            obj.optString(
-                                "url"
-                            ),
+                            obj.optString("url"),
 
                         title =
-                            obj.optString(
-                                "title"
-                            ),
+                            obj.optString("title"),
 
                         artist =
-                            obj.optString(
-                                "artist"
-                            ),
+                            obj.optString("artist"),
 
                         site =
-                            obj.optString(
-                                "site"
-                            ),
+                            obj.optString("site"),
 
                         cover =
-                            obj.optString(
-                                "cover"
-                            )
+                            obj.optString("cover")
                     )
                 )
             }
 
-        } catch (
-            _: Exception
-        ) {
+        } catch (_: Exception) {
         }
 
         return result
@@ -99,13 +85,13 @@ object LibraryManager {
 
         list.add(song)
 
-        saveSongs(
+        save(
             context,
             list
         )
     }
 
-    fun removeSong(
+    fun remove(
         context: Context,
         song: SongResult
     ) {
@@ -117,7 +103,7 @@ object LibraryManager {
             it.url == song.url
         }
 
-        saveSongs(
+        save(
             context,
             list
         )
@@ -134,47 +120,26 @@ object LibraryManager {
             }
     }
 
-    private fun saveSongs(
+    private fun save(
         context: Context,
-        list: List<SongResult>
+        songs: List<SongResult>
     ) {
 
         val array =
             JSONArray()
 
-        list.forEach { song ->
+        songs.forEach {
 
             val obj =
                 JSONObject()
 
-            obj.put(
-                "url",
-                song.url
-            )
+            obj.put("url", it.url)
+            obj.put("title", it.title)
+            obj.put("artist", it.artist)
+            obj.put("site", it.site)
+            obj.put("cover", it.cover)
 
-            obj.put(
-                "title",
-                song.title
-            )
-
-            obj.put(
-                "artist",
-                song.artist
-            )
-
-            obj.put(
-                "site",
-                song.site
-            )
-
-            obj.put(
-                "cover",
-                song.cover
-            )
-
-            array.put(
-                obj
-            )
+            array.put(obj)
         }
 
         context
@@ -188,37 +153,5 @@ object LibraryManager {
                 array.toString()
             )
             .apply()
-    }
-
-    // سازگاری با نسخه قبلی
-    fun get(
-        context: Context
-    ): MutableList<SongResult> {
-
-        return getSongs(context)
-    }
-
-    // سازگاری با نسخه قبلی
-    fun add(
-        context: Context,
-        song: SongResult
-    ) {
-
-        saveSong(
-            context,
-            song
-        )
-    }
-
-    // سازگاری با نسخه قبلی
-    fun remove(
-        context: Context,
-        song: SongResult
-    ) {
-
-        removeSong(
-            context,
-            song
-        )
     }
 }
