@@ -55,24 +55,22 @@ class MusicService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
 
     override fun onCreate() {
-
         super.onCreate()
 
-        player =
-            ExoPlayer.Builder(this)
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setContentType(
-                            C.AUDIO_CONTENT_TYPE_MUSIC
-                        )
-                        .setUsage(
-                            C.USAGE_MEDIA
-                        )
-                        .build(),
-                    true
-                )
-                .setHandleAudioBecomingNoisy(true)
-                .build()
+        player = ExoPlayer.Builder(this)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setContentType(
+                        C.AUDIO_CONTENT_TYPE_MUSIC
+                    )
+                    .setUsage(
+                        C.USAGE_MEDIA
+                    )
+                    .build(),
+                true
+            )
+            .setHandleAudioBecomingNoisy(true)
+            .build()
 
         mediaSession =
             MediaSession.Builder(
@@ -96,7 +94,6 @@ class MusicService : MediaSessionService() {
                 override fun onPlaybackStateChanged(
                     playbackState: Int
                 ) {
-
                     sendPlayerUpdate()
                 }
 
@@ -104,7 +101,6 @@ class MusicService : MediaSessionService() {
                     mediaItem: MediaItem?,
                     reason: Int
                 ) {
-
                     if (mediaItem != null) {
                         saveToHistory(mediaItem)
                     }
@@ -187,20 +183,20 @@ class MusicService : MediaSessionService() {
             }
 
             ACTION_GET_POSITION -> {
+                // فقط وضعیت را ارسال می‌کنیم.
+                // این اکشن نباید باعث راه‌اندازی مجدد سرویس شود.
                 sendPlayerUpdate()
             }
 
             ACTION_STOP -> {
 
                 player.stop()
-
                 sendPlayerUpdate()
-
                 stopSelf()
             }
         }
 
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun playUrl(
@@ -359,23 +355,25 @@ class MusicService : MediaSessionService() {
                 }
             }
 
+        val titleWords =
+            currentTitle
+                .lowercase()
+                .split(
+                    Regex("[\\s,،\\-_|]+")
+                )
+                .filter {
+                    it.length >= 2
+                }
+
         val sameTitleStyle =
             candidates.filter { song ->
 
                 val title =
                     song.title.lowercase()
 
-                currentTitle
-                    .lowercase()
-                    .split(
-                        Regex("[\\s,،\\-_|]+")
-                    )
-                    .filter {
-                        it.length >= 2
-                    }
-                    .any {
-                        title.contains(it)
-                    }
+                titleWords.any {
+                    title.contains(it)
+                }
             }
 
         val source =
@@ -506,9 +504,7 @@ class MusicService : MediaSessionService() {
         )
 
         while (lines.size > 100) {
-            lines.removeAt(
-                lines.lastIndex
-            )
+            lines.removeAt(lines.lastIndex)
         }
 
         prefs.edit()
@@ -537,9 +533,7 @@ class MusicService : MediaSessionService() {
             )
 
         val position =
-            duration *
-                    safe /
-                    100
+            duration * safe / 100
 
         player.seekTo(position)
 
@@ -626,6 +620,8 @@ class MusicService : MediaSessionService() {
         rootIntent: Intent?
     ) {
 
+        // اگر آهنگ در حال پخش است،
+        // سرویس ادامه می‌دهد.
         if (player.isPlaying) {
             player.play()
         }
@@ -636,7 +632,6 @@ class MusicService : MediaSessionService() {
     override fun onDestroy() {
 
         mediaSession?.release()
-
         mediaSession = null
 
         player.release()
