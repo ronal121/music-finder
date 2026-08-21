@@ -941,21 +941,14 @@ class MainActivity : Activity() {
                     "site:mybia2music.com OR " +
                     "site:musicdel.ir OR " +
                     "site:musics-fa.com)"
+        val searchQuery = SearchEngine.buildGoogleQuery(text)
+        val encoded = try {
+            java.net.URLEncoder.encode(searchQuery, "UTF-8")
+        } catch (_: Exception) {
+            return
+        }
 
-        val encoded =
-            try {
-
-                URLEncoder.encode(
-                    searchQuery,
-                    "UTF-8"
-                )
-
-            } catch (_: Exception) {
-
-                return
-            }
-
-        val url =
+        val url = "https://www.google.com/search?q=$encoded&num=50"
             "https://www.google.com/search?q=$encoded&num=50"
 
         try {
@@ -1018,58 +1011,40 @@ class MainActivity : Activity() {
 
         if (destroyed) return
 
-        val generation =
-            searchGeneration
-
+        val generation = searchGeneration
         if (generation <= 0) return
+
+        val hosts = ServerConfig.MUSIC_SITES.joinToString(
+            prefix = "[",
+            postfix = "]"
+        ) { "\"$it\"" }
 
         val script = """
             (function() {
                 try {
-                    var links =
-                        document.querySelectorAll("a");
-
+                    var links = document.querySelectorAll("a");
                     var found = [];
+                    var hosts = $hosts;
 
-                    for (
-                        var i = 0;
-                        i < links.length;
-                        i++
-                    ) {
-                        var href =
-                            links[i].href || "";
+                    for (var i = 0; i < links.length; i++) {
+                        var href = links[i].href || "";
+                        var text = links[i].innerText || "";
+                        var lower = href.toLowerCase();
+                        var allowed = false;
 
-                        var text =
-                            links[i].innerText || "";
+                        for (var h = 0; h < hosts.length; h++) {
+                            if (lower.indexOf(hosts[h]) >= 0) {
+                                allowed = true;
+                                break;
+                            }
+                        }
 
-                        var lower =
-                            href.toLowerCase();
-
-                        var allowed =
-                            lower.indexOf("rozmusic.com") >= 0 ||
-                            lower.indexOf("mybia2music.com") >= 0 ||
-                            lower.indexOf("musicdel.ir") >= 0 ||
-                            lower.indexOf("musics-fa.com") >= 0;
-
-                        if (
-                            allowed &&
-                            href.indexOf("google.com") < 0 &&
-                            found.indexOf(href) < 0
-                        ) {
-                            found.push(
-                                href + "|||" +
-                                text.replace(
-                                    /[\r\n]+/g,
-                                    " "
-                                )
-                            );
+                        if (allowed && lower.indexOf("google.com") < 0 && found.indexOf(href) < 0) {
+                            found.push(href + "|||" + text.replace(/[\r\n]+/g, " "));
                         }
                     }
 
-                    MusicFinder.results(
-                        found.join("###")
-                    );
-
+                    MusicFinder.results(found.join("###"));
                 } catch (e) {
                     MusicFinder.results("");
                 }
@@ -1077,19 +1052,9 @@ class MainActivity : Activity() {
         """.trimIndent()
 
         try {
-
-            web.evaluateJavascript(
-                script,
-                null
-            )
-
+            web.evaluateJavascript(script, null)
         } catch (_: Exception) {
-
-            if (!destroyed) {
-
-                status.text =
-                    "خطا در استخراج نتایج"
-            }
+            if (!destroyed) status.text = "خطا در استخراج نتایج"
         }
     }
 
