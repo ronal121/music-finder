@@ -78,7 +78,23 @@ class MainActivity : Activity() {
     private lateinit var resultsContainer: LinearLayout
     private lateinit var vinyl: VinylView
 
-    private val songs = ArrayList<SongResult>()
+    /*
+     * Volume
+     */
+    private lateinit var volumeSeekBar: SeekBar
+    private lateinit var volumeText: TextView
+
+    private val volumePreferences =
+        "player_settings"
+
+    private val volumeKey =
+        "volume"
+
+    private val defaultVolume =
+        80
+
+    private val songs =
+        ArrayList<SongResult>()
 
     private val mainHandler =
         Handler(Looper.getMainLooper())
@@ -211,6 +227,7 @@ class MainActivity : Activity() {
         bindViews()
         setupWebView()
         setupButtons()
+        setupVolumeControl()
         restoreSearchResults()
 
         requestNotificationPermission()
@@ -282,6 +299,15 @@ class MainActivity : Activity() {
 
         web =
             findViewById(R.id.web)
+
+        /*
+         * Volume controls
+         */
+        volumeSeekBar =
+            findViewById(R.id.volumeSeekBar)
+
+        volumeText =
+            findViewById(R.id.volumeText)
     }
 
     private fun requestNotificationPermission() {
@@ -683,6 +709,142 @@ class MainActivity : Activity() {
             toggleHistory()
         }
     }
+
+    /*
+     * ============================================================
+     * VOLUME CONTROL
+     * ============================================================
+     */
+
+    private fun setupVolumeControl() {
+
+        val preferences =
+            getSharedPreferences(
+                volumePreferences,
+                MODE_PRIVATE
+            )
+
+        val savedVolume =
+            preferences
+                .getInt(
+                    volumeKey,
+                    defaultVolume
+                )
+                .coerceIn(0, 100)
+
+        volumeSeekBar.progress =
+            savedVolume
+
+        updateVolumeText(
+            savedVolume
+        )
+
+        volumeSeekBar.setOnSeekBarChangeListener(
+            object :
+                SeekBar.OnSeekBarChangeListener {
+
+                override fun onProgressChanged(
+                    seekBar: SeekBar?,
+                    progress: Int,
+                    fromUser: Boolean
+                ) {
+
+                    val volume =
+                        progress.coerceIn(
+                            0,
+                            100
+                        )
+
+                    updateVolumeText(
+                        volume
+                    )
+
+                    if (!fromUser) {
+                        return
+                    }
+
+                    saveVolume(
+                        volume
+                    )
+
+                    sendVolumeToService(
+                        volume
+                    )
+                }
+
+                override fun onStartTrackingTouch(
+                    seekBar: SeekBar?
+                ) {
+                }
+
+                override fun onStopTrackingTouch(
+                    seekBar: SeekBar?
+                ) {
+                }
+            }
+        )
+    }
+
+    private fun updateVolumeText(
+        volume: Int
+    ) {
+
+        volumeText.text =
+            "🔊 $volume%"
+    }
+
+    private fun saveVolume(
+        volume: Int
+    ) {
+
+        getSharedPreferences(
+            volumePreferences,
+            MODE_PRIVATE
+        )
+            .edit()
+            .putInt(
+                volumeKey,
+                volume.coerceIn(0, 100)
+            )
+            .apply()
+    }
+
+    private fun sendVolumeToService(
+        volume: Int
+    ) {
+
+        if (destroyed) {
+            return
+        }
+
+        val value =
+            volume.coerceIn(0, 100)
+
+        val intent =
+            Intent(
+                this,
+                MusicService::class.java
+            ).apply {
+
+                action =
+                    MusicService.ACTION_SET_VOLUME
+
+                putExtra(
+                    MusicService.EXTRA_VOLUME,
+                    value
+                )
+            }
+
+        safelyStartService(
+            intent
+        )
+    }
+
+    /*
+     * ============================================================
+     * SEARCH
+     * ============================================================
+     */
 
     private fun searchMusic() {
 
