@@ -935,12 +935,6 @@ class MainActivity : Activity() {
         vinyl.clearCover()
         vinyl.stopRotation()
 
-        val searchQuery =
-            "\"$text\" " +
-                    "(site:rozmusic.com OR " +
-                    "site:mybia2music.com OR " +
-                    "site:musicdel.ir OR " +
-                    "site:musics-fa.com)"
         val searchQuery = SearchEngine.buildGoogleQuery(text)
         val encoded = try {
             java.net.URLEncoder.encode(searchQuery, "UTF-8")
@@ -949,7 +943,8 @@ class MainActivity : Activity() {
         }
 
         val url = "https://www.google.com/search?q=$encoded&num=50"
-            "https://www.google.com/search?q=$encoded&num=50"
+
+
 
         try {
 
