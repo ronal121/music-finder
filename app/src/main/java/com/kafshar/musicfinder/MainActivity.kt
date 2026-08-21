@@ -306,9 +306,149 @@ class MainActivity : Activity() {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun configureWebView(
-        view: WebView
-    ) {
+   @SuppressLint("SetJavaScriptEnabled")
+private fun configureWebView(
+    view: WebView
+) {
+    view.settings.apply {
+
+        javaScriptEnabled = true
+        domStorageEnabled = true
+        databaseEnabled = false
+
+        mediaPlaybackRequiresUserGesture = false
+
+        allowFileAccess = false
+        allowContentAccess = false
+
+        javaScriptCanOpenWindowsAutomatically = false
+        setSupportMultipleWindows(false)
+
+        userAgentString =
+            "Mozilla/5.0 (Linux; Android 12) " +
+                    "AppleWebKit/537.36 " +
+                    "(KHTML, like Gecko) " +
+                    "Chrome/128 Mobile Safari/537.36"
+    }
+
+    view.setLayerType(
+        View.LAYER_TYPE_HARDWARE,
+        null
+    )
+
+    view.addJavascriptInterface(
+        Bridge(),
+        "MusicFinder"
+    )
+
+    view.webViewClient =
+        object : WebViewClient() {
+
+            override fun shouldOverrideUrlLoading(
+                view: WebView,
+                request: WebResourceRequest
+            ): Boolean {
+
+                val url =
+                    request.url.toString()
+
+                return !ServerConfig.isAllowedPageUrl(
+                    url
+                )
+            }
+
+            override fun onPageStarted(
+                view: WebView,
+                url: String,
+                favicon: Bitmap?
+            ) {
+                super.onPageStarted(
+                    view,
+                    url,
+                    favicon
+                )
+
+                if (destroyed) return
+            }
+
+            override fun onPageFinished(
+                view: WebView,
+                url: String
+            ) {
+                super.onPageFinished(
+                    view,
+                    url
+                )
+
+                if (destroyed) return
+
+                if (
+                    url.contains(
+                        "google.com/search",
+                        ignoreCase = true
+                    )
+                ) {
+                    extractGoogleResults()
+
+                } else if (
+                    resultGeneration ==
+                    searchGeneration &&
+                    expectedPageUrl.isNotBlank() &&
+                    ServerConfig.isAllowedPageUrl(url)
+                ) {
+                    extractMusicPage(url)
+                }
+            }
+
+            override fun onReceivedError(
+                view: WebView,
+                request: WebResourceRequest,
+                error: WebResourceError
+            ) {
+
+                super.onReceivedError(
+                    view,
+                    request,
+                    error
+                )
+
+                if (
+                    !request.isForMainFrame ||
+                    destroyed
+                ) {
+                    return
+                }
+
+                if (
+                    resultGeneration ==
+                    searchGeneration &&
+                    resultPages.isNotEmpty()
+                ) {
+                    finishCurrentResultPage()
+                } else {
+                    status.text =
+                        "خطا در اتصال به جستجو"
+                }
+            }
+
+            override fun onRenderProcessGone(
+                view: WebView,
+                detail: RenderProcessGoneDetail
+            ): Boolean {
+
+                if (destroyed) {
+                    return true
+                }
+
+                status.text =
+                    "در حال بازیابی جستجو..."
+
+                recreateWebView()
+
+                return true
+            }
+        }
+} {
 
         view.settings.apply {
 
