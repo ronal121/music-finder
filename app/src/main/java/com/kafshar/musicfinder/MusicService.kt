@@ -50,16 +50,12 @@ class MusicService : MediaSessionService() {
         const val ACTION_SET_VOLUME =
             "com.kafshar.musicfinder.SET_VOLUME"
 
-        const val ACTION_TOGGLE_MUTE =
-            "com.kafshar.musicfinder.TOGGLE_MUTE"
-
         const val EXTRA_URL = "url"
         const val EXTRA_TITLE = "title"
         const val EXTRA_PERCENT = "percent"
         const val EXTRA_ARTIST = "artist"
         const val EXTRA_COVER = "cover"
         const val EXTRA_VOLUME = "volume"
-        const val EXTRA_MUTED = "muted"
 
         const val UPDATE =
             "com.kafshar.musicfinder.PLAYER_UPDATE"
@@ -115,26 +111,17 @@ class MusicService : MediaSessionService() {
                 .setPauseAtEndOfMediaItems(false)
                 .build()
 
-        val settings =
+        val savedVolume =
             getSharedPreferences(
                 "player_settings",
                 MODE_PRIVATE
-            )
-
-        val savedVolume =
-            settings.getInt(
+            ).getInt(
                 "volume_percent",
                 80
             ).coerceIn(0, 100)
 
-        val savedMuted =
-            settings.getBoolean(
-                "muted",
-                false
-            )
-
         player.volume =
-            if (savedMuted) 0f else savedVolume / 100f
+            savedVolume / 100f
 
         mediaSession =
             MediaSession.Builder(
@@ -483,94 +470,18 @@ class MusicService : MediaSessionService() {
                             80
                         ).coerceIn(0, 100)
 
-                    val settings =
-                        getSharedPreferences(
-                            "player_settings",
-                            MODE_PRIVATE
-                        )
-
                     player.volume =
                         volume / 100f
 
-                    settings.edit()
+                    getSharedPreferences(
+                        "player_settings",
+                        MODE_PRIVATE
+                    ).edit()
                         .putInt(
                             "volume_percent",
                             volume
                         )
-                        .putBoolean(
-                            "muted",
-                            volume == 0
-                        )
                         .apply()
-
-                    safeSendUpdate()
-                }
-
-                ACTION_TOGGLE_MUTE -> {
-
-                    val settings =
-                        getSharedPreferences(
-                            "player_settings",
-                            MODE_PRIVATE
-                        )
-
-                    val muted =
-                        settings.getBoolean(
-                            "muted",
-                            false
-                        )
-
-                    if (muted) {
-
-                        val volume =
-                            settings.getInt(
-                                "volume_before_mute",
-                                settings.getInt(
-                                    "volume_percent",
-                                    80
-                                )
-                            ).coerceIn(1, 100)
-
-                        player.volume =
-                            volume / 100f
-
-                        settings.edit()
-                            .putInt(
-                                "volume_percent",
-                                volume
-                            )
-                            .putBoolean(
-                                "muted",
-                                false
-                            )
-                            .apply()
-
-                    } else {
-
-                        val volume =
-                            (player.volume * 100f)
-                                .toInt()
-                                .coerceIn(0, 100)
-
-                        val previous =
-                            if (volume > 0) volume else settings.getInt(
-                                "volume_percent",
-                                80
-                            ).coerceIn(1, 100)
-
-                        settings.edit()
-                            .putInt(
-                                "volume_before_mute",
-                                previous
-                            )
-                            .putBoolean(
-                                "muted",
-                                true
-                            )
-                            .apply()
-
-                        player.volume = 0f
-                    }
 
                     safeSendUpdate()
                 }
@@ -1170,38 +1081,11 @@ class MusicService : MediaSessionService() {
                             ?: ""
                     )
 
-                    val settings =
-                        getSharedPreferences(
-                            "player_settings",
-                            MODE_PRIVATE
-                        )
-
-                    val muted =
-                        settings.getBoolean(
-                            "muted",
-                            false
-                        )
-
-                    val displayVolume =
-                        if (muted) {
-                            settings.getInt(
-                                "volume_percent",
-                                80
-                            ).coerceIn(0, 100)
-                        } else {
-                            (player.volume * 100f)
-                                .toInt()
-                                .coerceIn(0, 100)
-                        }
-
                     putExtra(
                         "volume",
-                        displayVolume
-                    )
-
-                    putExtra(
-                        EXTRA_MUTED,
-                        muted
+                        (player.volume * 100f)
+                            .toInt()
+                            .coerceIn(0, 100)
                     )
                 }
 
