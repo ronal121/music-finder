@@ -9,8 +9,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -59,39 +61,39 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var titleText: TextView
     private lateinit var artistText: TextView
+
     private lateinit var playButton: TextView
     private lateinit var previousButton: TextView
     private lateinit var nextButton: TextView
     private lateinit var randomButton: TextView
+
     private lateinit var seekBar: SeekBar
+    private lateinit var volumeBar: SeekBar
+
     private lateinit var currentTimeText: TextView
     private lateinit var durationText: TextView
+
     private lateinit var downloadButton: TextView
     private lateinit var cancelDownloadButton: TextView
     private lateinit var pauseDownloadButton: TextView
     private lateinit var downloadProgress: ProgressBar
     private lateinit var downloadText: TextView
+
     private lateinit var saveButton: TextView
     private lateinit var libraryButton: TextView
     private lateinit var historyButton: TextView
+
     private lateinit var historyContainer: LinearLayout
     private lateinit var resultsContainer: LinearLayout
     private lateinit var vinyl: VinylView
 
-    /*
-     * Volume
-     */
-    private lateinit var volumeSeekBar: SeekBar
-    private lateinit var volumeText: TextView
+    private lateinit var audioManager: AudioManager
 
-    private val volumePreferences =
-        "player_settings"
+    private val turquoiseColor =
+        0xFF20C9C9.toInt()
 
-    private val volumeKey =
-        "volume"
-
-    private val defaultVolume =
-        80
+    private val turquoiseDarkColor =
+        0xFF119999.toInt()
 
     private val songs =
         ArrayList<SongResult>()
@@ -224,10 +226,16 @@ class MainActivity : Activity() {
             R.layout.activity_main
         )
 
+        audioManager =
+            getSystemService(
+                Context.AUDIO_SERVICE
+            ) as AudioManager
+
         bindViews()
         setupWebView()
         setupButtons()
         setupVolumeControl()
+        applyTurquoiseButtonStyle()
         restoreSearchResults()
 
         requestNotificationPermission()
@@ -238,10 +246,17 @@ class MainActivity : Activity() {
 
     private fun bindViews() {
 
-        query = findViewById(R.id.query)
-        status = findViewById(R.id.status)
-        titleText = findViewById(R.id.titleText)
-        artistText = findViewById(R.id.artistText)
+        query =
+            findViewById(R.id.query)
+
+        status =
+            findViewById(R.id.status)
+
+        titleText =
+            findViewById(R.id.titleText)
+
+        artistText =
+            findViewById(R.id.artistText)
 
         playButton =
             findViewById(R.id.playButton)
@@ -257,6 +272,9 @@ class MainActivity : Activity() {
 
         seekBar =
             findViewById(R.id.seekBar)
+
+        volumeBar =
+            findViewById(R.id.volumeBar)
 
         currentTimeText =
             findViewById(R.id.currentTimeText)
@@ -299,15 +317,120 @@ class MainActivity : Activity() {
 
         web =
             findViewById(R.id.web)
+    }
 
-        /*
-         * Volume controls
-         */
-        volumeSeekBar =
-            findViewById(R.id.volumeSeekBar)
+    private fun setupVolumeControl() {
 
-        volumeText =
-            findViewById(R.id.volumeText)
+        try {
+
+            val maxVolume =
+                audioManager.getStreamMaxVolume(
+                    AudioManager.STREAM_MUSIC
+                )
+
+            val currentVolume =
+                audioManager.getStreamVolume(
+                    AudioManager.STREAM_MUSIC
+                )
+
+            volumeBar.max =
+                maxVolume
+
+            volumeBar.progress =
+                currentVolume
+
+            volumeBar.progressTintList =
+                ColorStateList.valueOf(
+                    turquoiseColor
+                )
+
+            volumeBar.thumbTintList =
+                ColorStateList.valueOf(
+                    turquoiseColor
+                )
+
+            volumeBar.setOnSeekBarChangeListener(
+                object :
+                    SeekBar.OnSeekBarChangeListener {
+
+                    override fun onProgressChanged(
+                        seekBar: SeekBar?,
+                        progress: Int,
+                        fromUser: Boolean
+                    ) {
+
+                        if (!fromUser) {
+                            return
+                        }
+
+                        try {
+
+                            audioManager.setStreamVolume(
+                                AudioManager.STREAM_MUSIC,
+                                progress,
+                                0
+                            )
+
+                        } catch (_: Exception) {
+                        }
+                    }
+
+                    override fun onStartTrackingTouch(
+                        seekBar: SeekBar?
+                    ) {
+                    }
+
+                    override fun onStopTrackingTouch(
+                        seekBar: SeekBar?
+                    ) {
+                    }
+                }
+            )
+
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun applyTurquoiseButtonStyle() {
+
+        val buttons =
+            listOf(
+                playButton,
+                previousButton,
+                nextButton,
+                randomButton,
+                downloadButton,
+                cancelDownloadButton,
+                pauseDownloadButton,
+                saveButton,
+                libraryButton,
+                historyButton
+            )
+
+        buttons.forEach { button ->
+
+            try {
+
+                button.setTextColor(
+                    0xFFFFFFFF.toInt()
+                )
+
+                button.backgroundTintList =
+                    ColorStateList.valueOf(
+                        turquoiseColor
+                    )
+
+            } catch (_: Exception) {
+
+                button.setTextColor(
+                    0xFFFFFFFF.toInt()
+                )
+
+                button.setBackgroundColor(
+                    turquoiseColor
+                )
+            }
+        }
     }
 
     private fun requestNotificationPermission() {
@@ -318,6 +441,7 @@ class MainActivity : Activity() {
                 Manifest.permission.POST_NOTIFICATIONS
             ) != PackageManager.PERMISSION_GRANTED
         ) {
+
             requestPermissions(
                 arrayOf(
                     Manifest.permission.POST_NOTIFICATIONS
@@ -343,7 +467,9 @@ class MainActivity : Activity() {
             allowFileAccess = false
             allowContentAccess = false
 
-            javaScriptCanOpenWindowsAutomatically = false
+            javaScriptCanOpenWindowsAutomatically =
+                false
+
             setSupportMultipleWindows(false)
 
             userAgentString =
@@ -384,6 +510,7 @@ class MainActivity : Activity() {
                     url: String,
                     favicon: Bitmap?
                 ) {
+
                     super.onPageStarted(
                         view,
                         url,
@@ -397,6 +524,7 @@ class MainActivity : Activity() {
                     view: WebView,
                     url: String
                 ) {
+
                     super.onPageFinished(
                         view,
                         url
@@ -410,7 +538,9 @@ class MainActivity : Activity() {
                             ignoreCase = true
                         )
                     ) {
+
                         extractGoogleResults()
+
                         return
                     }
 
@@ -422,6 +552,7 @@ class MainActivity : Activity() {
                             url
                         )
                     ) {
+
                         extractMusicPage(url)
                     }
                 }
@@ -450,8 +581,11 @@ class MainActivity : Activity() {
                         searchGeneration &&
                         resultPages.isNotEmpty()
                     ) {
+
                         finishCurrentResultPage()
+
                     } else {
+
                         status.text =
                             "خطا در اتصال به جستجو"
                     }
@@ -519,7 +653,8 @@ class MainActivity : Activity() {
             val newWeb =
                 WebView(this)
 
-            newWeb.id = R.id.web
+            newWeb.id =
+                R.id.web
 
             newWeb.layoutParams =
                 oldParams
@@ -542,6 +677,7 @@ class MainActivity : Activity() {
         } catch (_: Exception) {
 
             if (!destroyed) {
+
                 status.text =
                     "جستجو موقتاً در دسترس نیست"
             }
@@ -553,6 +689,7 @@ class MainActivity : Activity() {
         findViewById<TextView>(
             R.id.search
         ).setOnClickListener {
+
             searchMusic()
         }
 
@@ -563,9 +700,13 @@ class MainActivity : Activity() {
                 actionId ==
                 EditorInfo.IME_ACTION_SEARCH
             ) {
+
                 searchMusic()
+
                 true
+
             } else {
+
                 false
             }
         }
@@ -597,7 +738,8 @@ class MainActivity : Activity() {
 
         randomButton.setOnClickListener {
 
-            randomMode = !randomMode
+            randomMode =
+                !randomMode
 
             randomButton.text =
                 if (randomMode) {
@@ -710,142 +852,6 @@ class MainActivity : Activity() {
         }
     }
 
-    /*
-     * ============================================================
-     * VOLUME CONTROL
-     * ============================================================
-     */
-
-    private fun setupVolumeControl() {
-
-        val preferences =
-            getSharedPreferences(
-                volumePreferences,
-                MODE_PRIVATE
-            )
-
-        val savedVolume =
-            preferences
-                .getInt(
-                    volumeKey,
-                    defaultVolume
-                )
-                .coerceIn(0, 100)
-
-        volumeSeekBar.progress =
-            savedVolume
-
-        updateVolumeText(
-            savedVolume
-        )
-
-        volumeSeekBar.setOnSeekBarChangeListener(
-            object :
-                SeekBar.OnSeekBarChangeListener {
-
-                override fun onProgressChanged(
-                    seekBar: SeekBar?,
-                    progress: Int,
-                    fromUser: Boolean
-                ) {
-
-                    val volume =
-                        progress.coerceIn(
-                            0,
-                            100
-                        )
-
-                    updateVolumeText(
-                        volume
-                    )
-
-                    if (!fromUser) {
-                        return
-                    }
-
-                    saveVolume(
-                        volume
-                    )
-
-                    sendVolumeToService(
-                        volume
-                    )
-                }
-
-                override fun onStartTrackingTouch(
-                    seekBar: SeekBar?
-                ) {
-                }
-
-                override fun onStopTrackingTouch(
-                    seekBar: SeekBar?
-                ) {
-                }
-            }
-        )
-    }
-
-    private fun updateVolumeText(
-        volume: Int
-    ) {
-
-        volumeText.text =
-            "🔊 $volume%"
-    }
-
-    private fun saveVolume(
-        volume: Int
-    ) {
-
-        getSharedPreferences(
-            volumePreferences,
-            MODE_PRIVATE
-        )
-            .edit()
-            .putInt(
-                volumeKey,
-                volume.coerceIn(0, 100)
-            )
-            .apply()
-    }
-
-    private fun sendVolumeToService(
-        volume: Int
-    ) {
-
-        if (destroyed) {
-            return
-        }
-
-        val value =
-            volume.coerceIn(0, 100)
-
-        val intent =
-            Intent(
-                this,
-                MusicService::class.java
-            ).apply {
-
-                action =
-                    MusicService.ACTION_SET_VOLUME
-
-                putExtra(
-                    MusicService.EXTRA_VOLUME,
-                    value
-                )
-            }
-
-        safelyStartService(
-            intent
-        )
-    }
-
-    /*
-     * ============================================================
-     * SEARCH
-     * ============================================================
-     */
-
     private fun searchMusic() {
 
         if (destroyed) return
@@ -918,6 +924,7 @@ class MainActivity : Activity() {
                 )
 
             } catch (_: Exception) {
+
                 return
             }
 
@@ -1052,6 +1059,7 @@ class MainActivity : Activity() {
         } catch (_: Exception) {
 
             if (!destroyed) {
+
                 status.text =
                     "خطا در استخراج نتایج"
             }
@@ -1359,7 +1367,9 @@ class MainActivity : Activity() {
                 ignoreCase = true
             )
         ) {
+
             processNextResultPage()
+
             return
         }
 
@@ -1379,6 +1389,7 @@ class MainActivity : Activity() {
                     !destroyed &&
                     generation == searchGeneration
                 ) {
+
                     processNextResultPage()
                 }
             }
@@ -1620,7 +1631,7 @@ class MainActivity : Activity() {
                 textSize = 25f
 
                 setTextColor(
-                    0xFFFFFFFF.toInt()
+                    turquoiseColor
                 )
 
                 gravity =
@@ -1687,6 +1698,10 @@ class MainActivity : Activity() {
 
                 button.text = "♡"
 
+                button.setTextColor(
+                    turquoiseColor
+                )
+
                 Toast.makeText(
                     this,
                     "از کتابخانه حذف شد",
@@ -1701,6 +1716,10 @@ class MainActivity : Activity() {
                 )
 
                 button.text = "♥"
+
+                button.setTextColor(
+                    turquoiseColor
+                )
 
                 Toast.makeText(
                     this,
@@ -1814,6 +1833,7 @@ class MainActivity : Activity() {
             bounds.outWidth / sample > maxSize ||
             bounds.outHeight / sample > maxSize
         ) {
+
             sample *= 2
         }
 
@@ -2098,12 +2118,22 @@ class MainActivity : Activity() {
 
         if (playing) {
 
+            playButton.backgroundTintList =
+                ColorStateList.valueOf(
+                    turquoiseDarkColor
+                )
+
             vinyl.startRotation()
 
             status.text =
                 "در حال پخش"
 
         } else {
+
+            playButton.backgroundTintList =
+                ColorStateList.valueOf(
+                    turquoiseColor
+                )
 
             vinyl.stopRotation()
         }
@@ -2199,6 +2229,7 @@ class MainActivity : Activity() {
         pauseDownloadRequested = false
 
         downloadProgress.progress = 0
+
         downloadProgress.visibility =
             View.VISIBLE
 
@@ -2375,6 +2406,7 @@ class MainActivity : Activity() {
         if (
             connection.responseCode !in 200..299
         ) {
+
             throw Exception(
                 "HTTP_${connection.responseCode}"
             )
@@ -2389,6 +2421,7 @@ class MainActivity : Activity() {
             cancelDownloadRequested ||
             Thread.currentThread().isInterrupted
         ) {
+
             throw Exception(
                 "CANCELLED"
             )
@@ -2619,6 +2652,7 @@ class MainActivity : Activity() {
             !directory.exists() &&
             !directory.mkdirs()
         ) {
+
             throw Exception(
                 "DIRECTORY_FAILED"
             )
