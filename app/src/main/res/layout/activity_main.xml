@@ -93,16 +93,6 @@
                 android:contentDescription="Search"/>
         </LinearLayout>
 
-        <LinearLayout
-            android:id="@+id/suggestionsContainer"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:orientation="vertical"
-            android:paddingStart="2dp"
-            android:paddingEnd="2dp"
-            android:visibility="gone"/>
-
         <TextView
             android:id="@+id/status"
             android:layout_width="match_parent"
