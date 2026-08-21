@@ -4,7 +4,6 @@ import re
 p = Path('app/src/main/java/com/kafshar/musicfinder/MainActivity.kt')
 s = p.read_text(encoding='utf-8')
 
-# Replace the Google result extraction method without touching Player/Library code.
 def replace_method(source: str, signature: str, replacement: str) -> str:
     start = source.find(signature)
     if start < 0:
@@ -88,7 +87,6 @@ extract = '''    private fun extractGoogleResults() {
 
 s = replace_method(s, '    private fun extractGoogleResults()', extract)
 
-# Replace only the query/url construction inside searchMusic().
 start = s.find('    private fun searchMusic()')
 if start < 0:
     raise SystemExit('searchMusic not found')
@@ -107,12 +105,26 @@ new_query_block = '''        val searchQuery = SearchEngine.buildGoogleQuery(tex
         val url = "https://www.google.com/search?q=$encoded&num=50"
 '''
 
-# Match the existing encoded/url block, regardless of formatting.
-pattern = re.compile(r'(?s)\s+val encoded\s*=.*?\n\s*val url\s*=.*?\n')
+# Remove any existing query/url block, including an earlier partially patched version.
+pattern = re.compile(
+    r'(?s)\n\s*val searchQuery\s*=.*?(?=\n\s*try\s*\{\n\s*web\.stopLoading\(\))'
+)
 if not pattern.search(method):
-    raise SystemExit('Google query/url block not found in searchMusic')
-method = pattern.sub('\n' + new_query_block, method, count=1)
-s = s[:start] + method + s[end:]
+    raise SystemExit('search query block not found in searchMusic')
+method = pattern.sub('\n\n' + new_query_block + '\n', method, count=1)
 
+# Idempotent cleanup for duplicate declarations left by an earlier patch attempt.
+method = re.sub(
+    r'(?m)^\s*val searchQuery = SearchEngine\.buildGoogleQuery\(text\)\n\s*val searchQuery = SearchEngine\.buildGoogleQuery\(text\)\n',
+    '        val searchQuery = SearchEngine.buildGoogleQuery(text)\n',
+    method
+)
+method = re.sub(
+    r'(?m)^(\s*val url = "https://www\.google\.com/search\?q=\$encoded&num=50")\n\s*"https://www\.google\.com/search\?q=\$encoded&num=50"\n',
+    r'\1\n',
+    method
+)
+
+s = s[:start] + method + s[end:]
 p.write_text(s, encoding='utf-8')
 print('patched MainActivity search integration')
