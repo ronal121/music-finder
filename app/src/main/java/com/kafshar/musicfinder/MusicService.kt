@@ -47,11 +47,15 @@ class MusicService : MediaSessionService() {
         const val ACTION_GET_POSITION =
             "com.kafshar.musicfinder.GET_POSITION"
 
+        const val ACTION_SET_VOLUME =
+            "com.kafshar.musicfinder.SET_VOLUME"
+
         const val EXTRA_URL = "url"
         const val EXTRA_TITLE = "title"
         const val EXTRA_PERCENT = "percent"
         const val EXTRA_ARTIST = "artist"
         const val EXTRA_COVER = "cover"
+        const val EXTRA_VOLUME = "volume"
 
         const val UPDATE =
             "com.kafshar.musicfinder.PLAYER_UPDATE"
@@ -106,6 +110,18 @@ class MusicService : MediaSessionService() {
                 .setHandleAudioBecomingNoisy(true)
                 .setPauseAtEndOfMediaItems(false)
                 .build()
+
+        val savedVolume =
+            getSharedPreferences(
+                "player_settings",
+                MODE_PRIVATE
+            ).getInt(
+                "volume_percent",
+                80
+            ).coerceIn(0, 100)
+
+        player.volume =
+            savedVolume / 100f
 
         mediaSession =
             MediaSession.Builder(
@@ -444,6 +460,30 @@ class MusicService : MediaSessionService() {
                         )
 
                     seekPercent(percent)
+                }
+
+                ACTION_SET_VOLUME -> {
+
+                    val volume =
+                        intent.getIntExtra(
+                            EXTRA_VOLUME,
+                            80
+                        ).coerceIn(0, 100)
+
+                    player.volume =
+                        volume / 100f
+
+                    getSharedPreferences(
+                        "player_settings",
+                        MODE_PRIVATE
+                    ).edit()
+                        .putInt(
+                            "volume_percent",
+                            volume
+                        )
+                        .apply()
+
+                    safeSendUpdate()
                 }
 
                 ACTION_GET_POSITION -> {
@@ -1039,6 +1079,13 @@ class MusicService : MediaSessionService() {
                             ?.artist
                             ?.toString()
                             ?: ""
+                    )
+
+                    putExtra(
+                        "volume",
+                        (player.volume * 100f)
+                            .toInt()
+                            .coerceIn(0, 100)
                     )
                 }
 
