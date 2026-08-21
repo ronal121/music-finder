@@ -19,7 +19,8 @@ object ServerConfig {
 
     val MUSIC_HOSTS = MUSIC_SITES.toSet()
 
-    fun normalizeHost(host: String?): String = host.orEmpty().lowercase().removePrefix("www.")
+    fun normalizeHost(host: String?): String =
+        host.orEmpty().lowercase().removePrefix("www.")
 
     fun isMusicHost(host: String?): Boolean {
         val normalized = normalizeHost(host)
@@ -45,7 +46,7 @@ object ServerConfig {
     fun searchQuery(input: String): String {
         val q = input.trim().replace(Regex("\\s+"), " ")
         val sites = MUSIC_SITES.joinToString(" OR ") { "site:$it" }
-        return "\"$q\" ($sites)"
+        return "$q ($sites)"
     }
 
     fun siteName(url: String): String {
