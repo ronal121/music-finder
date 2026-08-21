@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-
-<ScrollView
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true"
@@ -17,13 +15,10 @@
         android:paddingTop="28dp"
         android:paddingBottom="32dp">
 
-        <!-- Header -->
-
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
-
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -33,7 +28,6 @@
                 android:textStyle="bold"
                 android:letterSpacing="0.08"
                 android:fontFamily="sans-serif-medium"/>
-
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -41,7 +35,6 @@
                 android:text="Find the music you're looking for."
                 android:textColor="@color/muted"
                 android:textSize="14sp"/>
-
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -51,10 +44,7 @@
                 android:textSize="10sp"
                 android:textStyle="bold"
                 android:letterSpacing="0.18"/>
-
         </LinearLayout>
-
-        <!-- Search -->
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -65,7 +55,6 @@
             android:paddingStart="16dp"
             android:paddingEnd="7dp"
             android:orientation="horizontal">
-
             <TextView
                 android:layout_width="24dp"
                 android:layout_height="24dp"
@@ -73,7 +62,6 @@
                 android:text="⌕"
                 android:textColor="@color/muted"
                 android:textSize="25sp"/>
-
             <EditText
                 android:id="@+id/query"
                 android:layout_width="0dp"
@@ -89,7 +77,6 @@
                 android:padding="0dp"
                 android:inputType="text"
                 android:imeOptions="actionSearch"/>
-
             <TextView
                 android:id="@+id/search"
                 android:layout_width="48dp"
@@ -104,10 +91,7 @@
                 android:clickable="true"
                 android:focusable="true"
                 android:contentDescription="Search"/>
-
         </LinearLayout>
-
-        <!-- Status -->
 
         <TextView
             android:id="@+id/status"
@@ -119,8 +103,6 @@
             android:textColor="@color/muted"
             android:textSize="12sp"
             android:gravity="start"/>
-
-        <!-- Player -->
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -163,8 +145,6 @@
                 android:maxLines="2"
                 android:ellipsize="end"/>
 
-            <!-- Music progress -->
-
             <SeekBar
                 android:id="@+id/seekBar"
                 android:layout_width="match_parent"
@@ -179,7 +159,6 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal">
-
                 <TextView
                     android:id="@+id/currentTimeText"
                     android:layout_width="0dp"
@@ -188,7 +167,6 @@
                     android:text="00:00"
                     android:textColor="@color/muted"
                     android:textSize="11sp"/>
-
                 <TextView
                     android:id="@+id/durationText"
                     android:layout_width="wrap_content"
@@ -196,10 +174,7 @@
                     android:text="00:00"
                     android:textColor="@color/muted"
                     android:textSize="11sp"/>
-
             </LinearLayout>
-
-            <!-- Volume -->
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -207,7 +182,6 @@
                 android:layout_marginTop="8dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
-
                 <TextView
                     android:id="@+id/volumeIcon"
                     android:layout_width="32dp"
@@ -216,7 +190,6 @@
                     android:text="🔊"
                     android:textSize="17sp"
                     android:contentDescription="Volume"/>
-
                 <SeekBar
                     android:id="@+id/volumeSeekBar"
                     android:layout_width="0dp"
@@ -226,7 +199,6 @@
                     android:progress="80"
                     android:progressTint="@color/accent"
                     android:thumbTint="@color/accent"/>
-
                 <TextView
                     android:id="@+id/volumeText"
                     android:layout_width="42dp"
@@ -235,10 +207,7 @@
                     android:text="80%"
                     android:textColor="@color/muted"
                     android:textSize="11sp"/>
-
             </LinearLayout>
-
-            <!-- Player Controls -->
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -246,7 +215,6 @@
                 android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:orientation="horizontal">
-
                 <TextView
                     android:id="@+id/previousButton"
                     android:layout_width="54dp"
@@ -256,7 +224,6 @@
                     android:textColor="@color/white"
                     android:textSize="34sp"
                     android:contentDescription="Previous"/>
-
                 <TextView
                     android:id="@+id/playButton"
                     android:layout_width="64dp"
@@ -269,7 +236,6 @@
                     android:textColor="@color/white"
                     android:textSize="24sp"
                     android:contentDescription="Play or pause"/>
-
                 <TextView
                     android:id="@+id/nextButton"
                     android:layout_width="54dp"
@@ -279,7 +245,6 @@
                     android:textColor="@color/white"
                     android:textSize="34sp"
                     android:contentDescription="Next"/>
-
                 <TextView
                     android:id="@+id/randomButton"
                     android:layout_width="48dp"
@@ -290,19 +255,14 @@
                     android:textColor="@color/muted"
                     android:textSize="22sp"
                     android:contentDescription="Shuffle"/>
-
             </LinearLayout>
-
         </LinearLayout>
-
-        <!-- Secondary actions -->
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="52dp"
             android:layout_marginTop="14dp"
             android:orientation="horizontal">
-
             <TextView
                 android:id="@+id/saveButton"
                 android:layout_width="0dp"
@@ -314,7 +274,6 @@
                 android:textColor="@color/white"
                 android:textSize="13sp"
                 android:contentDescription="Save current song"/>
-
             <TextView
                 android:id="@+id/libraryButton"
                 android:layout_width="0dp"
@@ -327,10 +286,7 @@
                 android:textColor="@color/white"
                 android:textSize="13sp"
                 android:contentDescription="Open library"/>
-
         </LinearLayout>
-
-        <!-- Download -->
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -339,7 +295,6 @@
             android:gravity="center"
             android:orientation="horizontal"
             android:background="@drawable/bg_secondary_button">
-
             <TextView
                 android:id="@+id/downloadButton"
                 android:layout_width="wrap_content"
@@ -350,7 +305,6 @@
                 android:text="↓  Download"
                 android:textColor="@color/white"
                 android:textSize="13sp"/>
-
             <TextView
                 android:id="@+id/pauseDownloadButton"
                 android:layout_width="52dp"
@@ -360,7 +314,6 @@
                 android:textColor="@color/white"
                 android:textSize="17sp"
                 android:visibility="gone"/>
-
             <TextView
                 android:id="@+id/cancelDownloadButton"
                 android:layout_width="52dp"
@@ -370,7 +323,6 @@
                 android:textColor="@color/muted"
                 android:textSize="20sp"
                 android:visibility="gone"/>
-
         </LinearLayout>
 
         <ProgressBar
@@ -393,8 +345,6 @@
             android:textSize="11sp"
             android:visibility="gone"/>
 
-        <!-- History -->
-
         <TextView
             android:id="@+id/historyButton"
             android:layout_width="match_parent"
@@ -414,8 +364,6 @@
             android:orientation="vertical"
             android:visibility="gone"/>
 
-        <!-- Results -->
-
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -433,8 +381,6 @@
             android:layout_marginTop="10dp"
             android:orientation="vertical"/>
 
-        <!-- Existing WebView kept as the functional engine -->
-
         <WebView
             android:id="@+id/web"
             android:layout_width="1dp"
@@ -442,5 +388,4 @@
             android:visibility="visible"/>
 
     </LinearLayout>
-
 </ScrollView>
