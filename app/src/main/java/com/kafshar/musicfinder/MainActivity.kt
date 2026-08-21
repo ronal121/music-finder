@@ -591,7 +591,71 @@ private fun configureWebView(
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun recreateWebView() {
+    @SuppressLint("SetJavaScriptEnabled")
+private fun recreateWebView() {
+
+    if (destroyed) return
+
+    try {
+
+        val oldWeb = web
+
+        val parent =
+            oldWeb.parent as? android.view.ViewGroup
+                ?: return
+
+        val index =
+            parent.indexOfChild(oldWeb)
+
+        val oldParams =
+            oldWeb.layoutParams
+
+        parent.removeView(oldWeb)
+
+        try {
+            oldWeb.removeJavascriptInterface(
+                "MusicFinder"
+            )
+
+            oldWeb.stopLoading()
+            oldWeb.loadUrl("about:blank")
+            oldWeb.removeAllViews()
+            oldWeb.destroy()
+
+        } catch (_: Exception) {
+        }
+
+        val newWeb =
+            WebView(this)
+
+        newWeb.id = R.id.web
+
+        newWeb.layoutParams =
+            oldParams
+                ?: android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    1
+                )
+
+        parent.addView(
+            newWeb,
+            index.coerceAtMost(
+                parent.childCount
+            )
+        )
+
+        web = newWeb
+
+        configureWebView(web)
+
+    } catch (_: Exception) {
+
+        if (!destroyed) {
+            status.text =
+                "جستجو موقتاً در دسترس نیست"
+        }
+    }
+} {
 
         if (destroyed) return
 
