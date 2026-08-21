@@ -1,9 +1,25 @@
 package com.kafshar.musicfinder
 
+import android.os.Bundle
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.CommandButton
+import androidx.media3.session.MediaSession
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 
+@OptIn(UnstableApi::class)
 object MediaSessionControls {
+
+    private const val VOLUME_DOWN = "com.kafshar.musicfinder.volume_down"
+    private const val VOLUME_UP = "com.kafshar.musicfinder.volume_up"
+    private const val MUTE = "com.kafshar.musicfinder.mute"
+
+    private var lastVolume = 0.8f
+
+    private fun command(action: String) = SessionCommand(action, Bundle.EMPTY)
 
     fun layout(): List<CommandButton> = listOf(
         CommandButton.Builder(CommandButton.ICON_REWIND)
@@ -27,15 +43,15 @@ object MediaSessionControls {
             .setDisplayName("۱۰ ثانیه جلو")
             .build(),
         CommandButton.Builder(CommandButton.ICON_VOLUME_DOWN)
-            .setPlayerCommand(Player.COMMAND_SET_VOLUME)
+            .setSessionCommand(command(VOLUME_DOWN))
             .setDisplayName("کم کردن صدا")
             .build(),
         CommandButton.Builder(CommandButton.ICON_VOLUME_OFF)
-            .setPlayerCommand(Player.COMMAND_SET_VOLUME)
+            .setSessionCommand(command(MUTE))
             .setDisplayName("بی‌صدا / صدا")
             .build(),
         CommandButton.Builder(CommandButton.ICON_VOLUME_UP)
-            .setPlayerCommand(Player.COMMAND_SET_VOLUME)
+            .setSessionCommand(command(VOLUME_UP))
             .setDisplayName("زیاد کردن صدا")
             .build(),
         CommandButton.Builder(CommandButton.ICON_STOP)
@@ -43,4 +59,52 @@ object MediaSessionControls {
             .setDisplayName("خروج از پخش")
             .build()
     )
+
+    fun callback(): MediaSession.Callback = object : MediaSession.Callback {
+        override fun onConnect(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo
+        ): MediaSession.ConnectionResult {
+            val commands =
+                MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS
+                    .buildUpon()
+                    .add(command(VOLUME_DOWN))
+                    .add(command(VOLUME_UP))
+                    .add(command(MUTE))
+                    .build()
+
+            return MediaSession.ConnectionResult.AcceptedResultBuilder(
+                session,
+                controller
+            )
+                .setAvailableSessionCommands(commands)
+                .build()
+        }
+
+        override fun onCustomCommand(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: SessionCommand,
+            args: Bundle
+        ): ListenableFuture<SessionResult> {
+            val player = session.player
+
+            when (customCommand.customAction) {
+                VOLUME_DOWN -> player.volume = (player.volume - 0.1f).coerceAtLeast(0f)
+                VOLUME_UP -> player.volume = (player.volume + 0.1f).coerceAtMost(1f)
+                MUTE -> {
+                    if (player.volume > 0f) {
+                        lastVolume = player.volume
+                        player.volume = 0f
+                    } else {
+                        player.volume = lastVolume.coerceIn(0.1f, 1f)
+                    }
+                }
+            }
+
+            return Futures.immediateFuture(
+                SessionResult(SessionResult.RESULT_SUCCESS)
+            )
+        }
+    }
 }
