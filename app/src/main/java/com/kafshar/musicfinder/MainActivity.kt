@@ -966,6 +966,8 @@ class MainActivity : Activity() {
 
 
 
+
+
         try {
 
             web.stopLoading()
