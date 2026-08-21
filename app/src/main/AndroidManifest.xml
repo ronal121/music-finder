@@ -22,6 +22,7 @@
         android:hardwareAccelerated="true">
 
         <activity android:name=".LibraryActivity" android:exported="false" />
+        <activity android:name=".CategoriesActivity" android:exported="false" />
 
         <activity
             android:name=".MainActivity"
