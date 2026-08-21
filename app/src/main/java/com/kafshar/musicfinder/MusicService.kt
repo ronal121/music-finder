@@ -1,8 +1,14 @@
 package com.kafshar.musicfinder
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.net.Uri
+import android.os.Build
+import androidx.core.app.NotificationCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -49,6 +55,14 @@ class MusicService : MediaSessionService() {
 
         const val UPDATE =
             "com.kafshar.musicfinder.PLAYER_UPDATE"
+
+        private const val NOTIFICATION_CHANNEL_ID =
+            "music_playback"
+
+        private const val NOTIFICATION_CHANNEL_NAME =
+            "Music Playback"
+
+        private const val NOTIFICATION_ID = 1001
     }
 
     private lateinit var player: ExoPlayer
@@ -59,6 +73,19 @@ class MusicService : MediaSessionService() {
     private var released = false
 
     override fun onCreate() {
+        /*
+         * مهم:
+         *
+         * این سرویس با startForegroundService() اجرا می‌شود.
+         * بنابراین باید قبل از هر کار سنگین، Foreground شود.
+         *
+         * Notification و startForeground در ابتدای onCreate
+         * انجام می‌شوند تا Android منتظر ExoPlayer، MediaSession،
+         * صف آهنگ‌ها یا عملیات دیگری نماند.
+         */
+        createNotificationChannel()
+        startMusicForeground()
+
         super.onCreate()
 
         released = false
@@ -97,12 +124,14 @@ class MusicService : MediaSessionService() {
                     isPlaying: Boolean
                 ) {
                     safeSendUpdate()
+                    updateForegroundNotification()
                 }
 
                 override fun onPlaybackStateChanged(
                     playbackState: Int
                 ) {
                     safeSendUpdate()
+                    updateForegroundNotification()
                 }
 
                 override fun onMediaItemTransition(
@@ -114,6 +143,7 @@ class MusicService : MediaSessionService() {
                     }
 
                     safeSendUpdate()
+                    updateForegroundNotification()
                 }
 
                 override fun onPositionDiscontinuity(
@@ -133,9 +163,211 @@ class MusicService : MediaSessionService() {
                     }
 
                     safeSendUpdate()
+                    updateForegroundNotification()
                 }
             }
         )
+
+        updateForegroundNotification()
+    }
+
+    /**
+     * ایجاد Notification Channel برای Foreground Service.
+     */
+    private fun createNotificationChannel() {
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+
+            val channel =
+                NotificationChannel(
+                    NOTIFICATION_CHANNEL_ID,
+                    NOTIFICATION_CHANNEL_NAME,
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+
+                    description =
+                        "Music playback controls"
+
+                    setShowBadge(false)
+
+                    lockscreenVisibility =
+                        Notification.VISIBILITY_PUBLIC
+                }
+
+            val manager =
+                getSystemService(
+                    NotificationManager::class.java
+                )
+
+            manager?.createNotificationChannel(channel)
+        }
+    }
+
+    /**
+     * این تابع باید خیلی زود اجرا شود.
+     *
+     * هیچ عملیات شبکه،
+     * Bitmap،
+     * SharedPreferences سنگین،
+     * MediaItem،
+     * Queue
+     * یا ExoPlayer
+     * قبل از این تابع انجام نمی‌شود.
+     */
+    private fun startMusicForeground() {
+
+        val notification =
+            buildForegroundNotification()
+
+        try {
+
+            if (
+                Build.VERSION.SDK_INT >=
+                Build.VERSION_CODES.Q
+            ) {
+
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                )
+
+            } else {
+
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification
+                )
+            }
+
+        } catch (_: Exception) {
+            /*
+             * عمداً چیزی throw نمی‌کنیم.
+             *
+             * اگر دستگاه محدودیت خاصی داشته باشد،
+             * ادامه lifecycle سرویس را خراب نمی‌کنیم.
+             */
+        }
+    }
+
+    /**
+     * Notification اولیه و Notification زمان پخش.
+     */
+    private fun buildForegroundNotification(): Notification {
+
+        val openIntent =
+            createOpenAppPendingIntent()
+
+        val builder =
+            NotificationCompat.Builder(
+                this,
+                NOTIFICATION_CHANNEL_ID
+            )
+                .setSmallIcon(
+                    android.R.drawable.ic_media_play
+                )
+                .setContentTitle(
+                    getCurrentTitle()
+                )
+                .setContentText(
+                    getCurrentArtist()
+                )
+                .setContentIntent(
+                    openIntent
+                )
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setShowWhen(false)
+                .setVisibility(
+                    NotificationCompat.VISIBILITY_PUBLIC
+                )
+                .setCategory(
+                    NotificationCompat.CATEGORY_TRANSPORT
+                )
+                .setPriority(
+                    NotificationCompat.PRIORITY_LOW
+                )
+
+        return builder.build()
+    }
+
+    private fun getCurrentTitle(): String {
+
+        return try {
+
+            if (
+                ::player.isInitialized &&
+                player.currentMediaItem != null
+            ) {
+
+                player.currentMediaItem
+                    ?.mediaMetadata
+                    ?.title
+                    ?.toString()
+                    ?.ifBlank {
+                        "Music Finder"
+                    }
+                    ?: "Music Finder"
+
+            } else {
+                "Music Finder"
+            }
+
+        } catch (_: Exception) {
+            "Music Finder"
+        }
+    }
+
+    private fun getCurrentArtist(): String {
+
+        return try {
+
+            if (
+                ::player.isInitialized &&
+                player.currentMediaItem != null
+            ) {
+
+                player.currentMediaItem
+                    ?.mediaMetadata
+                    ?.artist
+                    ?.toString()
+                    ?.ifBlank {
+                        "Music Finder"
+                    }
+                    ?: "Music Finder"
+
+            } else {
+                "Music Finder"
+            }
+
+        } catch (_: Exception) {
+            "Music Finder"
+        }
+    }
+
+    /**
+     * Notification را بدون stop/start مجدد به‌روزرسانی می‌کند.
+     */
+    private fun updateForegroundNotification() {
+
+        if (released) {
+            return
+        }
+
+        try {
+
+            val manager =
+                getSystemService(
+                    NotificationManager::class.java
+                )
+
+            manager?.notify(
+                NOTIFICATION_ID,
+                buildForegroundNotification()
+            )
+
+        } catch (_: Exception) {
+        }
     }
 
     override fun onStartCommand(
@@ -160,8 +392,11 @@ class MusicService : MediaSessionService() {
                 }
 
                 ACTION_PAUSE -> {
+
                     player.pause()
+
                     safeSendUpdate()
+                    updateForegroundNotification()
                 }
 
                 ACTION_TOGGLE -> {
@@ -188,6 +423,7 @@ class MusicService : MediaSessionService() {
                         }
 
                         safeSendUpdate()
+                        updateForegroundNotification()
                     }
                 }
 
@@ -222,11 +458,20 @@ class MusicService : MediaSessionService() {
                     }
 
                     safeSendUpdate()
+
+                    try {
+                        stopForeground(
+                            STOP_FOREGROUND_REMOVE
+                        )
+                    } catch (_: Exception) {
+                    }
+
                     stopSelf()
                 }
             }
 
         } catch (_: Exception) {
+
             safeSendUpdate()
         }
 
@@ -278,6 +523,13 @@ class MusicService : MediaSessionService() {
                 ?.trim()
                 ?: ""
 
+        /*
+         * Foreground قبلاً برقرار شده است.
+         *
+         * از اینجا به بعد می‌توانیم با خیال راحت
+         * MediaItem و Queue را بسازیم.
+         */
+
         val current =
             createMediaItem(
                 url,
@@ -320,6 +572,7 @@ class MusicService : MediaSessionService() {
             saveToHistory(current)
 
             safeSendUpdate()
+            updateForegroundNotification()
 
         } catch (_: Exception) {
 
@@ -330,6 +583,7 @@ class MusicService : MediaSessionService() {
             }
 
             safeSendUpdate()
+            updateForegroundNotification()
         }
     }
 
@@ -357,8 +611,10 @@ class MusicService : MediaSessionService() {
             player.play()
 
             safeSendUpdate()
+            updateForegroundNotification()
 
         } catch (_: Exception) {
+
             safeSendUpdate()
         }
     }
@@ -385,8 +641,10 @@ class MusicService : MediaSessionService() {
             player.play()
 
             safeSendUpdate()
+            updateForegroundNotification()
 
         } catch (_: Exception) {
+
             safeSendUpdate()
         }
     }
@@ -461,6 +719,7 @@ class MusicService : MediaSessionService() {
                             song.url
                         )
                     ) {
+
                         candidates.add(song)
                     }
                 }
@@ -584,9 +843,11 @@ class MusicService : MediaSessionService() {
                     if (cover.isNotBlank()) {
 
                         try {
+
                             setArtworkUri(
                                 Uri.parse(cover)
                             )
+
                         } catch (_: Exception) {
                         }
                     }
@@ -666,6 +927,7 @@ class MusicService : MediaSessionService() {
             while (
                 lines.size > 50
             ) {
+
                 lines.removeAt(
                     lines.lastIndex
                 )
@@ -813,6 +1075,7 @@ class MusicService : MediaSessionService() {
         controllerInfo:
             MediaSession.ControllerInfo
     ): MediaSession? {
+
         return mediaSession
     }
 
@@ -827,6 +1090,7 @@ class MusicService : MediaSessionService() {
                 player.playbackState !=
                 Player.STATE_IDLE
             ) {
+
                 player.play()
             }
 
@@ -841,7 +1105,9 @@ class MusicService : MediaSessionService() {
         released = true
 
         try {
+
             mediaSession?.release()
+
         } catch (_: Exception) {
         }
 
@@ -850,10 +1116,20 @@ class MusicService : MediaSessionService() {
         try {
 
             if (::player.isInitialized) {
+
                 player.stop()
                 player.clearMediaItems()
                 player.release()
             }
+
+        } catch (_: Exception) {
+        }
+
+        try {
+
+            stopForeground(
+                STOP_FOREGROUND_REMOVE
+            )
 
         } catch (_: Exception) {
         }
