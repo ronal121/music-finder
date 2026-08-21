@@ -1,5 +1,5 @@
 package com.kafshar.musicfinder
-import androidx.core.content.ContextCompat
+
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -17,6 +17,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.util.LruCache
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -30,11 +31,9 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
-import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
-import android.util.LruCache
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -81,7 +80,8 @@ class MainActivity : Activity() {
 
     private val songs = ArrayList<SongResult>()
 
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private val mainHandler =
+        Handler(Looper.getMainLooper())
 
     private val imageExecutor =
         Executors.newFixedThreadPool(2)
@@ -142,9 +142,7 @@ class MainActivity : Activity() {
             ) {
                 if (destroyed) return
 
-                if (
-                    intent?.action != MusicService.UPDATE
-                ) {
+                if (intent?.action != MusicService.UPDATE) {
                     return
                 }
 
@@ -178,7 +176,9 @@ class MainActivity : Activity() {
 
                 runOnUiThread {
 
-                    if (destroyed) return@runOnUiThread
+                    if (destroyed) {
+                        return@runOnUiThread
+                    }
 
                     updatePlayerProgress(
                         playing,
@@ -186,15 +186,11 @@ class MainActivity : Activity() {
                         duration
                     )
 
-                    if (
-                        title.isNotBlank()
-                    ) {
+                    if (title.isNotBlank()) {
                         titleText.text = title
                     }
 
-                    if (
-                        artist.isNotBlank()
-                    ) {
+                    if (artist.isNotBlank()) {
                         artistText.text = artist
                     }
                 }
@@ -306,339 +302,22 @@ class MainActivity : Activity() {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-   @SuppressLint("SetJavaScriptEnabled")
-@SuppressLint("SetJavaScriptEnabled")
-private fun configureWebView(
-    view: WebView
-) {
-    view.settings.apply {
-
-        javaScriptEnabled = true
-        domStorageEnabled = true
-        databaseEnabled = false
-
-        mediaPlaybackRequiresUserGesture = false
-
-        allowFileAccess = false
-        allowContentAccess = false
-
-        javaScriptCanOpenWindowsAutomatically = false
-        setSupportMultipleWindows(false)
-
-        userAgentString =
-            "Mozilla/5.0 (Linux; Android 12) " +
-                    "AppleWebKit/537.36 " +
-                    "(KHTML, like Gecko) " +
-                    "Chrome/128 Mobile Safari/537.36"
-    }
-
-    view.setLayerType(
-        View.LAYER_TYPE_HARDWARE,
-        null
-    )
-
-    view.addJavascriptInterface(
-        Bridge(),
-        "MusicFinder"
-    )
-
-    view.webViewClient =
-        object : WebViewClient() {
-
-            override fun shouldOverrideUrlLoading(
-                view: WebView,
-                request: WebResourceRequest
-            ): Boolean {
-
-                val url =
-                    request.url.toString()
-
-                /*
-                 * فقط Google و چهار سرور مجاز
-                 * اجازه باز شدن داخل WebView را دارند.
-                 */
-                return !ServerConfig.isAllowedPageUrl(
-                    url
-                )
-            }
-
-            override fun onPageStarted(
-                view: WebView,
-                url: String,
-                favicon: Bitmap?
-            ) {
-                super.onPageStarted(
-                    view,
-                    url,
-                    favicon
-                )
-
-                if (destroyed) {
-                    return
-                }
-            }
-
-            override fun onPageFinished(
-                view: WebView,
-                url: String
-            ) {
-                super.onPageFinished(
-                    view,
-                    url
-                )
-
-                if (destroyed) {
-                    return
-                }
-
-                /*
-                 * Google Search
-                 */
-                if (
-                    url.contains(
-                        "google.com/search",
-                        ignoreCase = true
-                    )
-                ) {
-
-                    extractGoogleResults()
-
-                    return
-                }
-
-                /*
-                 * Music website page
-                 */
-                if (
-                    resultGeneration ==
-                    searchGeneration &&
-                    expectedPageUrl.isNotBlank() &&
-                    ServerConfig.isAllowedPageUrl(
-                        url
-                    )
-                ) {
-
-                    extractMusicPage(url)
-                }
-            }
-
-            override fun onReceivedError(
-                view: WebView,
-                request: WebResourceRequest,
-                error: WebResourceError
-            ) {
-
-                super.onReceivedError(
-                    view,
-                    request,
-                    error
-                )
-
-                if (
-                    !request.isForMainFrame ||
-                    destroyed
-                ) {
-                    return
-                }
-
-                if (
-                    resultGeneration ==
-                    searchGeneration &&
-                    resultPages.isNotEmpty()
-                ) {
-
-                    finishCurrentResultPage()
-
-                } else {
-
-                    status.text =
-                        "خطا در اتصال به جستجو"
-                }
-            }
-
-            override fun onRenderProcessGone(
-                view: WebView,
-                detail: RenderProcessGoneDetail
-            ): Boolean {
-
-                /*
-                 * اگر Activity قبلاً نابود شده،
-                 * دیگر WebView را بازسازی نکن.
-                 */
-                if (destroyed) {
-                    return true
-                }
-
-                status.text =
-                    "در حال بازیابی جستجو..."
-
-                /*
-                 * WebView Crash کرده؛
-                 * نمونه جدید ساخته می‌شود.
-                 */
-                recreateWebView()
-
-                return true
-            }
-        }
-}
-) {
-    view.settings.apply {
-
-        javaScriptEnabled = true
-        domStorageEnabled = true
-        databaseEnabled = false
-
-        mediaPlaybackRequiresUserGesture = false
-
-        allowFileAccess = false
-        allowContentAccess = false
-
-        javaScriptCanOpenWindowsAutomatically = false
-        setSupportMultipleWindows(false)
-
-        userAgentString =
-            "Mozilla/5.0 (Linux; Android 12) " +
-                    "AppleWebKit/537.36 " +
-                    "(KHTML, like Gecko) " +
-                    "Chrome/128 Mobile Safari/537.36"
-    }
-
-    view.setLayerType(
-        View.LAYER_TYPE_HARDWARE,
-        null
-    )
-
-    view.addJavascriptInterface(
-        Bridge(),
-        "MusicFinder"
-    )
-
-    view.webViewClient =
-        object : WebViewClient() {
-
-            override fun shouldOverrideUrlLoading(
-                view: WebView,
-                request: WebResourceRequest
-            ): Boolean {
-
-                val url =
-                    request.url.toString()
-
-                return !ServerConfig.isAllowedPageUrl(
-                    url
-                )
-            }
-
-            override fun onPageStarted(
-                view: WebView,
-                url: String,
-                favicon: Bitmap?
-            ) {
-                super.onPageStarted(
-                    view,
-                    url,
-                    favicon
-                )
-
-                if (destroyed) return
-            }
-
-            override fun onPageFinished(
-                view: WebView,
-                url: String
-            ) {
-                super.onPageFinished(
-                    view,
-                    url
-                )
-
-                if (destroyed) return
-
-                if (
-                    url.contains(
-                        "google.com/search",
-                        ignoreCase = true
-                    )
-                ) {
-                    extractGoogleResults()
-
-                } else if (
-                    resultGeneration ==
-                    searchGeneration &&
-                    expectedPageUrl.isNotBlank() &&
-                    ServerConfig.isAllowedPageUrl(url)
-                ) {
-                    extractMusicPage(url)
-                }
-            }
-
-            override fun onReceivedError(
-                view: WebView,
-                request: WebResourceRequest,
-                error: WebResourceError
-            ) {
-
-                super.onReceivedError(
-                    view,
-                    request,
-                    error
-                )
-
-                if (
-                    !request.isForMainFrame ||
-                    destroyed
-                ) {
-                    return
-                }
-
-                if (
-                    resultGeneration ==
-                    searchGeneration &&
-                    resultPages.isNotEmpty()
-                ) {
-                    finishCurrentResultPage()
-                } else {
-                    status.text =
-                        "خطا در اتصال به جستجو"
-                }
-            }
-
-            override fun onRenderProcessGone(
-                view: WebView,
-                detail: RenderProcessGoneDetail
-            ): Boolean {
-
-                if (destroyed) {
-                    return true
-                }
-
-                status.text =
-                    "در حال بازیابی جستجو..."
-
-                recreateWebView()
-
-                return true
-            }
-        }
-} {
+    private fun configureWebView(
+        view: WebView
+    ) {
 
         view.settings.apply {
 
             javaScriptEnabled = true
             domStorageEnabled = true
-
             databaseEnabled = false
 
-            mediaPlaybackRequiresUserGesture =
-                false
+            mediaPlaybackRequiresUserGesture = false
 
             allowFileAccess = false
             allowContentAccess = false
 
-            javaScriptCanOpenWindowsAutomatically =
-                false
-
+            javaScriptCanOpenWindowsAutomatically = false
             setSupportMultipleWindows(false)
 
             userAgentString =
@@ -665,7 +344,13 @@ private fun configureWebView(
                     view: WebView,
                     request: WebResourceRequest
                 ): Boolean {
-                    return false
+
+                    val url =
+                        request.url.toString()
+
+                    return !ServerConfig.isAllowedPageUrl(
+                        url
+                    )
                 }
 
                 override fun onPageStarted(
@@ -700,10 +385,16 @@ private fun configureWebView(
                         )
                     ) {
                         extractGoogleResults()
-                    } else if (
+                        return
+                    }
+
+                    if (
                         resultGeneration ==
                         searchGeneration &&
-                        expectedPageUrl.isNotBlank()
+                        expectedPageUrl.isNotBlank() &&
+                        ServerConfig.isAllowedPageUrl(
+                            url
+                        )
                     ) {
                         extractMusicPage(url)
                     }
@@ -714,6 +405,7 @@ private fun configureWebView(
                     request: WebResourceRequest,
                     error: WebResourceError
                 ) {
+
                     super.onReceivedError(
                         view,
                         request,
@@ -749,7 +441,7 @@ private fun configureWebView(
                     }
 
                     status.text =
-                        "WebView دوباره راه‌اندازی شد"
+                        "در حال بازیابی جستجو..."
 
                     recreateWebView()
 
@@ -764,90 +456,37 @@ private fun configureWebView(
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    @SuppressLint("SetJavaScriptEnabled")
-private fun recreateWebView() {
-
-    if (destroyed) return
-
-    try {
-
-        val oldWeb = web
-
-        val parent =
-            oldWeb.parent as? android.view.ViewGroup
-                ?: return
-
-        val index =
-            parent.indexOfChild(oldWeb)
-
-        val oldParams =
-            oldWeb.layoutParams
-
-        parent.removeView(oldWeb)
-
-        try {
-            oldWeb.removeJavascriptInterface(
-                "MusicFinder"
-            )
-
-            oldWeb.stopLoading()
-            oldWeb.loadUrl("about:blank")
-            oldWeb.removeAllViews()
-            oldWeb.destroy()
-
-        } catch (_: Exception) {
-        }
-
-        val newWeb =
-            WebView(this)
-
-        newWeb.id = R.id.web
-
-        newWeb.layoutParams =
-            oldParams
-                ?: android.widget.LinearLayout.LayoutParams(
-                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                    1
-                )
-
-        parent.addView(
-            newWeb,
-            index.coerceAtMost(
-                parent.childCount
-            )
-        )
-
-        web = newWeb
-
-        configureWebView(web)
-
-    } catch (_: Exception) {
-
-        if (!destroyed) {
-            status.text =
-                "جستجو موقتاً در دسترس نیست"
-        }
-    }
-} {
+    private fun recreateWebView() {
 
         if (destroyed) return
 
         try {
+
+            val oldWeb = web
+
             val parent =
-                web.parent as? android.view.ViewGroup
+                oldWeb.parent as? android.view.ViewGroup
                     ?: return
 
             val index =
-                parent.indexOfChild(web)
+                parent.indexOfChild(oldWeb)
 
-            parent.removeView(web)
+            val oldParams =
+                oldWeb.layoutParams
+
+            parent.removeView(oldWeb)
 
             try {
-                web.removeJavascriptInterface(
+
+                oldWeb.removeJavascriptInterface(
                     "MusicFinder"
                 )
-                web.stopLoading()
-                web.destroy()
+
+                oldWeb.stopLoading()
+                oldWeb.loadUrl("about:blank")
+                oldWeb.removeAllViews()
+                oldWeb.destroy()
+
             } catch (_: Exception) {
             }
 
@@ -857,10 +496,11 @@ private fun recreateWebView() {
             newWeb.id = R.id.web
 
             newWeb.layoutParams =
-                android.widget.LinearLayout.LayoutParams(
-                    1,
-                    1
-                )
+                oldParams
+                    ?: android.widget.LinearLayout.LayoutParams(
+                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                        1
+                    )
 
             parent.addView(
                 newWeb,
@@ -874,8 +514,11 @@ private fun recreateWebView() {
             configureWebView(web)
 
         } catch (_: Exception) {
-            status.text =
-                "جستجو موقتاً در دسترس نیست"
+
+            if (!destroyed) {
+                status.text =
+                    "جستجو موقتاً در دسترس نیست"
+            }
         }
     }
 
@@ -906,7 +549,9 @@ private fun recreateWebView() {
             val url =
                 currentAudioUrl
 
-            if (url.isBlank()) return@setOnClickListener
+            if (url.isBlank()) {
+                return@setOnClickListener
+            }
 
             sendServiceAction(
                 MusicService.ACTION_TOGGLE,
@@ -977,18 +622,12 @@ private fun recreateWebView() {
                     val percent =
                         seekBar?.progress ?: 0
 
-                    sendServiceAction(
-                        MusicService.ACTION_SEEK_PERCENT,
-                        currentAudioUrl,
-                        titleText.text.toString(),
-                        artistText.text.toString()
-                    )
-
                     val intent =
                         Intent(
                             this@MainActivity,
                             MusicService::class.java
                         ).apply {
+
                             action =
                                 MusicService.ACTION_SEEK_PERCENT
 
@@ -998,9 +637,7 @@ private fun recreateWebView() {
                             )
                         }
 
-                    safelyStartService(
-                        intent
-                    )
+                    safelyStartService(intent)
                 }
             }
         )
@@ -1024,13 +661,16 @@ private fun recreateWebView() {
         libraryButton.setOnClickListener {
 
             try {
+
                 startActivity(
                     Intent(
                         this,
                         LibraryActivity::class.java
                     )
                 )
+
             } catch (_: Exception) {
+
                 Toast.makeText(
                     this,
                     "کتابخانه باز نشد",
@@ -1070,8 +710,10 @@ private fun recreateWebView() {
 
         resultPages = emptyList()
         resultPageIndex = 0
+
         resultGeneration =
             searchGeneration
+
         expectedPageUrl = ""
 
         songs.clear()
@@ -1080,6 +722,7 @@ private fun recreateWebView() {
         resultsContainer.removeAllViews()
 
         titleText.text = text
+
         artistText.text =
             "در حال جستجو..."
 
@@ -1087,8 +730,12 @@ private fun recreateWebView() {
             "در حال جستجوی سایت‌ها..."
 
         seekBar.progress = 0
-        currentTimeText.text = "00:00"
-        durationText.text = "00:00"
+
+        currentTimeText.text =
+            "00:00"
+
+        durationText.text =
+            "00:00"
 
         vinyl.clearCover()
         vinyl.stopRotation()
@@ -1102,10 +749,12 @@ private fun recreateWebView() {
 
         val encoded =
             try {
+
                 URLEncoder.encode(
                     searchQuery,
                     "UTF-8"
                 )
+
             } catch (_: Exception) {
                 return
             }
@@ -1114,11 +763,15 @@ private fun recreateWebView() {
             "https://www.google.com/search?q=$encoded&num=50"
 
         try {
+
             web.stopLoading()
             web.loadUrl(url)
+
         } catch (_: Exception) {
+
             status.text =
                 "خطا در شروع جستجو"
+
             return
         }
 
@@ -1142,7 +795,8 @@ private fun recreateWebView() {
                 }
             }
 
-        searchTimeoutRunnable = timeout
+        searchTimeoutRunnable =
+            timeout
 
         mainHandler.postDelayed(
             timeout,
@@ -1227,11 +881,14 @@ private fun recreateWebView() {
         """.trimIndent()
 
         try {
+
             web.evaluateJavascript(
                 script,
                 null
             )
+
         } catch (_: Exception) {
+
             if (!destroyed) {
                 status.text =
                     "خطا در استخراج نتایج"
@@ -1347,18 +1004,21 @@ private fun recreateWebView() {
 
                 } catch (e) {
                     MusicFinder.page(
-                        "### ### ###"
+                        "######"
                     );
                 }
             })();
         """.trimIndent()
 
         try {
+
             web.evaluateJavascript(
                 script,
                 null
             )
+
         } catch (_: Exception) {
+
             finishCurrentResultPage()
         }
     }
@@ -1372,7 +1032,9 @@ private fun recreateWebView() {
 
             runOnUiThread {
 
-                if (destroyed) return@runOnUiThread
+                if (destroyed) {
+                    return@runOnUiThread
+                }
 
                 val items =
                     data.split("###")
@@ -1397,6 +1059,7 @@ private fun recreateWebView() {
 
                 resultPages = items
                 resultPageIndex = 0
+
                 resultGeneration =
                     searchGeneration
 
@@ -1411,7 +1074,9 @@ private fun recreateWebView() {
 
             runOnUiThread {
 
-                if (destroyed) return@runOnUiThread
+                if (destroyed) {
+                    return@runOnUiThread
+                }
 
                 if (
                     resultGeneration !=
@@ -1424,7 +1089,9 @@ private fun recreateWebView() {
                     data.split("###")
 
                 if (parts.size < 4) {
+
                     finishCurrentResultPage()
+
                     return@runOnUiThread
                 }
 
@@ -1462,6 +1129,7 @@ private fun recreateWebView() {
                 val song =
                     SongResult(
                         url = audio.trim(),
+
                         title =
                             if (title.isBlank()) {
                                 query.text
@@ -1470,6 +1138,7 @@ private fun recreateWebView() {
                             } else {
                                 cleanTitle(title)
                             },
+
                         artist =
                             if (artist.isBlank()) {
                                 query.text
@@ -1478,8 +1147,10 @@ private fun recreateWebView() {
                             } else {
                                 artist.trim()
                             },
+
                         site =
                             getSiteName(pageUrl),
+
                         cover =
                             cover.trim()
                     )
@@ -1550,7 +1221,8 @@ private fun recreateWebView() {
                 }
             }
 
-        pageTimeoutRunnable = timeout
+        pageTimeoutRunnable =
+            timeout
 
         mainHandler.postDelayed(
             timeout,
@@ -1558,8 +1230,11 @@ private fun recreateWebView() {
         )
 
         try {
+
             web.loadUrl(url)
+
         } catch (_: Exception) {
+
             finishCurrentResultPage()
         }
     }
@@ -1821,7 +1496,9 @@ private fun recreateWebView() {
                 }
 
             if (position >= 0) {
+
                 currentIndex = position
+
                 playSong(song)
             }
         }
@@ -1871,6 +1548,7 @@ private fun recreateWebView() {
             }
 
         } catch (_: Exception) {
+
             Toast.makeText(
                 this,
                 "ذخیره‌سازی انجام نشد",
@@ -1890,7 +1568,9 @@ private fun recreateWebView() {
             coverCache.get(url)
 
         if (cached != null) {
+
             target.setImageBitmap(cached)
+
             return
         }
 
@@ -1930,6 +1610,7 @@ private fun recreateWebView() {
                     runOnUiThread {
 
                         if (!destroyed) {
+
                             target.setImageBitmap(
                                 bitmap
                             )
@@ -1976,7 +1657,9 @@ private fun recreateWebView() {
 
         val options =
             BitmapFactory.Options().apply {
+
                 inSampleSize = sample
+
                 inPreferredConfig =
                     Bitmap.Config.RGB_565
             }
@@ -1995,6 +1678,7 @@ private fun recreateWebView() {
             currentIndex < 0 ||
             currentIndex >= songs.size
         ) {
+
             Toast.makeText(
                 this,
                 "ابتدا یک آهنگ انتخاب کنید",
@@ -2041,13 +1725,18 @@ private fun recreateWebView() {
         currentSong = song
         currentAudioUrl = song.url
 
-        titleText.text = song.title
+        titleText.text =
+            song.title
 
         artistText.text =
             "${song.artist} • ${song.site}"
 
-        currentTimeText.text = "00:00"
-        durationText.text = "00:00"
+        currentTimeText.text =
+            "00:00"
+
+        durationText.text =
+            "00:00"
+
         seekBar.progress = 0
 
         status.text =
@@ -2076,14 +1765,18 @@ private fun recreateWebView() {
             if (randomMode) {
 
                 if (songs.size == 1) {
+
                     0
+
                 } else {
 
                     var next: Int
 
                     do {
+
                         next =
                             (0 until songs.size).random()
+
                     } while (
                         next == currentIndex
                     )
@@ -2094,8 +1787,11 @@ private fun recreateWebView() {
             } else {
 
                 if (currentIndex < 0) {
+
                     0
+
                 } else {
+
                     (
                         currentIndex + 1
                     ) % songs.size
@@ -2149,6 +1845,7 @@ private fun recreateWebView() {
                 this.action = action
 
                 if (url.isNotBlank()) {
+
                     putExtra(
                         MusicService.EXTRA_URL,
                         url
@@ -2182,11 +1879,12 @@ private fun recreateWebView() {
 
         try {
 
-            if (
-                Build.VERSION.SDK_INT >= 26
-            ) {
+            if (Build.VERSION.SDK_INT >= 26) {
+
                 startForegroundService(intent)
+
             } else {
+
                 startService(intent)
             }
 
@@ -2215,11 +1913,12 @@ private fun recreateWebView() {
                     position.toDouble() /
                             duration.toDouble() *
                             100.0
-                )
+                    )
                     .toInt()
                     .coerceIn(0, 100)
 
-            seekBar.progress = percent
+            seekBar.progress =
+                percent
 
             currentTimeText.text =
                 formatTime(position)
@@ -2282,7 +1981,9 @@ private fun recreateWebView() {
                 value.split(":")
 
             if (parts.size != 2) {
+
                 0L
+
             } else {
 
                 val minutes =
@@ -2298,6 +1999,7 @@ private fun recreateWebView() {
             }
 
         } catch (_: Exception) {
+
             0L
         }
     }
@@ -2347,11 +2049,17 @@ private fun recreateWebView() {
         cancelDownloadButton.visibility =
             View.VISIBLE
 
-        downloadButton.isEnabled = false
+        downloadButton.isEnabled =
+            false
 
-        pauseDownloadButton.text = "⏸"
-        downloadText.text = "0%"
-        status.text = "در حال دانلود..."
+        pauseDownloadButton.text =
+            "⏸"
+
+        downloadText.text =
+            "0%"
+
+        status.text =
+            "در حال دانلود..."
 
         val fileName =
             makeSafeFileName(
@@ -2363,14 +2071,15 @@ private fun recreateWebView() {
 
                 try {
 
-                    if (
-                        Build.VERSION.SDK_INT >= 29
-                    ) {
+                    if (Build.VERSION.SDK_INT >= 29) {
+
                         downloadMediaStore(
                             url,
                             fileName
                         )
+
                     } else {
+
                         downloadOld(
                             url,
                             fileName
@@ -2379,7 +2088,9 @@ private fun recreateWebView() {
 
                     runOnUiThread {
 
-                        if (destroyed) return@runOnUiThread
+                        if (destroyed) {
+                            return@runOnUiThread
+                        }
 
                         downloadProgress.progress =
                             100
@@ -2393,9 +2104,7 @@ private fun recreateWebView() {
                         resetDownloadButtons()
                     }
 
-                } catch (
-                    e: Exception
-                ) {
+                } catch (e: Exception) {
 
                     runOnUiThread {
 
@@ -2405,6 +2114,7 @@ private fun recreateWebView() {
 
                         status.text =
                             when {
+
                                 e.message ==
                                         "CANCELLED" ->
                                     "دانلود لغو شد"
@@ -2467,7 +2177,8 @@ private fun recreateWebView() {
 
     private fun resetDownloadButtons() {
 
-        downloadButton.isEnabled = true
+        downloadButton.isEnabled =
+            true
 
         pauseDownloadButton.visibility =
             View.GONE
@@ -2494,7 +2205,8 @@ private fun recreateWebView() {
         connection.readTimeout = 30000
         connection.instanceFollowRedirects = true
 
-        activeConnection = connection
+        activeConnection =
+            connection
 
         connection.connect()
 
@@ -2515,7 +2227,9 @@ private fun recreateWebView() {
             cancelDownloadRequested ||
             Thread.currentThread().isInterrupted
         ) {
-            throw Exception("CANCELLED")
+            throw Exception(
+                "CANCELLED"
+            )
         }
     }
 
@@ -2527,9 +2241,14 @@ private fun recreateWebView() {
         ) {
 
             try {
+
                 Thread.sleep(150)
+
             } catch (_: InterruptedException) {
-                throw Exception("CANCELLED")
+
+                throw Exception(
+                    "CANCELLED"
+                )
             }
         }
 
@@ -2562,10 +2281,7 @@ private fun recreateWebView() {
 
         if (
             percent == lastProgressValue ||
-            (
-                now - lastProgressUpdate
-                        < 250L
-                )
+            now - lastProgressUpdate < 250L
         ) {
             return
         }
@@ -2575,12 +2291,15 @@ private fun recreateWebView() {
 
         runOnUiThread {
 
-            if (destroyed) return@runOnUiThread
+            if (destroyed) {
+                return@runOnUiThread
+            }
 
             downloadProgress.progress =
                 percent
 
             if (!pauseDownloadRequested) {
+
                 downloadText.text =
                     "$percent%"
             }
@@ -2686,6 +2405,7 @@ private fun recreateWebView() {
             contentResolver.update(
                 uri,
                 ContentValues().apply {
+
                     put(
                         MediaStore.Audio.Media.IS_PENDING,
                         0
@@ -2698,11 +2418,13 @@ private fun recreateWebView() {
         } catch (e: Exception) {
 
             try {
+
                 contentResolver.delete(
                     uri,
                     null,
                     null
                 )
+
             } catch (_: Exception) {
             }
 
@@ -2827,8 +2549,10 @@ private fun recreateWebView() {
             historyContainer.visibility ==
             View.VISIBLE
         ) {
+
             historyContainer.visibility =
                 View.GONE
+
             return
         }
 
@@ -2858,6 +2582,7 @@ private fun recreateWebView() {
 
             val empty =
                 TextView(this).apply {
+
                     text =
                         "تاریخچه خالی است"
 
@@ -2878,7 +2603,9 @@ private fun recreateWebView() {
                     )
                 }
 
-            historyContainer.addView(empty)
+            historyContainer.addView(
+                empty
+            )
 
             return
         }
@@ -2895,7 +2622,11 @@ private fun recreateWebView() {
                         limit = 4
                     )
 
-                if (parts.size < 4) return@forEachIndexed
+                if (
+                    parts.size < 4
+                ) {
+                    return@forEachIndexed
+                }
 
                 val song =
                     SongResult(
@@ -2958,11 +2689,14 @@ private fun recreateWebView() {
     ): String {
 
         return try {
+
             URLDecoder.decode(
                 value,
                 "UTF-8"
             )
+
         } catch (_: Exception) {
+
             value
         }
     }
@@ -3071,7 +2805,9 @@ private fun recreateWebView() {
                 )
                 ?: ""
 
-        if (data.isBlank()) return
+        if (data.isBlank()) {
+            return
+        }
 
         songs.clear()
 
@@ -3085,12 +2821,18 @@ private fun recreateWebView() {
                         limit = 5
                     )
 
-                if (parts.size < 5) return@forEach
+                if (
+                    parts.size < 5
+                ) {
+                    return@forEach
+                }
 
                 val url =
                     parts[0].trim()
 
-                if (url.isBlank()) return@forEach
+                if (url.isBlank()) {
+                    return@forEach
+                }
 
                 songs.add(
                     SongResult(
@@ -3126,7 +2868,9 @@ private fun recreateWebView() {
 
         super.onStart()
 
-        if (receiverRegistered) return
+        if (receiverRegistered) {
+            return
+        }
 
         val filter =
             IntentFilter(
@@ -3135,9 +2879,7 @@ private fun recreateWebView() {
 
         try {
 
-            if (
-                Build.VERSION.SDK_INT >= 33
-            ) {
+            if (Build.VERSION.SDK_INT >= 33) {
 
                 registerReceiver(
                     playerReceiver,
@@ -3157,6 +2899,7 @@ private fun recreateWebView() {
             receiverRegistered = true
 
         } catch (_: Exception) {
+
             receiverRegistered = false
         }
     }
@@ -3166,9 +2909,11 @@ private fun recreateWebView() {
         if (receiverRegistered) {
 
             try {
+
                 unregisterReceiver(
                     playerReceiver
                 )
+
             } catch (_: Exception) {
             }
 
@@ -3197,21 +2942,30 @@ private fun recreateWebView() {
         }
 
         try {
+
             mainHandler.removeCallbacksAndMessages(
                 null
             )
+
         } catch (_: Exception) {
         }
 
         try {
+
             web.stopLoading()
+
             web.removeJavascriptInterface(
                 "MusicFinder"
             )
-            web.loadUrl("about:blank")
+
+            web.loadUrl(
+                "about:blank"
+            )
+
             web.clearHistory()
             web.removeAllViews()
             web.destroy()
+
         } catch (_: Exception) {
         }
 
