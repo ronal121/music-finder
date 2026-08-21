@@ -6,13 +6,14 @@ object ServerConfig {
     const val GOOGLE_HOST = "google.com"
 
     val MUSIC_SITES = listOf(
+        "pro.iraniandj.ir",
+        "iranmusic.ir",
+        "nicmusic.net",
+        "upmusics.com",
         "rozmusic.com",
         "mybia2music.com",
         "musicdel.ir",
-        "musics-fa.com",
-        "iranmusic.ir",
-        "nicmusic.net",
-        "upmusics.com"
+        "musics-fa.com"
     )
 
     val MUSIC_HOSTS = MUSIC_SITES.toSet()
@@ -41,11 +42,40 @@ object ServerConfig {
         uri.scheme?.lowercase() in setOf("http", "https") && isMusicHost(uri.host)
     } catch (_: Exception) { false }
 
-    private fun expandSearchTerms(input: String): String {
+    private fun expandSearchTerms(input: String): LinkedHashSet<String> {
         val q = input.trim().replace(Regex("\\s+"), " ")
-        if (q.isBlank()) return q
+        val aliases = linkedSetOf<String>()
+        if (q.isBlank()) return aliases
+
+        aliases += q
+
+        val cleaned = q
+            .replace(Regex("[()\\[\\]{}]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (cleaned.isNotBlank()) aliases += cleaned
+
+        // Artist / compilation searches: search the distinctive part too.
+        val djMatches = Regex("(?i)(?:compiled\\s+by|mixed\\s+by|by)\\s+([a-z0-9][a-z0-9 ._-]{2,})")
+            .findAll(q)
+            .map { it.groupValues[1].trim() }
+            .toList()
+        djMatches.forEach { aliases += it }
+
+        Regex("(?i)\\b(?:dj|mc)[a-z0-9][a-z0-9_-]*\\b")
+            .findAll(q)
+            .forEach { aliases += it.value }
+
+        if (q.contains("compiled", ignoreCase = true)) {
+            aliases += "Compiled By"
+            aliases += "Compiled"
+        }
+        if (q.contains("various artists", ignoreCase = true) || Regex("(?i)\\bVA\\b").containsMatchIn(q)) {
+            aliases += "Various Artists"
+            aliases += "VA"
+        }
+
         val lower = q.lowercase()
-        val aliases = linkedSetOf(q)
         fun add(vararg values: String) { values.forEach { aliases += it } }
 
         if (lower.contains("hard techno") || lower.contains("هارد تکنو")) add("Hard Techno", "هارد تکنو", "HardTechno")
@@ -59,11 +89,14 @@ object ServerConfig {
         if (lower.contains("deep") || lower.contains("دیپ")) add("Deep", "دیپ")
         if (lower.contains("dark") || lower.contains("دارک")) add("Dark", "دارک")
 
-        return aliases.joinToString(" OR ") { if (it.contains(' ')) "\"$it\"" else it }
+        return aliases
     }
 
     fun searchQuery(input: String): String {
-        val expanded = expandSearchTerms(input)
+        val terms = expandSearchTerms(input)
+        val expanded = terms.joinToString(" OR ") {
+            if (it.contains(' ') || it.contains('(') || it.contains(')')) "\"$it\"" else it
+        }
         val sites = MUSIC_SITES.joinToString(" OR ") { "site:$it" }
         return "($expanded) ($sites)"
     }
@@ -71,11 +104,11 @@ object ServerConfig {
     fun siteName(url: String): String {
         val host = normalizeHost(runCatching { Uri.parse(url).host }.getOrNull())
         return when {
+            host == "pro.iraniandj.ir" || host.endsWith(".pro.iraniandj.ir") -> "IranianDJ Pro"
             host == "rozmusic.com" || host.endsWith(".rozmusic.com") -> "RozMusic"
             host == "mybia2music.com" || host.endsWith(".mybia2music.com") -> "Bia2Music"
             host == "musicdel.ir" || host.endsWith(".musicdel.ir") -> "Musicdel"
             host == "musics-fa.com" || host.endsWith(".musics-fa.com") -> "Musics-FA"
-            host == "pro.iraniandj.ir" || host.endsWith(".pro.iraniandj.ir") -> "IranianDJ Pro"
             host == "iranmusic.ir" || host.endsWith(".iranmusic.ir") -> "IranMusic"
             host == "nicmusic.net" || host.endsWith(".nicmusic.net") -> "NicMusic"
             host == "upmusics.com" || host.endsWith(".upmusics.com") -> "UpMusics"
