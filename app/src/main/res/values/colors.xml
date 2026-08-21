@@ -10,8 +10,8 @@
     <color name="text_primary">#FFFFFF</color>
     <color name="muted">#A7A7B0</color>
 
-    <color name="accent">#B8FF3D</color>
-    <color name="accent_dark">#8BC52A</color>
+    <color name="accent">#310000</color>
+    <color name="accent_dark">#220000</color>
 
     <color name="line">#292930</color>
     <color name="transparent">#00000000</color>
@@ -19,8 +19,8 @@
     <!-- Backward compatibility with existing resources -->
     <color name="panel">#14141A</color>
     <color name="panel2">#1B1B23</color>
-    <color name="purple">#B8FF3D</color>
-    <color name="purple2">#8BC52A</color>
-    <color name="pink">#B8FF3D</color>
+    <color name="purple">#310000</color>
+    <color name="purple2">#220000</color>
+    <color name="pink">#310000</color>
 
 </resources>
