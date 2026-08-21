@@ -11,7 +11,6 @@ object ServerConfig {
         "musicdel.ir",
         "musics-fa.com",
         "pro.iraniandj.ir",
-        "worldofmusic.ir",
         "iranmusic.ir",
         "nicmusic.net",
         "upmusics.com"
@@ -45,8 +44,9 @@ object ServerConfig {
 
     fun searchQuery(input: String): String {
         val q = input.trim().replace(Regex("\\s+"), " ")
+        val expanded = SearchEngine.expandSearchTerms(q)
         val sites = MUSIC_SITES.joinToString(" OR ") { "site:$it" }
-        return "$q ($sites)"
+        return "($expanded) ($sites)"
     }
 
     fun siteName(url: String): String {
@@ -57,7 +57,6 @@ object ServerConfig {
             host == "musicdel.ir" || host.endsWith(".musicdel.ir") -> "Musicdel"
             host == "musics-fa.com" || host.endsWith(".musics-fa.com") -> "Musics-FA"
             host == "pro.iraniandj.ir" || host.endsWith(".pro.iraniandj.ir") -> "IranianDJ Pro"
-            host == "worldofmusic.ir" || host.endsWith(".worldofmusic.ir") -> "World of Music"
             host == "iranmusic.ir" || host.endsWith(".iranmusic.ir") -> "IranMusic"
             host == "nicmusic.net" || host.endsWith(".nicmusic.net") -> "NicMusic"
             host == "upmusics.com" || host.endsWith(".upmusics.com") -> "UpMusics"
