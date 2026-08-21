@@ -12,7 +12,6 @@ import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -68,7 +67,8 @@ class MainActivity : Activity() {
     private lateinit var randomButton: TextView
 
     private lateinit var seekBar: SeekBar
-    private lateinit var volumeBar: SeekBar
+    private lateinit var volumeSeekBar: SeekBar
+    private lateinit var volumeText: TextView
 
     private lateinit var currentTimeText: TextView
     private lateinit var durationText: TextView
@@ -86,8 +86,6 @@ class MainActivity : Activity() {
     private lateinit var historyContainer: LinearLayout
     private lateinit var resultsContainer: LinearLayout
     private lateinit var vinyl: VinylView
-
-    private lateinit var audioManager: AudioManager
 
     private val turquoiseColor =
         0xFF20C9C9.toInt()
@@ -192,6 +190,12 @@ class MainActivity : Activity() {
                         "artist"
                     ) ?: ""
 
+                val volume =
+                    intent.getIntExtra(
+                        "volume",
+                        -1
+                    )
+
                 runOnUiThread {
 
                     if (destroyed) {
@@ -211,6 +215,11 @@ class MainActivity : Activity() {
                     if (artist.isNotBlank()) {
                         artistText.text = artist
                     }
+
+                    if (volume in 0..100) {
+                        volumeSeekBar.progress = volume
+                        volumeText.text = "$volume%"
+                    }
                 }
             }
         }
@@ -225,11 +234,6 @@ class MainActivity : Activity() {
         setContentView(
             R.layout.activity_main
         )
-
-        audioManager =
-            getSystemService(
-                Context.AUDIO_SERVICE
-            ) as AudioManager
 
         bindViews()
         setupWebView()
@@ -273,8 +277,11 @@ class MainActivity : Activity() {
         seekBar =
             findViewById(R.id.seekBar)
 
-        volumeBar =
-            findViewById(R.id.volumeBar)
+        volumeSeekBar =
+            findViewById(R.id.volumeSeekBar)
+
+        volumeText =
+            findViewById(R.id.volumeText)
 
         currentTimeText =
             findViewById(R.id.currentTimeText)
@@ -321,74 +328,87 @@ class MainActivity : Activity() {
 
     private fun setupVolumeControl() {
 
-        try {
-
-            val maxVolume =
-                audioManager.getStreamMaxVolume(
-                    AudioManager.STREAM_MUSIC
-                )
-
-            val currentVolume =
-                audioManager.getStreamVolume(
-                    AudioManager.STREAM_MUSIC
-                )
-
-            volumeBar.max =
-                maxVolume
-
-            volumeBar.progress =
-                currentVolume
-
-            volumeBar.progressTintList =
-                ColorStateList.valueOf(
-                    turquoiseColor
-                )
-
-            volumeBar.thumbTintList =
-                ColorStateList.valueOf(
-                    turquoiseColor
-                )
-
-            volumeBar.setOnSeekBarChangeListener(
-                object :
-                    SeekBar.OnSeekBarChangeListener {
-
-                    override fun onProgressChanged(
-                        seekBar: SeekBar?,
-                        progress: Int,
-                        fromUser: Boolean
-                    ) {
-
-                        if (!fromUser) {
-                            return
-                        }
-
-                        try {
-
-                            audioManager.setStreamVolume(
-                                AudioManager.STREAM_MUSIC,
-                                progress,
-                                0
-                            )
-
-                        } catch (_: Exception) {
-                        }
-                    }
-
-                    override fun onStartTrackingTouch(
-                        seekBar: SeekBar?
-                    ) {
-                    }
-
-                    override fun onStopTrackingTouch(
-                        seekBar: SeekBar?
-                    ) {
-                    }
-                }
+        val prefs =
+            getSharedPreferences(
+                "player_settings",
+                MODE_PRIVATE
             )
 
-        } catch (_: Exception) {
-        }
+        val savedVolume =
+            prefs.getInt(
+                "volume_percent",
+                80
+            ).coerceIn(0, 100)
+
+        volumeSeekBar.max = 100
+        volumeSeekBar.progress = savedVolume
+        volumeText.text = "$savedVolume%"
+
+        volumeSeekBar.progressTintList =
+            ColorStateList.valueOf(
+                turquoiseColor
+            )
+
+        volumeSeekBar.thumbTintList =
+            ColorStateList.valueOf(
+                turquoiseColor
+            )
+
+        volumeSeekBar.setOnSeekBarChangeListener(
+            object : SeekBar.OnSeekBarChangeListener {
+
+                override fun onProgressChanged(
+                    seekBar: SeekBar?,
+                    progress: Int,
+                    fromUser: Boolean
+                ) {
+
+                    val volume =
+                        progress.coerceIn(0, 100)
+
+                    volumeText.text =
+                        "$volume%"
+
+                    if (!fromUser) {
+                        return
+                    }
+
+                    prefs.edit()
+                        .putInt(
+                            "volume_percent",
+                            volume
+                        )
+                        .apply()
+
+                    val intent =
+                        Intent(
+                            this@MainActivity,
+                            MusicService::class.java
+                        ).apply {
+
+                            action =
+                                MusicService.ACTION_SET_VOLUME
+
+                            putExtra(
+                                MusicService.EXTRA_VOLUME,
+                                volume
+                            )
+                        }
+
+                    safelyStartService(intent)
+                }
+
+                override fun onStartTrackingTouch(
+                    seekBar: SeekBar?
+                ) {
+                }
+
+                override fun onStopTrackingTouch(
+                    seekBar: SeekBar?
+                ) {
+                }
+            }
+        )
     }
 
     private fun applyTurquoiseButtonStyle() {
@@ -399,6 +419,7 @@ class MainActivity : Activity() {
                 previousButton,
                 nextButton,
                 randomButton,
+                findViewById<TextView>(R.id.search),
                 downloadButton,
                 cancelDownloadButton,
                 pauseDownloadButton,
@@ -406,6 +427,12 @@ class MainActivity : Activity() {
                 libraryButton,
                 historyButton
             )
+
+        seekBar.progressTintList =
+            ColorStateList.valueOf(turquoiseColor)
+
+        seekBar.thumbTintList =
+            ColorStateList.valueOf(turquoiseColor)
 
         buttons.forEach { button ->
 
