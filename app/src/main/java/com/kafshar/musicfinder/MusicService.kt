@@ -19,6 +19,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 
+@OptIn(androidx.media3.common.util.UnstableApi::class)
 class MusicService : MediaSessionService() {
 
     companion object {
@@ -130,6 +131,12 @@ class MusicService : MediaSessionService() {
             )
                 .setSessionActivity(
                     createOpenAppPendingIntent()
+                )
+                .setCallback(
+                    MediaSessionControls.callback()
+                )
+                .setCustomLayout(
+                    MediaSessionControls.layout()
                 )
                 .build()
 
