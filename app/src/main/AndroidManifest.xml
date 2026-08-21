@@ -3,21 +3,11 @@
 <manifest
     xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission
-        android:name="android.permission.INTERNET" />
-
-    <uses-permission
-        android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <uses-permission
-        android:name="android.permission.FOREGROUND_SERVICE" />
-
-    <uses-permission
-        android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-
-    <uses-permission
-        android:name="android.permission.WAKE_LOCK" />
-
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
@@ -25,28 +15,21 @@
     <application
         android:allowBackup="true"
         android:label="Music Finder"
+        android:icon="@drawable/ic_music_finder"
+        android:roundIcon="@drawable/ic_music_finder"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true">
 
-        <activity
-            android:name=".LibraryActivity"
-            android:exported="false" />
+        <activity android:name=".LibraryActivity" android:exported="false" />
 
         <activity
             android:name=".MainActivity"
             android:exported="true">
-
             <intent-filter>
-
-                <action
-                    android:name="android.intent.action.MAIN" />
-
-                <category
-                    android:name="android.intent.category.LAUNCHER" />
-
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-
         </activity>
 
         <service
@@ -54,16 +37,10 @@
             android:exported="false"
             android:stopWithTask="false"
             android:foregroundServiceType="mediaPlayback">
-
             <intent-filter>
-
-                <action
-                    android:name="androidx.media3.session.MediaSessionService" />
-
+                <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
-
         </service>
 
     </application>
-
 </manifest>
