@@ -73,10 +73,7 @@ object MediaSessionControls {
                     .add(command(MUTE))
                     .build()
 
-            return MediaSession.ConnectionResult.AcceptedResultBuilder(
-                session,
-                controller
-            )
+            return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(commands)
                 .build()
         }
@@ -102,9 +99,7 @@ object MediaSessionControls {
                 }
             }
 
-            return Futures.immediateFuture(
-                SessionResult(SessionResult.RESULT_SUCCESS)
-            )
+            return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
     }
 }
