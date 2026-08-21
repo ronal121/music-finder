@@ -22,8 +22,6 @@ import android.util.LruCache
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
-import android.text.Editable
-import android.text.TextWatcher
 import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceError
@@ -37,7 +35,6 @@ import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
-import android.graphics.drawable.GradientDrawable
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -45,7 +42,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
 import java.net.URLEncoder
-import org.json.JSONArray
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
@@ -61,7 +57,6 @@ class MainActivity : Activity() {
 
     private lateinit var web: WebView
     private lateinit var query: EditText
-    private lateinit var suggestionsContainer: LinearLayout
     private lateinit var status: TextView
     private lateinit var titleText: TextView
     private lateinit var artistText: TextView
@@ -110,9 +105,6 @@ class MainActivity : Activity() {
     private val downloadExecutor =
         Executors.newSingleThreadExecutor()
 
-    private val suggestionExecutor =
-        Executors.newSingleThreadExecutor()
-
     private val coverCache =
         object : LruCache<String, Bitmap>(
             (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt()
@@ -134,8 +126,6 @@ class MainActivity : Activity() {
     private var receiverRegistered = false
 
     private var searchGeneration = 0
-    private var suggestionGeneration = 0
-    private var suggestionRunnable: Runnable? = null
 
     private var resultPages: List<String> = emptyList()
     private var resultPageIndex = 0
@@ -249,7 +239,6 @@ class MainActivity : Activity() {
         setupWebView()
         setupButtons()
         setupVolumeControl()
-        setupSearchSuggestions()
         applyTurquoiseButtonStyle()
         restoreSearchResults()
 
@@ -335,256 +324,6 @@ class MainActivity : Activity() {
 
         web =
             findViewById(R.id.web)
-    }
-
-    private fun setupSearchSuggestions() {
-
-        query.addTextChangedListener(
-            object : TextWatcher {
-
-                override fun beforeTextChanged(
-                    s: CharSequence?,
-                    start: Int,
-                    count: Int,
-                    after: Int
-                ) {
-                }
-
-                override fun onTextChanged(
-                    s: CharSequence?,
-                    start: Int,
-                    before: Int,
-                    count: Int
-                ) {
-
-                    val text =
-                        s?.toString()?.trim() ?: ""
-
-                    suggestionRunnable?.let {
-                        mainHandler.removeCallbacks(it)
-                    }
-
-                    if (text.length < 2) {
-                        hideSearchSuggestions()
-                        return
-                    }
-
-                    val generation = ++suggestionGeneration
-
-                    val task = Runnable {
-                        fetchSearchSuggestions(
-                            text,
-                            generation
-                        )
-                    }
-
-                    suggestionRunnable = task
-
-                    mainHandler.postDelayed(
-                        task,
-                        350L
-                    )
-                }
-
-                override fun afterTextChanged(
-                    s: Editable?
-                ) {
-                }
-            }
-        )
-
-        query.setOnFocusChangeListener { _, hasFocus ->
-            if (!hasFocus) {
-                mainHandler.postDelayed(
-                    { hideSearchSuggestions() },
-                    180L
-                )
-            }
-        }
-    }
-
-    private fun fetchSearchSuggestions(
-        text: String,
-        generation: Int
-    ) {
-
-        suggestionExecutor.execute {
-
-            var connection: HttpURLConnection? = null
-
-            try {
-
-                val encoded =
-                    URLEncoder.encode(
-                        text,
-                        "UTF-8"
-                    )
-
-                val url =
-                    URL(
-                        "https://suggestqueries.google.com/complete/search" +
-                                "?client=firefox&q=$encoded"
-                    )
-
-                connection =
-                    url.openConnection() as HttpURLConnection
-
-                connection.connectTimeout = 5000
-                connection.readTimeout = 5000
-                connection.requestMethod = "GET"
-                connection.setRequestProperty(
-                    "User-Agent",
-                    "Mozilla/5.0 (Linux; Android 12) " +
-                            "AppleWebKit/537.36 " +
-                            "Chrome/128 Mobile Safari/537.36"
-                )
-
-                val response =
-                    connection.inputStream.bufferedReader().use {
-                        it.readText()
-                    }
-
-                val root =
-                    JSONArray(response)
-
-                val values =
-                    if (root.length() > 1) {
-                        root.optJSONArray(1)
-                    } else {
-                        null
-                    }
-
-                val suggestions =
-                    ArrayList<String>()
-
-                if (values != null) {
-
-                    for (i in 0 until values.length()) {
-
-                        val value =
-                            values.optString(i).trim()
-
-                        if (
-                            value.isNotBlank() &&
-                            !suggestions.contains(value)
-                        ) {
-                            suggestions.add(value)
-                        }
-
-                        if (suggestions.size >= 7) {
-                            break
-                        }
-                    }
-                }
-
-                runOnUiThread {
-
-                    if (
-                        destroyed ||
-                        generation != suggestionGeneration
-                    ) {
-                        return@runOnUiThread
-                    }
-
-                    showSearchSuggestions(
-                        text,
-                        suggestions
-                    )
-                }
-
-            } catch (_: Exception) {
-
-                runOnUiThread {
-
-                    if (
-                        !destroyed &&
-                        generation == suggestionGeneration
-                    ) {
-                        hideSearchSuggestions()
-                    }
-                }
-
-            } finally {
-
-                try {
-                    connection?.disconnect()
-                } catch (_: Exception) {
-                }
-            }
-        }
-    }
-
-    private fun showSearchSuggestions(
-        originalText: String,
-        suggestions: List<String>
-    ) {
-
-        if (destroyed) return
-
-        suggestionsContainer.removeAllViews()
-
-        if (suggestions.isEmpty()) {
-            hideSearchSuggestions()
-            return
-        }
-
-        suggestions.forEach { suggestion ->
-
-            val item =
-                TextView(this).apply {
-
-                    text = "⌕  $suggestion"
-                    textSize = 14f
-                    setTextColor(0xFFFFFFFF.toInt())
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(16, 14, 16, 14)
-                    maxLines = 2
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                    isClickable = true
-                    isFocusable = true
-
-                    background =
-                        GradientDrawable().apply {
-                            setColor(0xFF151D22.toInt())
-                            cornerRadius = 12f
-                        }
-
-                    setOnClickListener {
-
-                        query.setText(suggestion)
-                        query.setSelection(query.text.length)
-                        hideSearchSuggestions()
-                        searchMusic()
-                    }
-                }
-
-            val params =
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    setMargins(0, 3, 0, 3)
-                }
-
-            suggestionsContainer.addView(
-                item,
-                params
-            )
-        }
-
-        suggestionsContainer.visibility =
-            View.VISIBLE
-    }
-
-    private fun hideSearchSuggestions() {
-
-        if (!::suggestionsContainer.isInitialized) {
-            return
-        }
-
-        suggestionsContainer.removeAllViews()
-        suggestionsContainer.visibility =
-            View.GONE
     }
 
     private fun setupVolumeControl() {
@@ -1143,12 +882,6 @@ class MainActivity : Activity() {
     private fun searchMusic() {
 
         if (destroyed) return
-
-        suggestionGeneration++
-        suggestionRunnable?.let {
-            mainHandler.removeCallbacks(it)
-        }
-        hideSearchSuggestions()
 
         val text =
             query.text
@@ -3466,11 +3199,6 @@ class MainActivity : Activity() {
 
         try {
             downloadExecutor.shutdownNow()
-        } catch (_: Exception) {
-        }
-
-        try {
-            suggestionExecutor.shutdownNow()
         } catch (_: Exception) {
         }
 
