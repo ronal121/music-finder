@@ -10,7 +10,6 @@ object ServerConfig {
         "mybia2music.com",
         "musicdel.ir",
         "musics-fa.com",
-        "pro.iraniandj.ir",
         "iranmusic.ir",
         "nicmusic.net",
         "upmusics.com"
@@ -42,9 +41,29 @@ object ServerConfig {
         uri.scheme?.lowercase() in setOf("http", "https") && isMusicHost(uri.host)
     } catch (_: Exception) { false }
 
-    fun searchQuery(input: String): String {
+    private fun expandSearchTerms(input: String): String {
         val q = input.trim().replace(Regex("\\s+"), " ")
-        val expanded = SearchEngine.expandSearchTerms(q)
+        if (q.isBlank()) return q
+        val lower = q.lowercase()
+        val aliases = linkedSetOf(q)
+        fun add(vararg values: String) { values.forEach { aliases += it } }
+
+        if (lower.contains("hard techno") || lower.contains("هارد تکنو")) add("Hard Techno", "هارد تکنو", "HardTechno")
+        if (lower.contains("techno") || lower.contains("تکنو")) add("Techno", "تکنو")
+        if (lower.contains("electronic") || lower.contains("الکترونیک")) add("Electronic", "Electro", "الکترونیک")
+        if (lower.contains("tech house") || lower.contains("تک هاوس")) add("Tech House", "TechHouse", "تک هاوس")
+        if (lower.contains("house") || lower.contains("هاوس")) add("House", "هاوس")
+        if (lower.contains("trance") || lower.contains("ترنس")) add("Trance", "ترنس")
+        if (lower.contains("progressive") || lower.contains("پراگرسیو")) add("Progressive", "پراگرسیو")
+        if (lower.contains("psy") || lower.contains("سای")) add("Psy", "Psytrance", "Psy Trance", "سای ترنس", "سایترنس")
+        if (lower.contains("deep") || lower.contains("دیپ")) add("Deep", "دیپ")
+        if (lower.contains("dark") || lower.contains("دارک")) add("Dark", "دارک")
+
+        return aliases.joinToString(" OR ") { if (it.contains(' ')) "\"$it\"" else it }
+    }
+
+    fun searchQuery(input: String): String {
+        val expanded = expandSearchTerms(input)
         val sites = MUSIC_SITES.joinToString(" OR ") { "site:$it" }
         return "($expanded) ($sites)"
     }
