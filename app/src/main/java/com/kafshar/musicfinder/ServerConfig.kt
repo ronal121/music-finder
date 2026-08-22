@@ -52,7 +52,8 @@ object ServerConfig {
         }
     }
 
-    fun serverForUrl(url: String?): MusicServer? = parseHttpUri(url)?.let { serverFor(it.host) }
+    fun serverForUrl(url: String?): MusicServer? =
+        parseHttpUri(url)?.let { serverFor(uriHost(it)) }
 
     fun isMusicHost(host: String?): Boolean = serverFor(host)?.supportsStreaming == true
 
@@ -62,11 +63,11 @@ object ServerConfig {
     }
 
     fun isAllowedPageUrl(url: String): Boolean = parseHttpUri(url)?.let {
-        isGoogleHost(it.host) || serverFor(it.host)?.enabled == true
+        isGoogleHost(uriHost(it)) || serverFor(uriHost(it))?.enabled == true
     } == true
 
     fun isAllowedMediaUrl(url: String): Boolean = parseHttpUri(url)?.let {
-        val server = serverFor(it.host)
+        val server = serverFor(uriHost(it))
         server?.enabled == true && server.supportsStreaming
     } == true
 
@@ -77,7 +78,7 @@ object ServerConfig {
     }
 
     fun siteName(url: String): String {
-        val host = normalizeHost(parseHttpUri(url)?.host) ?: return "Music"
+        val host = normalizeHost(parseHttpUri(url)?.let(::uriHost)) ?: return "Music"
         return when {
             host == "rozmusic.com" || host.endsWith(".rozmusic.com") -> "RozMusic"
             host == "mybia2music.com" || host.endsWith(".mybia2music.com") -> "Bia2Music"
@@ -100,10 +101,31 @@ object ServerConfig {
         ?.trimEnd('.')
         ?.takeIf { it.isNotBlank() }
 
-    private fun parseHttpUri(url: String): URI? = try {
-        URI(url).takeIf { it.scheme.equals("http", true) && !it.host.isNullOrBlank() }
-            ?: URI(url).takeIf { it.scheme.equals("https", true) && !it.host.isNullOrBlank() }
+    /**
+     * Parses only HTTP(S) URLs and rejects URLs containing user credentials.
+     * Some JVM/Android URI implementations can expose a null `host` for a
+     * syntactically valid authority, so callers use [uriHost] as a fallback.
+     */
+    private fun parseHttpUri(url: String?): URI? = try {
+        if (url.isNullOrBlank()) return null
+        val uri = URI(url.trim())
+        if (!uri.scheme.equals("http", true) && !uri.scheme.equals("https", true)) return null
+        if (uri.rawAuthority.isNullOrBlank() || uri.userInfo != null) return null
+        uri
     } catch (_: Exception) {
         null
+    }
+
+    private fun uriHost(uri: URI): String? {
+        uri.host?.takeIf { it.isNotBlank() }?.let { return it }
+
+        val authority = uri.rawAuthority ?: return null
+        val hostPort = authority.substringAfterLast('@')
+        if (hostPort.startsWith("[")) {
+            val closingBracket = hostPort.indexOf(']')
+            if (closingBracket > 1) return hostPort.substring(1, closingBracket)
+        }
+
+        return hostPort.substringBeforeLast(':').takeIf { it.isNotBlank() }
     }
 }
