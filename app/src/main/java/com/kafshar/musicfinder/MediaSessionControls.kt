@@ -1,7 +1,5 @@
 package com.kafshar.musicfinder
 
-import android.content.Context
-import android.media.AudioManager
 import android.os.Bundle
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -50,7 +48,7 @@ object MediaSessionControls {
             .setDisplayName("خروج از پخش").build()
     )
 
-    fun callback(context: Context): MediaSession.Callback = object : MediaSession.Callback {
+    fun callback(): MediaSession.Callback = object : MediaSession.Callback {
         override fun onConnect(
             session: MediaSession,
             controller: MediaSession.ControllerInfo
@@ -73,33 +71,11 @@ object MediaSessionControls {
             customCommand: SessionCommand,
             args: Bundle
         ): ListenableFuture<SessionResult> {
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-            if (audioManager != null) {
-                when (customCommand.customAction) {
-                    VOLUME_DOWN -> audioManager.adjustStreamVolume(
-                        AudioManager.STREAM_MUSIC,
-                        AudioManager.ADJUST_LOWER,
-                        AudioManager.FLAG_SHOW_UI
-                    )
-                    VOLUME_UP -> audioManager.adjustStreamVolume(
-                        AudioManager.STREAM_MUSIC,
-                        AudioManager.ADJUST_RAISE,
-                        AudioManager.FLAG_SHOW_UI
-                    )
-                    MUTE -> if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                        audioManager.adjustStreamVolume(
-                            AudioManager.STREAM_MUSIC,
-                            AudioManager.ADJUST_TOGGLE_MUTE,
-                            AudioManager.FLAG_SHOW_UI
-                        )
-                    } else {
-                        audioManager.setStreamVolume(
-                            AudioManager.STREAM_MUSIC,
-                            0,
-                            AudioManager.FLAG_SHOW_UI
-                        )
-                    }
-                }
+            val player = session.player
+            when (customCommand.customAction) {
+                VOLUME_DOWN -> player.volume = (player.volume - 0.10f).coerceAtLeast(0f)
+                VOLUME_UP -> player.volume = (player.volume + 0.10f).coerceAtMost(1f)
+                MUTE -> player.volume = if (player.volume > 0f) 0f else 1f
             }
             return Futures.immediateFuture(
                 SessionResult(SessionResult.RESULT_SUCCESS, Bundle.EMPTY)
