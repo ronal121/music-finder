@@ -60,6 +60,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var titleText: TextView
     private lateinit var artistText: TextView
+    private lateinit var lyricsText: TextView
 
     private lateinit var playButton: TextView
     private lateinit var previousButton: TextView
@@ -149,6 +150,9 @@ class MainActivity : Activity() {
     private var lastProgressUpdate = 0L
     private var lastProgressValue = -1
 
+    private var lyricsRequestKey = ""
+    private var lyricsRequestGeneration = 0
+
     private val playerReceiver =
         object : BroadcastReceiver() {
 
@@ -218,6 +222,10 @@ class MainActivity : Activity() {
                         artistText.text = artist
                     }
 
+                    if (title.isNotBlank() && artist.isNotBlank()) {
+                        loadLyricsFor(title, artist)
+                    }
+
                     if (volume in 0..100) {
                         volumeSeekBar.progress = volume
                         volumeText.text = "$volume%"
@@ -265,6 +273,9 @@ class MainActivity : Activity() {
 
         artistText =
             findViewById(R.id.artistText)
+
+        lyricsText =
+            findViewById(R.id.lyricsText)
 
         playButton =
             findViewById(R.id.playButton)
@@ -938,6 +949,7 @@ class MainActivity : Activity() {
 
         vinyl.clearCover()
         vinyl.stopRotation()
+        clearLyrics()
 
         val searchQuery = ServerConfig.searchQuery(text)
 
@@ -1956,6 +1968,8 @@ class MainActivity : Activity() {
         artistText.text =
             "${song.artist} • ${song.site}"
 
+        loadLyricsFor(song.title, song.artist)
+
         currentTimeText.text =
             "00:00"
 
@@ -1980,6 +1994,41 @@ class MainActivity : Activity() {
             song.artist,
             song.cover
         )
+    }
+
+    private fun clearLyrics() {
+        lyricsRequestGeneration++
+        lyricsRequestKey = ""
+        lyricsText.text = ""
+        lyricsText.visibility = View.GONE
+    }
+
+    private fun loadLyricsFor(title: String, artist: String) {
+        val cleanTitle = title.trim()
+        val cleanArtist = artist.trim()
+        if (cleanTitle.isBlank() || cleanArtist.isBlank()) {
+            clearLyrics()
+            return
+        }
+        val key = "${cleanArtist.lowercase()}|${cleanTitle.lowercase()}"
+        if (key == lyricsRequestKey && lyricsText.visibility == View.VISIBLE) return
+        lyricsRequestKey = key
+        val generation = ++lyricsRequestGeneration
+        lyricsText.text = "در حال دریافت متن آهنگ..."
+        lyricsText.visibility = View.VISIBLE
+        imageExecutor.execute {
+            val result = LyricsManager.fetch(cleanArtist, cleanTitle)
+            mainHandler.post {
+                if (destroyed || generation != lyricsRequestGeneration || key != lyricsRequestKey) return@post
+                if (result.found && result.lyrics.isNotBlank()) {
+                    lyricsText.text = result.lyrics
+                    lyricsText.visibility = View.VISIBLE
+                } else {
+                    lyricsText.text = ""
+                    lyricsText.visibility = View.GONE
+                }
+            }
+        }
     }
 
     private fun nextSong() {
