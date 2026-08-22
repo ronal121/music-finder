@@ -1,326 +1,372 @@
 name: Apply Player Fixes
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [ "main" ]
 
 permissions:
   contents: write
 
 jobs:
   fix:
+    if: ${{ !contains(github.event.head_commit.message, '[player-fixes]') }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Apply MusicService fixes
+      - name: Patch player files
         shell: python
         run: |
           from pathlib import Path
 
-          p = Path('app/src/main/java/com/kafshar/musicfinder/MusicService.kt')
-          s = p.read_text()
+          main = Path('app/src/main/java/com/kafshar/musicfinder/MainActivity.kt')
+          service = Path('app/src/main/java/com/kafshar/musicfinder/MusicService.kt')
+          m = main.read_text()
+          s = service.read_text()
 
-          s = s.replace(
-              'import android.content.Intent\n',
-              'import android.content.Intent\nimport android.media.AudioManager\nimport android.os.Handler\nimport android.os.Looper\n'
-          )
-          s = s.replace(
-              'import androidx.media3.session.MediaSession\n',
-              'import androidx.media3.session.MediaSession\nimport androidx.media3.session.MediaStyleNotificationHelper\n'
-          )
+          # Search all configured sites, not the old four-site hardcode.
+          old = '''        val searchQuery =
+            "\\\"$text\\\" " +
+                    "(site:rozmusic.com OR " +
+                    "site:mybia2music.com OR " +
+                    "site:musicdel.ir OR " +
+                    "site:musics-fa.com)"'''
+          m = m.replace(old, '        val searchQuery = ServerConfig.searchQuery(text)', 1)
 
-          s = s.replace(
-              '    private var mediaSession: MediaSession? = null\n\n    @Volatile',
-              '''    private var mediaSession: MediaSession? = null
+          old = '''        val script = """
+            (function() {
+                try {
+                    var links =
+                        document.querySelectorAll("a");'''
+          new = '''        val allowedHostsJs = ServerConfig.MUSIC_SITES.joinToString(",") { "\\\"$it\\\"" }
 
-    private lateinit var audioManager: AudioManager
-    private val syncHandler = Handler(Looper.getMainLooper())
-    private var lastSystemVolume = -1
+        val script = """
+            (function() {
+                try {
+                    var allowedHosts = [$allowedHostsJs];
+                    var links =
+                        document.querySelectorAll("a");'''
+          m = m.replace(old, new, 1)
 
-    private val syncRunnable = object : Runnable {
-        override fun run() {
-            if (released || !::player.isInitialized) return
-            try {
-                val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-                val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).coerceIn(0, max)
-                if (current != lastSystemVolume) {
-                    lastSystemVolume = current
-                    safeSendUpdate()
-                } else {
-                    safeSendUpdate()
+          old = '''                        var allowed =
+                            lower.indexOf("rozmusic.com") >= 0 ||
+                            lower.indexOf("mybia2music.com") >= 0 ||
+                            lower.indexOf("musicdel.ir") >= 0 ||
+                            lower.indexOf("musics-fa.com") >= 0;'''
+          new = '''                        var allowed = false;
+                        for (var h = 0; h < allowedHosts.length; h++) {
+                            if (lower.indexOf(allowedHosts[h]) >= 0) {
+                                allowed = true;
+                                break;
+                            }
+                        }'''
+          m = m.replace(old, new, 1)
+
+          # Active result highlight.
+          m = m.replace('''                setBackgroundColor(
+                    0xFF15151D.toInt()
+                )
+            }''', '''                setBackgroundColor(
+                    0xFF15151D.toInt()
+                )
+                tag = song.url
+            }''', 1)
+
+          marker = '''        row.setOnClickListener {
+
+            val position =
+                songs.indexOfFirst {
+                    it.url == song.url
                 }
-            } catch (_: Exception) {
+
+            if (position >= 0) {
+
+                currentIndex = position
+
+                playSong(song)
             }
-            if (!released) syncHandler.postDelayed(this, 500L)
         }
     }
 
-    @Volatile'''
-          )
+    private fun toggleLibrarySong('''
+          repl = '''        row.setOnClickListener {
 
-          s = s.replace(
-              '        released = false\n\n        player =',
-              '''        released = false
+            val position =
+                songs.indexOfFirst {
+                    it.url == song.url
+                }
 
-        audioManager = getSystemService(AudioManager::class.java)
+            if (position >= 0) {
 
-        player ='''
-          )
+                currentIndex = position
 
-          s = s.replace(
-              '''        val savedVolume =
-            getSharedPreferences(
-                "player_settings",
-                MODE_PRIVATE
-            ).getInt(
-                "volume_percent",
-                80
-            ).coerceIn(0, 100)
+                playSong(song)
+            }
+        }
+    }
 
-        player.volume =
-            savedVolume / 100f
-''',
-              '''        // Playback volume is controlled by Android's STREAM_MUSIC volume.
-        // This makes the hardware volume buttons and the in-app slider use
-        // exactly the same volume source.
-        player.volume = 1f
-'''
-          )
+    private fun updateActiveResultHighlight(url: String) {
+        if (destroyed) return
+        for (i in 0 until resultsContainer.childCount) {
+            val child = resultsContainer.getChildAt(i)
+            val active = url.isNotBlank() && child.tag == url
+            child.setBackgroundColor(if (active) 0xFF244343.toInt() else 0xFF15151D.toInt())
+            child.alpha = if (active) 1f else 0.82f
+        }
+    }
 
-          s = s.replace(
-              '        updateForegroundNotification()\n    }\n\n    /**\n     * ایجاد Notification Channel',
-              '        updateForegroundNotification()\n        syncHandler.post(syncRunnable)\n    }\n\n    /**\n     * ایجاد Notification Channel',
-              1
-          )
+    private fun toggleLibrarySong('''
+          m = m.replace(marker, repl, 1)
+
+          old = '''                val volume =
+                    intent.getIntExtra(
+                        "volume",
+                        -1
+                    )
+
+                runOnUiThread {'''
+          new = '''                val volume =
+                    intent.getIntExtra(
+                        "volume",
+                        -1
+                    )
+
+                val mediaUrl = intent.getStringExtra("mediaUrl") ?: ""
+
+                runOnUiThread {'''
+          m = m.replace(old, new, 1)
+
+          old = '''                    if (volume in 0..100) {
+                        volumeSeekBar.progress = volume
+                        volumeText.text = "$volume%"
+                    }
+                }'''
+          new = '''                    if (volume in 0..100) {
+                        volumeSeekBar.progress = volume
+                        volumeText.text = "$volume%"
+                    }
+
+                    if (mediaUrl.isNotBlank()) updateActiveResultHighlight(mediaUrl)
+                }'''
+          m = m.replace(old, new, 1)
+
+          # Always show the time labels; update the bar as soon as duration is known.
+          old = '''        if (duration > 0) {
+
+            val percent =
+                (
+                    position.toDouble() /
+                            duration.toDouble() *
+                            100.0
+                    )
+                    .toInt()
+                    .coerceIn(0, 100)
+
+            seekBar.progress =
+                percent
+
+            currentTimeText.text =
+                formatTime(position)
+
+            durationText.text =
+                formatTime(duration)
+        }
+
+        playButton.text ='''
+          new = '''        currentTimeText.text = formatTime(position)
+        durationText.text = formatTime(duration)
+
+        if (duration > 0) {
+            seekBar.progress = (position.toDouble() / duration.toDouble() * 100.0).toInt().coerceIn(0, 100)
+        }
+
+        playButton.text ='''
+          m = m.replace(old, new, 1)
+
+          m = m.replace('''        currentSong = song
+        currentAudioUrl = song.url
+
+        titleText.text =''', '''        currentSong = song
+        currentAudioUrl = song.url
+        updateActiveResultHighlight(song.url)
+
+        titleText.text =''', 1)
+
+          # Service owns next/previous so the same-site related queue is used.
+          start = m.find('    private fun nextSong() {')
+          end = m.find('    private fun sendServiceAction(', start)
+          if start >= 0 and end > start:
+              m = m[:start] + '''    private fun nextSong() {
+        if (destroyed) return
+        safelyStartService(Intent(this, MusicService::class.java).apply {
+            action = MusicService.ACTION_NEXT
+        })
+    }
+
+    private fun previousSong() {
+        if (destroyed) return
+        safelyStartService(Intent(this, MusicService::class.java).apply {
+            action = MusicService.ACTION_PREVIOUS
+        })
+    }
+
+''' + m[end:]
+
+          # Preserve search results from earlier searches so the related queue has a larger pool.
+          old = '''        val limited =
+            songs.take(60)
+
+        val data =
+            limited.joinToString("\\n") {'''
+          new = '''        val prefs = getSharedPreferences("search_results", MODE_PRIVATE)
+        val oldData = prefs.getString("songs", "") ?: ""
+        val merged = ArrayList<SongResult>()
+        oldData.split("\\n").forEach { line ->
+            val parts = line.split("|||", limit = 5)
+            if (parts.size == 5 && merged.none { it.url == parts[0] }) {
+                merged.add(SongResult(parts[0], parts[1], parts[2], parts[3], parts[4]))
+            }
+        }
+        songs.forEach { song -> if (merged.none { it.url == song.url }) merged.add(song) }
+
+        val limited = merged.take(200)
+
+        val data =
+            limited.joinToString("\\n") {'''
+          m = m.replace(old, new, 1)
+
+          # MusicService actions for notification transport controls.
+          mconst = 'const val ACTION_SET_VOLUME = "com.kafshar.musicfinder.SET_VOLUME"'
+          s = s.replace(mconst, mconst + '\n        const val ACTION_REWIND_10 = "com.kafshar.musicfinder.REWIND_10"\n        const val ACTION_FORWARD_10 = "com.kafshar.musicfinder.FORWARD_10"', 1)
+
+          s = s.replace('''                ACTION_GET_POSITION -> safeSendUpdate()
+                ACTION_STOP -> {''', '''                ACTION_GET_POSITION -> safeSendUpdate()
+                ACTION_REWIND_10 -> seekRelative(-10_000L)
+                ACTION_FORWARD_10 -> seekRelative(10_000L)
+                ACTION_STOP -> {''', 1)
 
           old = '''    private fun buildForegroundNotification(): Notification {
-
-        val openIntent =
-            createOpenAppPendingIntent()
-
-        val builder =
-            NotificationCompat.Builder(
-                this,
-                NOTIFICATION_CHANNEL_ID
-            )
-                .setSmallIcon(
-                    android.R.drawable.ic_media_play
-                )
-                .setContentTitle(
-                    getCurrentTitle()
-                )
-                .setContentText(
-                    getCurrentArtist()
-                )
-                .setContentIntent(
-                    openIntent
-                )
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setShowWhen(false)
-                .setVisibility(
-                    NotificationCompat.VISIBILITY_PUBLIC
-                )
-                .setCategory(
-                    NotificationCompat.CATEGORY_TRANSPORT
-                )
-                .setPriority(
-                    NotificationCompat.PRIORITY_LOW
-                )
-
-        return builder.build()
+        return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(getCurrentTitle())
+            .setContentText(getCurrentArtist())
+            .setContentIntent(createOpenAppPendingIntent())
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
     }
 '''
-
           new = '''    private fun buildForegroundNotification(): Notification {
-
-        val openIntent = createOpenAppPendingIntent()
-        val pauseIntent = createServicePendingIntent(ACTION_TOGGLE, 301)
-        val previousIntent = createServicePendingIntent(ACTION_PREVIOUS, 302)
-        val nextIntent = createServicePendingIntent(ACTION_NEXT, 303)
-        val rewindIntent = createServicePendingIntent(ACTION_REWIND_10, 304)
-        val forwardIntent = createServicePendingIntent(ACTION_FORWARD_10, 305)
-        val stopIntent = createServicePendingIntent(ACTION_STOP, 306)
-
         val builder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(getCurrentTitle())
             .setContentText(getCurrentArtist())
-            .setContentIntent(openIntent)
-            .setDeleteIntent(stopIntent)
+            .setContentIntent(createOpenAppPendingIntent())
             .setOngoing(false)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(android.R.drawable.ic_media_previous, "Previous", previousIntent)
-            .addAction(android.R.drawable.ic_media_rew, "-10 seconds", rewindIntent)
-            .addAction(
-                if (::player.isInitialized && player.isPlaying)
-                    android.R.drawable.ic_media_pause
-                else
-                    android.R.drawable.ic_media_play,
-                if (::player.isInitialized && player.isPlaying) "Pause" else "Play",
-                pauseIntent
-            )
-            .addAction(android.R.drawable.ic_media_ff, "+10 seconds", forwardIntent)
-            .addAction(android.R.drawable.ic_media_next, "Next", nextIntent)
-
-        mediaSession?.let { session ->
-            builder.setStyle(
-                MediaStyleNotificationHelper.MediaStyle(session)
-                    .setShowActionsInCompactView(intArrayOf(0, 2, 4))
-            )
-        }
+            .addAction(android.R.drawable.ic_media_previous, "Previous", actionPendingIntent(ACTION_PREVIOUS, 301))
+            .addAction(android.R.drawable.ic_media_rew, "-10s", actionPendingIntent(ACTION_REWIND_10, 302))
+            .addAction(if (::player.isInitialized && player.isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+                       if (::player.isInitialized && player.isPlaying) "Pause" else "Play",
+                       actionPendingIntent(ACTION_TOGGLE, 303))
+            .addAction(android.R.drawable.ic_media_ff, "+10s", actionPendingIntent(ACTION_FORWARD_10, 304))
+            .addAction(android.R.drawable.ic_media_next, "Next", actionPendingIntent(ACTION_NEXT, 305))
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", actionPendingIntent(ACTION_STOP, 306))
 
         return builder.build()
     }
 
-    private fun createServicePendingIntent(action: String, requestCode: Int): PendingIntent {
+    private fun actionPendingIntent(action: String, requestCode: Int): PendingIntent {
         val intent = Intent(this, MusicService::class.java).apply { this.action = action }
-        return PendingIntent.getService(
-            this,
-            requestCode,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        return PendingIntent.getService(this, requestCode, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
-'''
-          if old not in s:
-              raise SystemExit('notification block not found')
-          s = s.replace(old, new)
 
-          s = s.replace(
-              '        const val ACTION_SET_VOLUME =\n            "com.kafshar.musicfinder.SET_VOLUME"\n',
-              '''        const val ACTION_SET_VOLUME =
-            "com.kafshar.musicfinder.SET_VOLUME"
-
-        const val ACTION_REWIND_10 =
-            "com.kafshar.musicfinder.REWIND_10"
-
-        const val ACTION_FORWARD_10 =
-            "com.kafshar.musicfinder.FORWARD_10"
-'''
-          )
-
-          s = s.replace(
-              '''                ACTION_SET_VOLUME -> {
-
-                    val volume =
-                        intent.getIntExtra(
-                            EXTRA_VOLUME,
-                            80
-                        ).coerceIn(0, 100)
-
-                    player.volume =
-                        volume / 100f
-
-                    getSharedPreferences(
-                        "player_settings",
-                        MODE_PRIVATE
-                    ).edit()
-                        .putInt(
-                            "volume_percent",
-                            volume
-                        )
-                        .apply()
-
-                    safeSendUpdate()
-                }
-''',
-              '''                ACTION_SET_VOLUME -> {
-                    setSystemMusicVolume(
-                        intent.getIntExtra(EXTRA_VOLUME, 80)
-                    )
-                    safeSendUpdate()
-                }
-
-                ACTION_REWIND_10 -> {
-                    player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
-                    safeSendUpdate()
-                }
-
-                ACTION_FORWARD_10 -> {
-                    val duration = player.duration
-                    val target = player.currentPosition + 10_000L
-                    player.seekTo(if (duration > 0 && duration != C.TIME_UNSET) target.coerceAtMost(duration) else target)
-                    safeSendUpdate()
-                }
-'''
-          )
-
-          marker = '''    private fun seekPercent(
-        percent: Int
-    ) {'''
-          helper = '''    private fun setSystemMusicVolume(percent: Int) {
+    private fun seekRelative(deltaMs: Long) {
         try {
-            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-            val min = if (Build.VERSION.SDK_INT >= 28) audioManager.getStreamMinVolume(AudioManager.STREAM_MUSIC) else 0
-            val safe = percent.coerceIn(0, 100)
-            val index = min + ((max - min) * safe / 100f).toInt()
-            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, index, 0)
-            lastSystemVolume = index
-            getSharedPreferences("player_settings", MODE_PRIVATE).edit()
-                .putInt("volume_percent", safe)
-                .apply()
-        } catch (_: Exception) {
-        }
+            val duration = player.duration
+            val target = player.currentPosition + deltaMs
+            player.seekTo(if (duration > 0 && duration != C.TIME_UNSET) target.coerceIn(0L, duration) else target.coerceAtLeast(0L))
+            safeSendUpdate()
+            updateForegroundNotification()
+        } catch (_: Exception) { }
+    }
+'''
+          s = s.replace(old, new, 1)
+
+          # Broadcast the media URL for active-row highlighting.
+          s = s.replace('''                putExtra("artist", item?.mediaMetadata?.artist?.toString() ?: "")
+                putExtra("volume", volume)''', '''                putExtra("artist", item?.mediaMetadata?.artist?.toString() ?: "")
+                putExtra("mediaUrl", item?.mediaId ?: item?.localConfiguration?.uri?.toString() ?: "")
+                putExtra("volume", volume)''', 1)
+
+          # Same-site related queue, scored by artist/title.
+          start = s.find('    private fun buildRelatedQueue(')
+          end = s.find('    private fun createMediaItem(', start)
+          if start < 0 or end < 0:
+              raise SystemExit('buildRelatedQueue not found')
+          queue = '''    private fun buildRelatedQueue(
+        currentUrl: String,
+        currentTitle: String,
+        currentArtist: String,
+        currentCover: String
+    ): List<MediaItem> {
+        val result = ArrayList<MediaItem>()
+        result.add(createMediaItem(currentUrl, currentTitle, currentArtist, currentCover))
+        try {
+            val data = getSharedPreferences("search_results", MODE_PRIVATE).getString("songs", "") ?: ""
+            if (data.isBlank()) return result
+            val host = try { Uri.parse(currentUrl).host?.lowercase()?.removePrefix("www.") ?: "" } catch (_: Exception) { "" }
+            val candidates = ArrayList<SongResult>()
+            data.split("\\n").forEach { line ->
+                val parts = line.split("|||", limit = 5)
+                if (parts.size < 5) return@forEach
+                val song = SongResult(parts[0], parts[1], parts[2], parts[3], parts[4])
+                if (song.url.isBlank() || song.url == currentUrl || !ServerConfig.isAllowedMediaUrl(song.url)) return@forEach
+                val candidateHost = try { Uri.parse(song.url).host?.lowercase()?.removePrefix("www.") ?: "" } catch (_: Exception) { "" }
+                if (host.isNotBlank() && candidateHost != host) return@forEach
+                candidates.add(song)
+            }
+            if (candidates.isEmpty()) return result
+            val artistWords = currentArtist.lowercase().split(Regex("[\\\\s,،\\\\-_|]+" )).filter { it.length >= 2 }
+            val titleWords = currentTitle.lowercase().split(Regex("[\\\\s,،\\\\-_|]+" )).filter { it.length >= 2 }
+            fun score(song: SongResult): Int {
+                var score = 0
+                val a = song.artist.lowercase()
+                val t = song.title.lowercase()
+                artistWords.forEach { if (a.contains(it)) score += 10 }
+                titleWords.forEach { if (t.contains(it)) score += 6 }
+                return score
+            }
+            candidates.distinctBy { it.url }.sortedByDescending(::score).take(20).forEach { song ->
+                result.add(createMediaItem(song.url, song.title, song.artist, song.cover))
+            }
+        } catch (_: Exception) { }
+        return result
     }
 
 '''
-          if marker not in s:
-              raise SystemExit('seek marker not found')
-          s = s.replace(marker, helper + marker, 1)
+          s = s[:start] + queue + s[end:]
 
-          s = s.replace(
-              '''                    putExtra(
-                        "volume",
-                        (player.volume * 100f)
-                            .toInt()
-                            .coerceIn(0, 100)
-                    )''',
-              '''                    putExtra("volume", getSystemMusicVolumePercent())'''
-          )
+          main.write_text(m)
+          service.write_text(s)
 
-          marker2 = '''    private fun createOpenAppPendingIntent():
-        PendingIntent {'''
-          helper2 = '''    private fun getSystemMusicVolumePercent(): Int {
-        return try {
-            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-            val min = if (Build.VERSION.SDK_INT >= 28) audioManager.getStreamMinVolume(AudioManager.STREAM_MUSIC) else 0
-            val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).coerceIn(min, max)
-            (((current - min).toFloat() / (max - min).coerceAtLeast(1)) * 100f).toInt().coerceIn(0, 100)
-        } catch (_: Exception) {
-            80
-        }
-    }
+      - name: Build before commit
+        run: ./gradlew --no-daemon assembleDebug
 
-'''
-          if marker2 not in s:
-              raise SystemExit('pending marker not found')
-          s = s.replace(marker2, helper2 + marker2, 1)
-
-          s = s.replace(
-              '''    override fun onDestroy() {
-
-        released = true
-''',
-              '''    override fun onDestroy() {
-
-        released = true
-        try { syncHandler.removeCallbacks(syncRunnable) } catch (_: Exception) {}
-'''
-          )
-
-          p.write_text(s)
-
-      - name: Commit changes
+      - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/src/main/java/com/kafshar/musicfinder/MusicService.kt
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt app/src/main/java/com/kafshar/musicfinder/MusicService.kt
           git diff --cached --quiet && exit 0
-          git commit -m "Fix hardware volume sync, progress updates and media notification controls"
+          git commit -m "Fix player controls and related playback [player-fixes]"
           git push
