@@ -18,6 +18,9 @@ jobs:
         with:
           persist-credentials: true
 
+      - name: Restore stable MainActivity base
+        run: git checkout ea22a446f6c20e2dfc587433360aa4230d99d6ca -- app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -28,15 +31,11 @@ jobs:
 
       - name: Commit patched MainActivity
         run: |
-          if git diff --quiet; then
-            echo "UI patch already applied"
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
-            git commit -m "Fix button harmony and add home categories drawer"
-            git push
-          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
+          git diff --cached --quiet || git commit -m "Fix categories drawer and button harmony"
+          git push
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -62,7 +61,6 @@ jobs:
             find app/build/outputs -maxdepth 5 -type f -print || true
             exit 1
           fi
-          printf '%s\n' "${apks[@]}"
           cp "${apks[0]}" build-artifacts/MusicFinder-debug.apk
           ls -lh build-artifacts/MusicFinder-debug.apk
 
