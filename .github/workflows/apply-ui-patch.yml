@@ -1,0 +1,36 @@
+name: Apply Music Finder UI Patch
+
+on:
+  push:
+    branches: [ "feature/musicfinder-overhaul" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Apply UI patch
+        run: python3 tools/apply_ui_patch.py
+
+      - name: Commit patched MainActivity
+        run: |
+          if git diff --quiet; then
+            echo "UI patch already applied"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
+          git commit -m "Fix button harmony and add home categories drawer"
+          git push
