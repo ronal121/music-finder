@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,6 +25,22 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+
+      - name: Apply player fixes
+        run: python3 tools/apply_player_fixes.py
+
+      - name: Commit player fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt app/src/main/java/com/kafshar/musicfinder/MusicService.kt
+          if git diff --cached --quiet; then
+            echo "No player changes to commit"
+          else
+            git commit -m "Apply player controls and related playback fixes [player-fixes]"
+            git push
+          fi
 
       - name: Build APK
         run: gradle assembleDebug
