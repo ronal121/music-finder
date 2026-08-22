@@ -32,11 +32,11 @@ object MediaSessionControls {
         CommandButton.Builder(CommandButton.ICON_STOP).setPlayerCommand(Player.COMMAND_STOP).setDisplayName("خروج از پخش").build()
     )
 
-    fun callback(): MediaSession.Callback = object : MediaSession.Callback {
+    fun callback(context: Context): MediaSession.Callback = object : MediaSession.Callback {
         override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
             val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
                 .add(command(VOLUME_DOWN)).add(command(VOLUME_UP)).add(command(MUTE)).build()
-            return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+            return MediaSession.ConnectionResult.AcceptedResultBuilder()
                 .setAvailableSessionCommands(commands).build()
         }
 
@@ -46,7 +46,7 @@ object MediaSessionControls {
             customCommand: SessionCommand,
             args: Bundle
         ): ListenableFuture<SessionResult> {
-            val audioManager = session.player.context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
             if (audioManager != null) {
                 when (customCommand.customAction) {
                     VOLUME_DOWN -> audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
