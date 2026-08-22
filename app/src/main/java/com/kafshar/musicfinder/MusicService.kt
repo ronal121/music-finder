@@ -31,6 +31,7 @@ class MusicService : MediaSessionService() {
         const val ACTION_NEXT = "com.kafshar.musicfinder.NEXT"
         const val ACTION_PREVIOUS = "com.kafshar.musicfinder.PREVIOUS"
         const val ACTION_SEEK_PERCENT = "com.kafshar.musicfinder.SEEK_PERCENT"
+        const val ACTION_GET_POSITION = "com.kafshar.musicfinder.GET_POSITION"
         const val ACTION_SET_VOLUME = "com.kafshar.musicfinder.SET_VOLUME"
         const val ACTION_MUTE = "com.kafshar.musicfinder.MUTE"
         const val ACTION_UNMUTE = "com.kafshar.musicfinder.UNMUTE"
@@ -63,7 +64,7 @@ class MusicService : MediaSessionService() {
     private val ticker = object : Runnable {
         override fun run() {
             if (released) return
-            safeSendUpdate()
+            publish()
             updateNotification()
             handler.postDelayed(this, 500L)
         }
@@ -102,7 +103,9 @@ class MusicService : MediaSessionService() {
                 val uri = player.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty()
                 if (uri.isNotBlank() && uri == retryingUri && retryCount < 1) {
                     retryCount++
-                    handler.postDelayed({ if (!released) loadAndPlay(uri, getCurrentTitle(), getCurrentArtist(), "") }, 700L)
+                    handler.postDelayed({
+                        if (!released) loadAndPlay(uri, getCurrentTitle(), getCurrentArtist(), "")
+                    }, 700L)
                 } else if (uri.isNotBlank()) {
                     player.pause()
                 }
@@ -125,9 +128,14 @@ class MusicService : MediaSessionService() {
         val metadata = MediaMetadata.Builder()
             .setTitle(title.ifBlank { "Music Finder" })
             .setArtist(artist.ifBlank { "Unknown Artist" })
-            .apply { if (cover.isNotBlank()) setArtworkUri(android.net.Uri.parse(cover)) }
+            .apply {
+                if (cover.isNotBlank()) setArtworkUri(android.net.Uri.parse(cover))
+            }
             .build()
-        val item = MediaItem.Builder().setUri(url).setMediaMetadata(metadata).build()
+        val item = MediaItem.Builder()
+            .setUri(url)
+            .setMediaMetadata(metadata)
+            .build()
         player.setMediaItem(item)
         player.prepare()
         player.play()
@@ -140,7 +148,9 @@ class MusicService : MediaSessionService() {
             val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
             val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
             (current * 100 / max).coerceIn(0, 100)
-        } catch (_: Exception) { previousVolume.coerceIn(0, 100) }
+        } catch (_: Exception) {
+            previousVolume.coerceIn(0, 100)
+        }
     }
 
     private fun setVolumePercent(percent: Int) {
@@ -152,7 +162,8 @@ class MusicService : MediaSessionService() {
             if (value > 0) previousVolume = value
             muted = value == 0
             if (!muted) player.volume = 1f
-        } catch (_: Exception) { }
+        } catch (_: Exception) {
+        }
         publish()
     }
 
@@ -160,7 +171,10 @@ class MusicService : MediaSessionService() {
         val current = currentVolumePercent()
         if (current > 0) previousVolume = current
         muted = true
-        try { audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0) } catch (_: Exception) { }
+        try {
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+        } catch (_: Exception) {
+        }
         publish()
     }
 
@@ -174,7 +188,9 @@ class MusicService : MediaSessionService() {
         try {
             if (released || !::player.isInitialized) return
             val intent = Intent(UPDATE).setPackage(packageName).apply {
-                val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
+                val duration = player.duration.takeIf {
+                    it != C.TIME_UNSET && it > 0L
+                } ?: 0L
                 putExtra("position", player.currentPosition.coerceAtLeast(0L))
                 putExtra("duration", duration)
                 putExtra("isPlaying", player.isPlaying)
@@ -183,17 +199,25 @@ class MusicService : MediaSessionService() {
                 putExtra(EXTRA_MUTED, muted)
                 putExtra(EXTRA_TITLE, getCurrentTitle())
                 putExtra(EXTRA_ARTIST, getCurrentArtist())
-                putExtra(EXTRA_URL, player.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty())
+                putExtra(
+                    EXTRA_URL,
+                    player.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty()
+                )
                 if (error != null) putExtra("error", error)
             }
             sendBroadcast(intent)
-        } catch (_: Exception) { }
+        } catch (_: Exception) {
+        }
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getSystemService(NotificationManager::class.java)?.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Music Playback", NotificationManager.IMPORTANCE_LOW).apply {
+                NotificationChannel(
+                    CHANNEL_ID,
+                    "Music Playback",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
                     description = "Music playback controls"
                     setShowBadge(false)
                     lockscreenVisibility = Notification.VISIBILITY_PUBLIC
@@ -206,9 +230,16 @@ class MusicService : MediaSessionService() {
         try {
             val notification = buildNotification()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-            } else startForeground(NOTIFICATION_ID, notification)
-        } catch (_: Exception) { }
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (_: Exception) {
+        }
     }
 
     private fun buildNotification(): Notification {
@@ -224,56 +255,133 @@ class MusicService : MediaSessionService() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(android.R.drawable.ic_media_previous, "Previous", actionPendingIntent(ACTION_PREVIOUS, 301))
-            .addAction(if (::player.isInitialized && player.isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play, if (::player.isInitialized && player.isPlaying) "Pause" else "Play", actionPendingIntent(ACTION_TOGGLE, 303))
-            .addAction(android.R.drawable.ic_media_next, "Next", actionPendingIntent(ACTION_NEXT, 305))
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", actionPendingIntent(ACTION_STOP, 306))
-        if (session != null) builder.setStyle(MediaStyleNotificationHelper.MediaStyle(session).setShowActionsInCompactView(0, 1, 2))
+            .addAction(
+                android.R.drawable.ic_media_previous,
+                "Previous",
+                actionPendingIntent(ACTION_PREVIOUS, 301)
+            )
+            .addAction(
+                if (::player.isInitialized && player.isPlaying) android.R.drawable.ic_media_pause
+                else android.R.drawable.ic_media_play,
+                if (::player.isInitialized && player.isPlaying) "Pause" else "Play",
+                actionPendingIntent(ACTION_TOGGLE, 303)
+            )
+            .addAction(
+                android.R.drawable.ic_media_next,
+                "Next",
+                actionPendingIntent(ACTION_NEXT, 305)
+            )
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                "Stop",
+                actionPendingIntent(ACTION_STOP, 306)
+            )
+        if (session != null) {
+            builder.setStyle(
+                MediaStyleNotificationHelper.MediaStyle(session)
+                    .setShowActionsInCompactView(0, 1, 2)
+            )
+        }
         return builder.build()
     }
 
     private fun updateNotification() {
         if (released) return
-        try { getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, buildNotification()) } catch (_: Exception) { }
+        try {
+            getSystemService(NotificationManager::class.java)
+                ?.notify(NOTIFICATION_ID, buildNotification())
+        } catch (_: Exception) {
+        }
     }
 
-    private fun actionPendingIntent(action: String, requestCode: Int): PendingIntent = PendingIntent.getService(
-        this, requestCode, Intent(this, MusicService::class.java).setAction(action),
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    )
+    private fun actionPendingIntent(action: String, requestCode: Int): PendingIntent =
+        PendingIntent.getService(
+            this,
+            requestCode,
+            Intent(this, MusicService::class.java).setAction(action),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
-    private fun openAppPendingIntent(): PendingIntent = PendingIntent.getActivity(
-        this, 100, Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    )
+    private fun openAppPendingIntent(): PendingIntent =
+        PendingIntent.getActivity(
+            this,
+            100,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
     private fun seekRelative(delta: Long) {
         try {
             val duration = player.duration
             val target = player.currentPosition + delta
-            player.seekTo(if (duration > 0 && duration != C.TIME_UNSET) target.coerceIn(0, duration) else target.coerceAtLeast(0))
+            player.seekTo(
+                if (duration > 0 && duration != C.TIME_UNSET) {
+                    target.coerceIn(0, duration)
+                } else {
+                    target.coerceAtLeast(0)
+                }
+            )
             publish()
-        } catch (_: Exception) { }
+        } catch (_: Exception) {
+        }
     }
 
-    private fun getCurrentTitle(): String = try { player.currentMediaItem?.mediaMetadata?.title?.toString()?.takeIf { it.isNotBlank() } ?: "Music Finder" } catch (_: Exception) { "Music Finder" }
-    private fun getCurrentArtist(): String = try { player.currentMediaItem?.mediaMetadata?.artist?.toString()?.takeIf { it.isNotBlank() } ?: "KAFSHAR" } catch (_: Exception) { "KAFSHAR" }
+    private fun getCurrentTitle(): String = try {
+        player.currentMediaItem?.mediaMetadata?.title?.toString()
+            ?.takeIf { it.isNotBlank() } ?: "Music Finder"
+    } catch (_: Exception) {
+        "Music Finder"
+    }
+
+    private fun getCurrentArtist(): String = try {
+        player.currentMediaItem?.mediaMetadata?.artist?.toString()
+            ?.takeIf { it.isNotBlank() } ?: "KAFSHAR"
+    } catch (_: Exception) {
+        "KAFSHAR"
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try {
             when (intent?.action) {
                 ACTION_PLAY -> {
                     val url = intent.getStringExtra(EXTRA_URL).orEmpty()
-                    if (url.isNotBlank()) loadAndPlay(url, intent.getStringExtra(EXTRA_TITLE).orEmpty(), intent.getStringExtra(EXTRA_ARTIST).orEmpty(), intent.getStringExtra(EXTRA_COVER).orEmpty()) else player.play()
+                    if (url.isNotBlank()) {
+                        loadAndPlay(
+                            url,
+                            intent.getStringExtra(EXTRA_TITLE).orEmpty(),
+                            intent.getStringExtra(EXTRA_ARTIST).orEmpty(),
+                            intent.getStringExtra(EXTRA_COVER).orEmpty()
+                        )
+                    } else {
+                        player.play()
+                    }
                 }
                 ACTION_PAUSE -> player.pause()
                 ACTION_TOGGLE -> {
                     val url = intent.getStringExtra(EXTRA_URL).orEmpty()
-                    if (url.isNotBlank() && player.currentMediaItem?.localConfiguration?.uri?.toString() != url) loadAndPlay(url, intent.getStringExtra(EXTRA_TITLE).orEmpty(), intent.getStringExtra(EXTRA_ARTIST).orEmpty(), intent.getStringExtra(EXTRA_COVER).orEmpty())
-                    else if (player.isPlaying) player.pause() else player.play()
+                    if (
+                        url.isNotBlank() &&
+                        player.currentMediaItem?.localConfiguration?.uri?.toString() != url
+                    ) {
+                        loadAndPlay(
+                            url,
+                            intent.getStringExtra(EXTRA_TITLE).orEmpty(),
+                            intent.getStringExtra(EXTRA_ARTIST).orEmpty(),
+                            intent.getStringExtra(EXTRA_COVER).orEmpty()
+                        )
+                    } else if (player.isPlaying) {
+                        player.pause()
+                    } else {
+                        player.play()
+                    }
                 }
-                ACTION_STOP -> { player.stop(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }
+                ACTION_STOP -> {
+                    player.stop()
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
                 ACTION_NEXT -> player.seekToNextMediaItem()
                 ACTION_PREVIOUS -> player.seekToPreviousMediaItem()
                 ACTION_REWIND_10 -> seekRelative(-10_000L)
@@ -281,26 +389,42 @@ class MusicService : MediaSessionService() {
                 ACTION_SEEK_PERCENT -> {
                     val p = intent.getFloatExtra(EXTRA_PERCENT, 0f).coerceIn(0f, 100f)
                     val d = player.duration
-                    if (d > 0 && d != C.TIME_UNSET) player.seekTo((d * p / 100f).toLong())
+                    if (d > 0 && d != C.TIME_UNSET) {
+                        player.seekTo((d * p / 100f).toLong())
+                    }
                 }
-                ACTION_SET_VOLUME -> setVolumePercent(intent.getIntExtra(EXTRA_VOLUME, currentVolumePercent()))
+                ACTION_GET_POSITION -> publish()
+                ACTION_SET_VOLUME -> {
+                    setVolumePercent(
+                        intent.getIntExtra(EXTRA_VOLUME, currentVolumePercent())
+                    )
+                }
                 ACTION_MUTE -> mute()
                 ACTION_UNMUTE -> unmute()
             }
-        } catch (_: Exception) { }
+        } catch (_: Exception) {
+        }
         publish()
         updateNotification()
         return START_STICKY
     }
 
-    override fun onTaskRemoved(rootIntent: Intent?) { super.onTaskRemoved(rootIntent) }
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+    }
 
     override fun onDestroy() {
         released = true
         handler.removeCallbacksAndMessages(null)
-        try { mediaSession?.release() } catch (_: Exception) { }
+        try {
+            mediaSession?.release()
+        } catch (_: Exception) {
+        }
         mediaSession = null
-        try { player.release() } catch (_: Exception) { }
+        try {
+            player.release()
+        } catch (_: Exception) {
+        }
         super.onDestroy()
     }
 
