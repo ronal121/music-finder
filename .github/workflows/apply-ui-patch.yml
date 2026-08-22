@@ -1,19 +1,22 @@
 name: Apply Music Finder UI Patch
 
 on:
-  push:
-    branches: [ "feature/musicfinder-overhaul" ]
   workflow_dispatch:
 
 permissions:
   contents: write
 
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false
+
 jobs:
-  patch:
+  patch-and-build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -27,10 +30,46 @@ jobs:
         run: |
           if git diff --quiet; then
             echo "UI patch already applied"
-            exit 0
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
+            git commit -m "Fix button harmony and add home categories drawer"
+            git push
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
-          git commit -m "Fix button harmony and add home categories drawer"
-          git push
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build Debug APK
+        run: gradle --no-daemon --stacktrace assembleDebug
+
+      - name: Verify APK output
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build-artifacts
+          mapfile -t apks < <(find app/build/outputs -type f -name '*.apk' -print)
+          if [ "${#apks[@]}" -eq 0 ]; then
+            echo "ERROR: No APK was produced."
+            find app/build/outputs -maxdepth 5 -type f -print || true
+            exit 1
+          fi
+          printf '%s\n' "${apks[@]}"
+          cp "${apks[0]}" build-artifacts/MusicFinder-debug.apk
+          ls -lh build-artifacts/MusicFinder-debug.apk
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: musicfinder-debug-apk
+          path: build-artifacts/MusicFinder-debug.apk
+          if-no-files-found: error
+          retention-days: 14
