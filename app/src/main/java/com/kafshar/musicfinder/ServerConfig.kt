@@ -30,46 +30,52 @@ object ServerConfig {
     )
 
     val MUSIC_HOSTS: Set<String>
-        get() = SERVERS.filter { it.enabled }
-            .flatMap { listOf(it.domain) + it.mediaHosts }
+        get() = SERVERS.asSequence()
+            .filter { it.enabled }
+            .flatMap { sequenceOf(it.domain) + it.mediaHosts.asSequence() }
             .mapNotNull(::normalizeHost)
             .toSet()
 
     val MUSIC_SITES: List<String>
-        get() = SERVERS.filter { it.enabled && it.supportsSearch }
+        get() = SERVERS.asSequence()
+            .filter { it.enabled && it.supportsSearch }
             .sortedByDescending { it.priority }
             .map { it.domain }
+            .toList()
 
     fun serverFor(host: String?): MusicServer? {
         val normalized = normalizeHost(host) ?: return null
+
         return SERVERS.firstOrNull { server ->
-            normalized == server.domain ||
-                normalized.endsWith(".${server.domain}") ||
-                server.mediaHosts.any {
-                    val mediaHost = normalizeHost(it)
-                    mediaHost != null && (normalized == mediaHost || normalized.endsWith(".$mediaHost"))
+            val domain = normalizeHost(server.domain) ?: return@firstOrNull false
+            hostMatchesDomain(normalized, domain) ||
+                server.mediaHosts.any { mediaHost ->
+                    normalizeHost(mediaHost)?.let { hostMatchesDomain(normalized, it) } == true
                 }
         }
     }
 
     fun serverForUrl(url: String?): MusicServer? =
-        parseHttpUri(url)?.let { serverFor(uriHost(it)) }
+        extractHttpHost(url)?.let(::serverFor)
 
-    fun isMusicHost(host: String?): Boolean = serverFor(host)?.supportsStreaming == true
+    fun isMusicHost(host: String?): Boolean =
+        serverFor(host)?.supportsStreaming == true
 
     fun isGoogleHost(host: String?): Boolean {
         val normalized = normalizeHost(host) ?: return false
-        return normalized == GOOGLE_HOST || normalized.endsWith(".$GOOGLE_HOST")
+        return hostMatchesDomain(normalized, GOOGLE_HOST)
     }
 
-    fun isAllowedPageUrl(url: String): Boolean = parseHttpUri(url)?.let {
-        isGoogleHost(uriHost(it)) || serverFor(uriHost(it))?.enabled == true
-    } == true
+    fun isAllowedPageUrl(url: String): Boolean {
+        val host = extractHttpHost(url) ?: return false
+        return isGoogleHost(host) || serverFor(host)?.enabled == true
+    }
 
-    fun isAllowedMediaUrl(url: String): Boolean = parseHttpUri(url)?.let {
-        val server = serverFor(uriHost(it))
-        server?.enabled == true && server.supportsStreaming
-    } == true
+    fun isAllowedMediaUrl(url: String): Boolean {
+        val host = extractHttpHost(url) ?: return false
+        val server = serverFor(host) ?: return false
+        return server.enabled && server.supportsStreaming
+    }
 
     fun searchQuery(song: String): String {
         val normalized = SearchEngine.normalizeQuery(song)
@@ -78,20 +84,26 @@ object ServerConfig {
     }
 
     fun siteName(url: String): String {
-        val host = normalizeHost(parseHttpUri(url)?.let(::uriHost)) ?: return "Music"
+        val host = extractHttpHost(url) ?: return "Music"
         return when {
-            host == "rozmusic.com" || host.endsWith(".rozmusic.com") -> "RozMusic"
-            host == "mybia2music.com" || host.endsWith(".mybia2music.com") -> "Bia2Music"
-            host == "musicdel.ir" || host.endsWith(".musicdel.ir") -> "Musicdel"
-            host == "musics-fa.com" || host.endsWith(".musics-fa.com") -> "Musics-FA"
-            host == "pro.iraniandj.ir" || host.endsWith(".pro.iraniandj.ir") -> "IranianDJ Pro"
-            host == "worldofmusic.ir" || host.endsWith(".worldofmusic.ir") -> "World of Music"
-            host == "iranmusic.ir" || host.endsWith(".iranmusic.ir") -> "IranMusic"
-            host == "nicmusic.net" || host.endsWith(".nicmusic.net") -> "NicMusic"
-            host == "upmusics.com" || host.endsWith(".upmusics.com") -> "UpMusics"
-            host == GOOGLE_HOST || host.endsWith(".$GOOGLE_HOST") -> "Google"
+            hostMatchesDomain(host, "rozmusic.com") -> "RozMusic"
+            hostMatchesDomain(host, "mybia2music.com") -> "Bia2Music"
+            hostMatchesDomain(host, "musicdel.ir") -> "Musicdel"
+            hostMatchesDomain(host, "musics-fa.com") -> "Musics-FA"
+            hostMatchesDomain(host, "pro.iraniandj.ir") -> "IranianDJ Pro"
+            hostMatchesDomain(host, "worldofmusic.ir") -> "World of Music"
+            hostMatchesDomain(host, "iranmusic.ir") -> "IranMusic"
+            hostMatchesDomain(host, "nicmusic.net") -> "NicMusic"
+            hostMatchesDomain(host, "upmusics.com") -> "UpMusics"
+            hostMatchesDomain(host, GOOGLE_HOST) -> "Google"
             else -> "Music"
         }
+    }
+
+    private fun hostMatchesDomain(host: String, domain: String): Boolean {
+        val normalizedHost = normalizeHost(host) ?: return false
+        val normalizedDomain = normalizeHost(domain) ?: return false
+        return normalizedHost == normalizedDomain || normalizedHost.endsWith(".$normalizedDomain")
     }
 
     private fun normalizeHost(host: String?): String? = host
@@ -102,30 +114,42 @@ object ServerConfig {
         ?.takeIf { it.isNotBlank() }
 
     /**
-     * Parses only HTTP(S) URLs and rejects URLs containing user credentials.
-     * Some JVM/Android URI implementations can expose a null `host` for a
-     * syntactically valid authority, so callers use [uriHost] as a fallback.
+     * Parses only HTTP(S) URLs and returns a normalized hostname.
+     * Credentials, unsupported schemes, missing authorities and malformed
+     * URLs are rejected before whitelist matching.
      */
-    private fun parseHttpUri(url: String?): URI? = try {
+    private fun extractHttpHost(url: String?): String? {
         if (url.isNullOrBlank()) return null
-        val uri = URI(url.trim())
-        if (!uri.scheme.equals("http", true) && !uri.scheme.equals("https", true)) return null
-        if (uri.rawAuthority.isNullOrBlank() || uri.userInfo != null) return null
-        uri
-    } catch (_: Exception) {
-        null
-    }
 
-    private fun uriHost(uri: URI): String? {
-        uri.host?.takeIf { it.isNotBlank() }?.let { return it }
-
-        val authority = uri.rawAuthority ?: return null
-        val hostPort = authority.substringAfterLast('@')
-        if (hostPort.startsWith("[")) {
-            val closingBracket = hostPort.indexOf(']')
-            if (closingBracket > 1) return hostPort.substring(1, closingBracket)
+        val uri = try {
+            URI(url.trim())
+        } catch (_: Exception) {
+            return null
         }
 
-        return hostPort.substringBeforeLast(':').takeIf { it.isNotBlank() }
+        val scheme = uri.scheme?.lowercase() ?: return null
+        if (scheme != "http" && scheme != "https") return null
+        if (uri.userInfo != null || uri.rawAuthority.isNullOrBlank()) return null
+
+        val host = uri.host?.takeIf { it.isNotBlank() }
+            ?: fallbackHost(uri.rawAuthority)
+            ?: return null
+
+        return normalizeHost(host)
+    }
+
+    private fun fallbackHost(authority: String): String? {
+        val withoutCredentials = authority.substringAfterLast('@')
+
+        if (withoutCredentials.startsWith("[")) {
+            val closingBracket = withoutCredentials.indexOf(']')
+            if (closingBracket > 1) {
+                return withoutCredentials.substring(1, closingBracket)
+            }
+            return null
+        }
+
+        return withoutCredentials.substringBeforeLast(':')
+            .takeIf { it.isNotBlank() }
     }
 }
