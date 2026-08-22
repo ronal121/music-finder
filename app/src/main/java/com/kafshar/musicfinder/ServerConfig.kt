@@ -2,7 +2,7 @@ package com.kafshar.musicfinder
 
 import android.net.Uri
 
-/** Central registry for search/playback sources. */
+/** Declarative registry for search/playback sources and their trust policy. */
 data class MusicServer(
     val domain: String,
     val priority: Int,
@@ -10,7 +10,8 @@ data class MusicServer(
     val supportsSearch: Boolean = true,
     val supportsStreaming: Boolean = true,
     val trusted: Boolean = true,
-    val parserType: String = "web"
+    val parserType: String = "web",
+    val mediaHosts: Set<String> = emptySet()
 )
 
 object ServerConfig {
@@ -29,7 +30,7 @@ object ServerConfig {
     )
 
     val MUSIC_HOSTS: Set<String>
-        get() = SERVERS.filter { it.enabled }.map { it.domain }.toSet()
+        get() = SERVERS.filter { it.enabled }.flatMap { listOf(it.domain) + it.mediaHosts }.toSet()
 
     val MUSIC_SITES: List<String>
         get() = SERVERS.filter { it.enabled && it.supportsSearch }
@@ -38,8 +39,14 @@ object ServerConfig {
 
     fun serverFor(host: String?): MusicServer? {
         val normalized = normalizeHost(host) ?: return null
-        return SERVERS.firstOrNull { normalized == it.domain || normalized.endsWith(".${it.domain}") }
+        return SERVERS.firstOrNull { server ->
+            normalized == server.domain ||
+                normalized.endsWith(".${server.domain}") ||
+                server.mediaHosts.any { normalized == it || normalized.endsWith(".$it") }
+        }
     }
+
+    fun serverForUrl(url: String?): MusicServer? = parseHttpUri(url.orEmpty())?.let { serverFor(it.host) }
 
     fun isMusicHost(host: String?): Boolean = serverFor(host)?.supportsStreaming == true
 
@@ -52,9 +59,9 @@ object ServerConfig {
         isGoogleHost(it.host) || serverFor(it.host)?.enabled == true
     } == true
 
-    /** Media may be served from a configured music host. CDN expansion can be added per server later. */
     fun isAllowedMediaUrl(url: String): Boolean = parseHttpUri(url)?.let {
-        serverFor(it.host)?.supportsStreaming == true
+        val server = serverFor(it.host)
+        server?.enabled == true && server.supportsStreaming
     } == true
 
     fun searchQuery(song: String): String {
