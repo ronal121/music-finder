@@ -17,6 +17,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.text.method.ScrollingMovementMethod
 import android.provider.MediaStore
 import android.util.LruCache
 import android.view.Gravity
@@ -276,6 +277,7 @@ class MainActivity : Activity() {
 
         lyricsText =
             findViewById(R.id.lyricsText)
+        lyricsText.movementMethod = ScrollingMovementMethod()
 
         playButton =
             findViewById(R.id.playButton)
@@ -2011,7 +2013,7 @@ class MainActivity : Activity() {
             return
         }
         val key = "${cleanArtist.lowercase()}|${cleanTitle.lowercase()}"
-        if (key == lyricsRequestKey && lyricsText.visibility == View.VISIBLE) return
+        if (key == lyricsRequestKey) return
         lyricsRequestKey = key
         val generation = ++lyricsRequestGeneration
         lyricsText.text = "در حال دریافت متن آهنگ..."
