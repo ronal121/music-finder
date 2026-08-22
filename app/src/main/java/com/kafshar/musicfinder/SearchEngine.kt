@@ -35,12 +35,9 @@ object SearchEngine {
     fun correctedQuery(input: String): String {
         val normalized = normalizeQuery(input)
         commonTypos[normalized]?.let { return it }
-
-        val words = normalized.split(' ').filter { it.isNotBlank() }
-        if (words.isEmpty()) return normalized
-        return words.joinToString(" ") { word ->
-            commonTypos[word] ?: word
-        }
+        return normalized.split(' ')
+            .filter { it.isNotBlank() }
+            .joinToString(" ") { commonTypos[it] ?: it }
     }
 
     fun suggestions(input: String): List<String> {
@@ -86,39 +83,23 @@ object SearchEngine {
 
         val exactWords = leftWords.intersect(rightWords.toSet()).size
         val wordScore = exactWords.toDouble() / maxOf(leftWords.size, rightWords.size)
-        val fuzzyScore = leftWords.maxOfOrNull { lw ->
-            rightWords.maxOfOrNull { rw -> levenshteinSimilarity(lw, rw) } ?: 0
-        } ?: 0
+        val fuzzyScore = leftWords.maxOfOrNull { lw -> rightWords.maxOfOrNull { rw -> levenshteinSimilarity(lw, rw) } ?: 0 } ?: 0
         return maxOf((wordScore * 100).toInt(), fuzzyScore)
     }
 
     private fun levenshteinSimilarity(a: String, b: String): Int {
         if (a == b) return 100
         if (a.isEmpty() || b.isEmpty()) return 0
-        val previous = IntArray(b.length + 1) { it }
-        var current = IntArray(b.length + 1)
-        for (i in a.indices) {
-            current[0] = i + 1
-            for (j in b.indices) {
-                val cost = if (a[i] == b[j]) 0 else 1
-                current[j + 1] = minOf(
-                    current[j] + 1,
-                    previous[j + 1] + 1,
-                    previous[j] + cost
-                )
-            }
-            val swap = previous
-            current = swap
-            for (j in b.indices) current[j + 1] = 0
-            for (j in 0..b.length) current[j] = Int.MAX_VALUE
-        }
-        // Use a compact, allocation-safe implementation for the final score.
         var row = IntArray(b.length + 1) { it }
         for (i in a.indices) {
             val next = IntArray(b.length + 1)
             next[0] = i + 1
             for (j in b.indices) {
-                next[j + 1] = minOf(next[j] + 1, row[j + 1] + 1, row[j] + if (a[i] == b[j]) 0 else 1)
+                next[j + 1] = minOf(
+                    next[j] + 1,
+                    row[j + 1] + 1,
+                    row[j] + if (a[i] == b[j]) 0 else 1
+                )
             }
             row = next
         }
