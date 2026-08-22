@@ -1,0 +1,326 @@
+name: Apply Player Fixes
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply MusicService fixes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          p = Path('app/src/main/java/com/kafshar/musicfinder/MusicService.kt')
+          s = p.read_text()
+
+          s = s.replace(
+              'import android.content.Intent\n',
+              'import android.content.Intent\nimport android.media.AudioManager\nimport android.os.Handler\nimport android.os.Looper\n'
+          )
+          s = s.replace(
+              'import androidx.media3.session.MediaSession\n',
+              'import androidx.media3.session.MediaSession\nimport androidx.media3.session.MediaStyleNotificationHelper\n'
+          )
+
+          s = s.replace(
+              '    private var mediaSession: MediaSession? = null\n\n    @Volatile',
+              '''    private var mediaSession: MediaSession? = null
+
+    private lateinit var audioManager: AudioManager
+    private val syncHandler = Handler(Looper.getMainLooper())
+    private var lastSystemVolume = -1
+
+    private val syncRunnable = object : Runnable {
+        override fun run() {
+            if (released || !::player.isInitialized) return
+            try {
+                val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).coerceIn(0, max)
+                if (current != lastSystemVolume) {
+                    lastSystemVolume = current
+                    safeSendUpdate()
+                } else {
+                    safeSendUpdate()
+                }
+            } catch (_: Exception) {
+            }
+            if (!released) syncHandler.postDelayed(this, 500L)
+        }
+    }
+
+    @Volatile'''
+          )
+
+          s = s.replace(
+              '        released = false\n\n        player =',
+              '''        released = false
+
+        audioManager = getSystemService(AudioManager::class.java)
+
+        player ='''
+          )
+
+          s = s.replace(
+              '''        val savedVolume =
+            getSharedPreferences(
+                "player_settings",
+                MODE_PRIVATE
+            ).getInt(
+                "volume_percent",
+                80
+            ).coerceIn(0, 100)
+
+        player.volume =
+            savedVolume / 100f
+''',
+              '''        // Playback volume is controlled by Android's STREAM_MUSIC volume.
+        // This makes the hardware volume buttons and the in-app slider use
+        // exactly the same volume source.
+        player.volume = 1f
+'''
+          )
+
+          s = s.replace(
+              '        updateForegroundNotification()\n    }\n\n    /**\n     * ایجاد Notification Channel',
+              '        updateForegroundNotification()\n        syncHandler.post(syncRunnable)\n    }\n\n    /**\n     * ایجاد Notification Channel',
+              1
+          )
+
+          old = '''    private fun buildForegroundNotification(): Notification {
+
+        val openIntent =
+            createOpenAppPendingIntent()
+
+        val builder =
+            NotificationCompat.Builder(
+                this,
+                NOTIFICATION_CHANNEL_ID
+            )
+                .setSmallIcon(
+                    android.R.drawable.ic_media_play
+                )
+                .setContentTitle(
+                    getCurrentTitle()
+                )
+                .setContentText(
+                    getCurrentArtist()
+                )
+                .setContentIntent(
+                    openIntent
+                )
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setShowWhen(false)
+                .setVisibility(
+                    NotificationCompat.VISIBILITY_PUBLIC
+                )
+                .setCategory(
+                    NotificationCompat.CATEGORY_TRANSPORT
+                )
+                .setPriority(
+                    NotificationCompat.PRIORITY_LOW
+                )
+
+        return builder.build()
+    }
+'''
+
+          new = '''    private fun buildForegroundNotification(): Notification {
+
+        val openIntent = createOpenAppPendingIntent()
+        val pauseIntent = createServicePendingIntent(ACTION_TOGGLE, 301)
+        val previousIntent = createServicePendingIntent(ACTION_PREVIOUS, 302)
+        val nextIntent = createServicePendingIntent(ACTION_NEXT, 303)
+        val rewindIntent = createServicePendingIntent(ACTION_REWIND_10, 304)
+        val forwardIntent = createServicePendingIntent(ACTION_FORWARD_10, 305)
+        val stopIntent = createServicePendingIntent(ACTION_STOP, 306)
+
+        val builder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(getCurrentTitle())
+            .setContentText(getCurrentArtist())
+            .setContentIntent(openIntent)
+            .setDeleteIntent(stopIntent)
+            .setOngoing(false)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .addAction(android.R.drawable.ic_media_previous, "Previous", previousIntent)
+            .addAction(android.R.drawable.ic_media_rew, "-10 seconds", rewindIntent)
+            .addAction(
+                if (::player.isInitialized && player.isPlaying)
+                    android.R.drawable.ic_media_pause
+                else
+                    android.R.drawable.ic_media_play,
+                if (::player.isInitialized && player.isPlaying) "Pause" else "Play",
+                pauseIntent
+            )
+            .addAction(android.R.drawable.ic_media_ff, "+10 seconds", forwardIntent)
+            .addAction(android.R.drawable.ic_media_next, "Next", nextIntent)
+
+        mediaSession?.let { session ->
+            builder.setStyle(
+                MediaStyleNotificationHelper.MediaStyle(session)
+                    .setShowActionsInCompactView(intArrayOf(0, 2, 4))
+            )
+        }
+
+        return builder.build()
+    }
+
+    private fun createServicePendingIntent(action: String, requestCode: Int): PendingIntent {
+        val intent = Intent(this, MusicService::class.java).apply { this.action = action }
+        return PendingIntent.getService(
+            this,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+'''
+          if old not in s:
+              raise SystemExit('notification block not found')
+          s = s.replace(old, new)
+
+          s = s.replace(
+              '        const val ACTION_SET_VOLUME =\n            "com.kafshar.musicfinder.SET_VOLUME"\n',
+              '''        const val ACTION_SET_VOLUME =
+            "com.kafshar.musicfinder.SET_VOLUME"
+
+        const val ACTION_REWIND_10 =
+            "com.kafshar.musicfinder.REWIND_10"
+
+        const val ACTION_FORWARD_10 =
+            "com.kafshar.musicfinder.FORWARD_10"
+'''
+          )
+
+          s = s.replace(
+              '''                ACTION_SET_VOLUME -> {
+
+                    val volume =
+                        intent.getIntExtra(
+                            EXTRA_VOLUME,
+                            80
+                        ).coerceIn(0, 100)
+
+                    player.volume =
+                        volume / 100f
+
+                    getSharedPreferences(
+                        "player_settings",
+                        MODE_PRIVATE
+                    ).edit()
+                        .putInt(
+                            "volume_percent",
+                            volume
+                        )
+                        .apply()
+
+                    safeSendUpdate()
+                }
+''',
+              '''                ACTION_SET_VOLUME -> {
+                    setSystemMusicVolume(
+                        intent.getIntExtra(EXTRA_VOLUME, 80)
+                    )
+                    safeSendUpdate()
+                }
+
+                ACTION_REWIND_10 -> {
+                    player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                    safeSendUpdate()
+                }
+
+                ACTION_FORWARD_10 -> {
+                    val duration = player.duration
+                    val target = player.currentPosition + 10_000L
+                    player.seekTo(if (duration > 0 && duration != C.TIME_UNSET) target.coerceAtMost(duration) else target)
+                    safeSendUpdate()
+                }
+'''
+          )
+
+          marker = '''    private fun seekPercent(
+        percent: Int
+    ) {'''
+          helper = '''    private fun setSystemMusicVolume(percent: Int) {
+        try {
+            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+            val min = if (Build.VERSION.SDK_INT >= 28) audioManager.getStreamMinVolume(AudioManager.STREAM_MUSIC) else 0
+            val safe = percent.coerceIn(0, 100)
+            val index = min + ((max - min) * safe / 100f).toInt()
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, index, 0)
+            lastSystemVolume = index
+            getSharedPreferences("player_settings", MODE_PRIVATE).edit()
+                .putInt("volume_percent", safe)
+                .apply()
+        } catch (_: Exception) {
+        }
+    }
+
+'''
+          if marker not in s:
+              raise SystemExit('seek marker not found')
+          s = s.replace(marker, helper + marker, 1)
+
+          s = s.replace(
+              '''                    putExtra(
+                        "volume",
+                        (player.volume * 100f)
+                            .toInt()
+                            .coerceIn(0, 100)
+                    )''',
+              '''                    putExtra("volume", getSystemMusicVolumePercent())'''
+          )
+
+          marker2 = '''    private fun createOpenAppPendingIntent():
+        PendingIntent {'''
+          helper2 = '''    private fun getSystemMusicVolumePercent(): Int {
+        return try {
+            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+            val min = if (Build.VERSION.SDK_INT >= 28) audioManager.getStreamMinVolume(AudioManager.STREAM_MUSIC) else 0
+            val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).coerceIn(min, max)
+            (((current - min).toFloat() / (max - min).coerceAtLeast(1)) * 100f).toInt().coerceIn(0, 100)
+        } catch (_: Exception) {
+            80
+        }
+    }
+
+'''
+          if marker2 not in s:
+              raise SystemExit('pending marker not found')
+          s = s.replace(marker2, helper2 + marker2, 1)
+
+          s = s.replace(
+              '''    override fun onDestroy() {
+
+        released = true
+''',
+              '''    override fun onDestroy() {
+
+        released = true
+        try { syncHandler.removeCallbacks(syncRunnable) } catch (_: Exception) {}
+'''
+          )
+
+          p.write_text(s)
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/kafshar/musicfinder/MusicService.kt
+          git diff --cached --quiet && exit 0
+          git commit -m "Fix hardware volume sync, progress updates and media notification controls"
+          git push
