@@ -2,81 +2,69 @@ package com.kafshar.musicfinder
 
 import android.net.Uri
 
-object ServerConfig {
+/** Central registry for search/playback sources. */
+data class MusicServer(
+    val domain: String,
+    val priority: Int,
+    val enabled: Boolean = true,
+    val supportsSearch: Boolean = true,
+    val supportsStreaming: Boolean = true,
+    val trusted: Boolean = true,
+    val parserType: String = "web"
+)
 
+object ServerConfig {
     const val GOOGLE_HOST = "google.com"
 
-    val MUSIC_HOSTS = setOf(
-        "rozmusic.com",
-        "mybia2music.com",
-        "musicdel.ir",
-        "musics-fa.com",
-        "pro.iraniandj.ir",
-        "worldofmusic.ir",
-        "iranmusic.ir",
-        "nicmusic.net",
-        "upmusics.com"
+    val SERVERS: List<MusicServer> = listOf(
+        MusicServer("rozmusic.com", 100),
+        MusicServer("mybia2music.com", 95),
+        MusicServer("musicdel.ir", 95),
+        MusicServer("musics-fa.com", 90),
+        MusicServer("pro.iraniandj.ir", 90),
+        MusicServer("worldofmusic.ir", 85),
+        MusicServer("iranmusic.ir", 85),
+        MusicServer("nicmusic.net", 80),
+        MusicServer("upmusics.com", 80)
     )
 
-    val MUSIC_SITES = listOf(
-        "rozmusic.com",
-        "mybia2music.com",
-        "musicdel.ir",
-        "musics-fa.com",
-        "pro.iraniandj.ir",
-        "worldofmusic.ir",
-        "iranmusic.ir",
-        "nicmusic.net",
-        "upmusics.com"
-    )
+    val MUSIC_HOSTS: Set<String>
+        get() = SERVERS.filter { it.enabled }.map { it.domain }.toSet()
 
-    fun isMusicHost(host: String?): Boolean {
-        if (host.isNullOrBlank()) return false
-        val normalized = host.lowercase().removePrefix("www.")
-        return MUSIC_HOSTS.any { allowed ->
-            normalized == allowed || normalized.endsWith(".$allowed")
-        }
+    val MUSIC_SITES: List<String>
+        get() = SERVERS.filter { it.enabled && it.supportsSearch }
+            .sortedByDescending { it.priority }
+            .map { it.domain }
+
+    fun serverFor(host: String?): MusicServer? {
+        val normalized = normalizeHost(host) ?: return null
+        return SERVERS.firstOrNull { normalized == it.domain || normalized.endsWith(".${it.domain}") }
     }
 
+    fun isMusicHost(host: String?): Boolean = serverFor(host)?.supportsStreaming == true
+
     fun isGoogleHost(host: String?): Boolean {
-        if (host.isNullOrBlank()) return false
-        val normalized = host.lowercase().removePrefix("www.")
+        val normalized = normalizeHost(host) ?: return false
         return normalized == GOOGLE_HOST || normalized.endsWith(".$GOOGLE_HOST")
     }
 
-    fun isAllowedPageUrl(url: String): Boolean {
-        return try {
-            val uri = Uri.parse(url)
-            val scheme = uri.scheme?.lowercase()
-            if (scheme != "http" && scheme != "https") return false
-            isGoogleHost(uri.host) || isMusicHost(uri.host)
-        } catch (_: Exception) {
-            false
-        }
-    }
+    fun isAllowedPageUrl(url: String): Boolean = parseHttpUri(url)?.let {
+        isGoogleHost(it.host) || serverFor(it.host)?.enabled == true
+    } == true
 
-    fun isAllowedMediaUrl(url: String): Boolean {
-        return try {
-            val uri = Uri.parse(url)
-            val scheme = uri.scheme?.lowercase()
-            if (scheme != "http" && scheme != "https") return false
-            isMusicHost(uri.host)
-        } catch (_: Exception) {
-            false
-        }
-    }
+    /** Media may be served from a configured music host. CDN expansion can be added per server later. */
+    fun isAllowedMediaUrl(url: String): Boolean = parseHttpUri(url)?.let {
+        serverFor(it.host)?.supportsStreaming == true
+    } == true
 
     fun searchQuery(song: String): String {
-        val normalized = song.trim().replace(Regex("\\s+"), " ")
+        val normalized = SearchEngine.normalizeQuery(song)
         val sites = MUSIC_SITES.joinToString(" OR ") { "site:$it" }
-        return "\"$normalized\" ($sites)"
+        return if (sites.isBlank()) normalized else "\"$normalized\" ($sites)"
     }
 
     fun siteName(url: String): String {
-        val host = try {
-            Uri.parse(url).host?.lowercase()?.removePrefix("www.") ?: ""
-        } catch (_: Exception) { "" }
-
+        val host = normalizeHost(Uri.parse(url).host) ?: return "Music"
         return when {
             host == "rozmusic.com" || host.endsWith(".rozmusic.com") -> "RozMusic"
             host == "mybia2music.com" || host.endsWith(".mybia2music.com") -> "Bia2Music"
@@ -87,7 +75,13 @@ object ServerConfig {
             host == "iranmusic.ir" || host.endsWith(".iranmusic.ir") -> "IranMusic"
             host == "nicmusic.net" || host.endsWith(".nicmusic.net") -> "NicMusic"
             host == "upmusics.com" || host.endsWith(".upmusics.com") -> "UpMusics"
-            else -> "سایت موسیقی"
+            else -> "Music"
         }
     }
+
+    private fun normalizeHost(host: String?): String? = host?.trim()?.lowercase()?.removePrefix("www.")?.takeIf { it.isNotBlank() }
+
+    private fun parseHttpUri(url: String): Uri? = try {
+        Uri.parse(url).takeIf { it.scheme.equals("http", true) || it.scheme.equals("https", true) }
+    } catch (_: Exception) { null }
 }
