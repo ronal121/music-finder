@@ -27,6 +27,12 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Unit tests
+        run: gradle --no-daemon --stacktrace test
+
+      - name: Lint
+        run: gradle --no-daemon --stacktrace lint
+
       - name: Build APK
         run: gradle --no-daemon --stacktrace assembleDebug
 
