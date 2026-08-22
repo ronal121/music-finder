@@ -343,6 +343,7 @@ class MusicService : MediaSessionService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
         try {
             when (intent?.action) {
                 ACTION_PLAY -> {
