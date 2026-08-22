@@ -1,6 +1,6 @@
 package com.kafshar.musicfinder
 
-import android.net.Uri
+import java.net.URI
 
 /** Declarative registry for search/playback sources and their trust policy. */
 data class MusicServer(
@@ -30,7 +30,10 @@ object ServerConfig {
     )
 
     val MUSIC_HOSTS: Set<String>
-        get() = SERVERS.filter { it.enabled }.flatMap { listOf(it.domain) + it.mediaHosts }.toSet()
+        get() = SERVERS.filter { it.enabled }
+            .flatMap { listOf(it.domain) + it.mediaHosts }
+            .mapNotNull(::normalizeHost)
+            .toSet()
 
     val MUSIC_SITES: List<String>
         get() = SERVERS.filter { it.enabled && it.supportsSearch }
@@ -42,11 +45,14 @@ object ServerConfig {
         return SERVERS.firstOrNull { server ->
             normalized == server.domain ||
                 normalized.endsWith(".${server.domain}") ||
-                server.mediaHosts.any { normalized == it || normalized.endsWith(".$it") }
+                server.mediaHosts.any {
+                    val mediaHost = normalizeHost(it)
+                    mediaHost != null && (normalized == mediaHost || normalized.endsWith(".$mediaHost"))
+                }
         }
     }
 
-    fun serverForUrl(url: String?): MusicServer? = parseHttpUri(url.orEmpty())?.let { serverFor(it.host) }
+    fun serverForUrl(url: String?): MusicServer? = parseHttpUri(url)?.let { serverFor(it.host) }
 
     fun isMusicHost(host: String?): Boolean = serverFor(host)?.supportsStreaming == true
 
@@ -71,7 +77,7 @@ object ServerConfig {
     }
 
     fun siteName(url: String): String {
-        val host = normalizeHost(Uri.parse(url).host) ?: return "Music"
+        val host = normalizeHost(parseHttpUri(url)?.host) ?: return "Music"
         return when {
             host == "rozmusic.com" || host.endsWith(".rozmusic.com") -> "RozMusic"
             host == "mybia2music.com" || host.endsWith(".mybia2music.com") -> "Bia2Music"
@@ -82,13 +88,22 @@ object ServerConfig {
             host == "iranmusic.ir" || host.endsWith(".iranmusic.ir") -> "IranMusic"
             host == "nicmusic.net" || host.endsWith(".nicmusic.net") -> "NicMusic"
             host == "upmusics.com" || host.endsWith(".upmusics.com") -> "UpMusics"
+            host == GOOGLE_HOST || host.endsWith(".$GOOGLE_HOST") -> "Google"
             else -> "Music"
         }
     }
 
-    private fun normalizeHost(host: String?): String? = host?.trim()?.lowercase()?.removePrefix("www.")?.takeIf { it.isNotBlank() }
+    private fun normalizeHost(host: String?): String? = host
+        ?.trim()
+        ?.lowercase()
+        ?.removePrefix("www.")
+        ?.trimEnd('.')
+        ?.takeIf { it.isNotBlank() }
 
-    private fun parseHttpUri(url: String): Uri? = try {
-        Uri.parse(url).takeIf { it.scheme.equals("http", true) || it.scheme.equals("https", true) }
-    } catch (_: Exception) { null }
+    private fun parseHttpUri(url: String): URI? = try {
+        URI(url).takeIf { it.scheme.equals("http", true) && !it.host.isNullOrBlank() }
+            ?: URI(url).takeIf { it.scheme.equals("https", true) && !it.host.isNullOrBlank() }
+    } catch (_: Exception) {
+        null
+    }
 }
