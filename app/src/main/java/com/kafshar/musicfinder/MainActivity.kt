@@ -196,6 +196,8 @@ class MainActivity : Activity() {
                         -1
                     )
 
+                val mediaUrl = intent.getStringExtra("mediaUrl") ?: ""
+
                 runOnUiThread {
 
                     if (destroyed) {
@@ -220,6 +222,8 @@ class MainActivity : Activity() {
                         volumeSeekBar.progress = volume
                         volumeText.text = "$volume%"
                     }
+
+                    if (mediaUrl.isNotBlank()) updateActiveResultHighlight(mediaUrl)
                 }
             }
         }
@@ -935,12 +939,7 @@ class MainActivity : Activity() {
         vinyl.clearCover()
         vinyl.stopRotation()
 
-        val searchQuery =
-            "\"$text\" " +
-                    "(site:rozmusic.com OR " +
-                    "site:mybia2music.com OR " +
-                    "site:musicdel.ir OR " +
-                    "site:musics-fa.com)"
+        val searchQuery = ServerConfig.searchQuery(text)
 
         val encoded =
             try {
@@ -1023,9 +1022,12 @@ class MainActivity : Activity() {
 
         if (generation <= 0) return
 
+        val allowedHostsJs = ServerConfig.MUSIC_SITES.joinToString(",") { "\"$it\"" }
+
         val script = """
             (function() {
                 try {
+                    var allowedHosts = [$allowedHostsJs];
                     var links =
                         document.querySelectorAll("a");
 
@@ -1045,11 +1047,13 @@ class MainActivity : Activity() {
                         var lower =
                             href.toLowerCase();
 
-                        var allowed =
-                            lower.indexOf("rozmusic.com") >= 0 ||
-                            lower.indexOf("mybia2music.com") >= 0 ||
-                            lower.indexOf("musicdel.ir") >= 0 ||
-                            lower.indexOf("musics-fa.com") >= 0;
+                        var allowed = false;
+                        for (var h = 0; h < allowedHosts.length; h++) {
+                            if (lower.indexOf(allowedHosts[h]) >= 0) {
+                                allowed = true;
+                                break;
+                            }
+                        }
 
                         if (
                             allowed &&
@@ -1534,6 +1538,7 @@ class MainActivity : Activity() {
                 setBackgroundColor(
                     0xFF15151D.toInt()
                 )
+                tag = song.url
             }
 
         val params =
@@ -1701,6 +1706,16 @@ class MainActivity : Activity() {
 
                 playSong(song)
             }
+        }
+    }
+
+    private fun updateActiveResultHighlight(url: String) {
+        if (destroyed) return
+        for (i in 0 until resultsContainer.childCount) {
+            val child = resultsContainer.getChildAt(i)
+            val active = url.isNotBlank() && child.tag == url
+            child.setBackgroundColor(if (active) 0xFF244343.toInt() else 0xFF15151D.toInt())
+            child.alpha = if (active) 1f else 0.82f
         }
     }
 
@@ -1933,6 +1948,7 @@ class MainActivity : Activity() {
 
         currentSong = song
         currentAudioUrl = song.url
+        updateActiveResultHighlight(song.url)
 
         titleText.text =
             song.title
@@ -1967,65 +1983,17 @@ class MainActivity : Activity() {
     }
 
     private fun nextSong() {
-
-        if (songs.isEmpty()) return
-
-        currentIndex =
-            if (randomMode) {
-
-                if (songs.size == 1) {
-
-                    0
-
-                } else {
-
-                    var next: Int
-
-                    do {
-
-                        next =
-                            (0 until songs.size).random()
-
-                    } while (
-                        next == currentIndex
-                    )
-
-                    next
-                }
-
-            } else {
-
-                if (currentIndex < 0) {
-
-                    0
-
-                } else {
-
-                    (
-                        currentIndex + 1
-                    ) % songs.size
-                }
-            }
-
-        playSong(
-            songs[currentIndex]
-        )
+        if (destroyed) return
+        safelyStartService(Intent(this, MusicService::class.java).apply {
+            action = MusicService.ACTION_NEXT
+        })
     }
 
     private fun previousSong() {
-
-        if (songs.isEmpty()) return
-
-        currentIndex =
-            if (currentIndex <= 0) {
-                songs.lastIndex
-            } else {
-                currentIndex - 1
-            }
-
-        playSong(
-            songs[currentIndex]
-        )
+        if (destroyed) return
+        safelyStartService(Intent(this, MusicService::class.java).apply {
+            action = MusicService.ACTION_PREVIOUS
+        })
     }
 
     private fun sendServiceAction(
@@ -2115,25 +2083,11 @@ class MainActivity : Activity() {
 
         if (destroyed) return
 
+        currentTimeText.text = formatTime(position)
+        durationText.text = formatTime(duration)
+
         if (duration > 0) {
-
-            val percent =
-                (
-                    position.toDouble() /
-                            duration.toDouble() *
-                            100.0
-                    )
-                    .toInt()
-                    .coerceIn(0, 100)
-
-            seekBar.progress =
-                percent
-
-            currentTimeText.text =
-                formatTime(position)
-
-            durationText.text =
-                formatTime(duration)
+            seekBar.progress = (position.toDouble() / duration.toDouble() * 100.0).toInt().coerceIn(0, 100)
         }
 
         playButton.text =
@@ -2988,8 +2942,18 @@ class MainActivity : Activity() {
 
         if (destroyed) return
 
-        val limited =
-            songs.take(60)
+        val prefs = getSharedPreferences("search_results", MODE_PRIVATE)
+        val oldData = prefs.getString("songs", "") ?: ""
+        val merged = ArrayList<SongResult>()
+        oldData.split("\n").forEach { line ->
+            val parts = line.split("|||", limit = 5)
+            if (parts.size == 5 && merged.none { it.url == parts[0] }) {
+                merged.add(SongResult(parts[0], parts[1], parts[2], parts[3], parts[4]))
+            }
+        }
+        songs.forEach { song -> if (merged.none { it.url == song.url }) merged.add(song) }
+
+        val limited = merged.take(200)
 
         val data =
             limited.joinToString("\n") {

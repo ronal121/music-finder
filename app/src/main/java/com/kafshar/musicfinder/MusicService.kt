@@ -34,6 +34,8 @@ class MusicService : MediaSessionService() {
         const val ACTION_SEEK_PERCENT = "com.kafshar.musicfinder.SEEK_PERCENT"
         const val ACTION_GET_POSITION = "com.kafshar.musicfinder.GET_POSITION"
         const val ACTION_SET_VOLUME = "com.kafshar.musicfinder.SET_VOLUME"
+        const val ACTION_REWIND_10 = "com.kafshar.musicfinder.REWIND_10"
+        const val ACTION_FORWARD_10 = "com.kafshar.musicfinder.FORWARD_10"
 
         const val EXTRA_URL = "url"
         const val EXTRA_TITLE = "title"
@@ -164,18 +166,48 @@ class MusicService : MediaSessionService() {
     }
 
     private fun buildForegroundNotification(): Notification {
-        return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(getCurrentTitle())
             .setContentText(getCurrentArtist())
             .setContentIntent(createOpenAppPendingIntent())
-            .setOngoing(true)
+            .setOngoing(false)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
+            .addAction(android.R.drawable.ic_media_previous, "Previous", actionPendingIntent(ACTION_PREVIOUS, 301))
+            .addAction(android.R.drawable.ic_media_rew, "-10s", actionPendingIntent(ACTION_REWIND_10, 302))
+            .addAction(
+                if (::player.isInitialized && player.isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+                if (::player.isInitialized && player.isPlaying) "Pause" else "Play",
+                actionPendingIntent(ACTION_TOGGLE, 303)
+            )
+            .addAction(android.R.drawable.ic_media_ff, "+10s", actionPendingIntent(ACTION_FORWARD_10, 304))
+            .addAction(android.R.drawable.ic_media_next, "Next", actionPendingIntent(ACTION_NEXT, 305))
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", actionPendingIntent(ACTION_STOP, 306))
+        return builder.build()
+    }
+
+    private fun actionPendingIntent(action: String, requestCode: Int): PendingIntent {
+        val intent = Intent(this, MusicService::class.java).apply { this.action = action }
+        return PendingIntent.getService(
+            this,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun seekRelative(deltaMs: Long) {
+        try {
+            val duration = player.duration
+            val target = player.currentPosition + deltaMs
+            player.seekTo(if (duration > 0 && duration != C.TIME_UNSET) target.coerceIn(0L, duration) else target.coerceAtLeast(0L))
+            safeSendUpdate()
+            updateForegroundNotification()
+        } catch (_: Exception) { }
     }
 
     private fun getCurrentTitle(): String {
@@ -239,6 +271,8 @@ class MusicService : MediaSessionService() {
                     )
                 }
                 ACTION_GET_POSITION -> safeSendUpdate()
+                ACTION_REWIND_10 -> seekRelative(-10_000L)
+                ACTION_FORWARD_10 -> seekRelative(10_000L)
                 ACTION_STOP -> {
                     try { player.stop() } catch (_: Exception) { }
                     safeSendUpdate()
@@ -342,52 +376,35 @@ class MusicService : MediaSessionService() {
     ): List<MediaItem> {
         val result = ArrayList<MediaItem>()
         result.add(createMediaItem(currentUrl, currentTitle, currentArtist, currentCover))
-
         try {
-            val data = getSharedPreferences("search_results", MODE_PRIVATE)
-                .getString("songs", "") ?: ""
+            val data = getSharedPreferences("search_results", MODE_PRIVATE).getString("songs", "") ?: ""
             if (data.isBlank()) return result
-
+            val host = try { Uri.parse(currentUrl).host?.lowercase()?.removePrefix("www.") ?: "" } catch (_: Exception) { "" }
             val candidates = ArrayList<SongResult>()
-            data.split("\n").take(60).forEach { line ->
+            data.split("\n").forEach { line ->
                 val parts = line.split("|||", limit = 5)
                 if (parts.size < 5) return@forEach
                 val song = SongResult(parts[0], parts[1], parts[2], parts[3], parts[4])
-                if (song.url.isNotBlank() && song.url != currentUrl &&
-                    ServerConfig.isAllowedMediaUrl(song.url)) candidates.add(song)
+                if (song.url.isBlank() || song.url == currentUrl || !ServerConfig.isAllowedMediaUrl(song.url)) return@forEach
+                val candidateHost = try { Uri.parse(song.url).host?.lowercase()?.removePrefix("www.") ?: "" } catch (_: Exception) { "" }
+                if (host.isNotBlank() && candidateHost != host) return@forEach
+                candidates.add(song)
             }
             if (candidates.isEmpty()) return result
-
-            val artistWords = currentArtist.lowercase()
-                .split(Regex("[\\s,،\\-_|]+"))
-                .filter { it.length >= 2 }
-            val titleWords = currentTitle.lowercase()
-                .split(Regex("[\\s,،\\-_|]+"))
-                .filter { it.length >= 2 }
-
-            val sameArtist = candidates.filter { song ->
-                val artist = song.artist.lowercase()
-                artistWords.any { artist.contains(it) }
+            val artistWords = currentArtist.lowercase().split(Regex("[\\s,،\\-_|]+" )).filter { it.length >= 2 }
+            val titleWords = currentTitle.lowercase().split(Regex("[\\s,،\\-_|]+" )).filter { it.length >= 2 }
+            fun score(song: SongResult): Int {
+                var score = 0
+                val a = song.artist.lowercase()
+                val t = song.title.lowercase()
+                artistWords.forEach { if (a.contains(it)) score += 10 }
+                titleWords.forEach { if (t.contains(it)) score += 6 }
+                return score
             }
-            val sameTitle = candidates.filter { song ->
-                val title = song.title.lowercase()
-                titleWords.any { title.contains(it) }
+            candidates.distinctBy { it.url }.sortedByDescending(::score).take(20).forEach { song ->
+                result.add(createMediaItem(song.url, song.title, song.artist, song.cover))
             }
-
-            val source = when {
-                sameArtist.size >= 2 -> sameArtist
-                sameTitle.isNotEmpty() -> sameTitle
-                sameArtist.isNotEmpty() -> sameArtist
-                else -> candidates
-            }
-
-            source.distinctBy { it.url }.shuffled()
-                .take(minOf(15, source.size))
-                .forEach { song ->
-                    result.add(createMediaItem(song.url, song.title, song.artist, song.cover))
-                }
         } catch (_: Exception) { }
-
         return result
     }
 
@@ -450,6 +467,7 @@ class MusicService : MediaSessionService() {
                 putExtra("duration", duration)
                 putExtra("title", item?.mediaMetadata?.title?.toString() ?: "")
                 putExtra("artist", item?.mediaMetadata?.artist?.toString() ?: "")
+                putExtra("mediaUrl", item?.mediaId ?: item?.localConfiguration?.uri?.toString() ?: "")
                 putExtra("volume", volume)
             }
             if (volume != lastReportedVolume) lastReportedVolume = volume
