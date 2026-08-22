@@ -16,4 +16,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh workflow run apply-player-fixes.yml --ref main
+          gh workflow run run-player-fixes.yml --repo ronal121/music-finder --ref main
