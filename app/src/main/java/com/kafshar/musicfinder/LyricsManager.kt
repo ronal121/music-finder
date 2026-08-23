@@ -12,41 +12,50 @@ object LyricsManager {
     data class Result(val found: Boolean, val lyrics: String = "")
 
     fun fetch(artist: String, title: String): Result {
-        val cleanArtist = artist.trim()
-        val cleanTitle = title.trim()
-        if (cleanArtist.isBlank() || cleanTitle.isBlank()) return Result(false)
+        val a = normalize(artist)
+        val t = normalize(title)
+        if (a.isBlank() || t.isBlank()) return Result(false)
 
-        val direct = request("https://lrclib.net/api/get?artist_name=${encode(cleanArtist)}&track_name=${encode(cleanTitle)}")
-        if (direct.found) return direct
+        // 1) Fast public lyrics database. This is only a fallback; site text is preferred below.
+        request("https://lrclib.net/api/get?artist_name=${encode(a)}&track_name=${encode(t)}").let {
+            if (it.found) return it
+        }
+        searchLrcLib(a, t).let {
+            if (it.found) return it
+        }
 
-        val searchResult = search(cleanArtist, cleanTitle)
-        if (searchResult.found) return searchResult
+        // 2) Search the music sites already registered in ServerConfig and extract
+        // the actual lyrics block from the returned HTML.
+        fetchFromMusicSites(a, t).let {
+            if (it.found) return it
+        }
 
-        return fetchFromMusicSites(cleanArtist, cleanTitle)
+        return Result(false)
     }
 
-    private fun search(artist: String, title: String): Result {
-        val url = "https://lrclib.net/api/search?track_name=${encode(title)}&artist_name=${encode(artist)}"
+    private fun searchLrcLib(artist: String, title: String): Result {
         var connection: HttpURLConnection? = null
         return try {
+            val url = "https://lrclib.net/api/search?track_name=${encode(title)}&artist_name=${encode(artist)}"
             connection = open(url, "application/json")
             if (connection.responseCode !in 200..299) return Result(false)
             val body = connection.inputStream.bufferedReader().use { it.readText() }
             val array = JSONArray(body)
+            var best: Result? = null
+            var bestScore = 0
             for (i in 0 until array.length()) {
                 val item = array.optJSONObject(i) ?: continue
-                val itemArtist = item.optString("artistName").trim()
-                val itemTitle = item.optString("trackName").trim()
-                val plain = item.optString("plainLyrics").trim()
-                val synced = item.optString("syncedLyrics").trim()
-                val artistMatch = itemArtist.equals(artist, true) || itemArtist.contains(artist, true) || artist.contains(itemArtist, true)
-                val titleMatch = itemTitle.equals(title, true) || itemTitle.contains(title, true) || title.contains(itemTitle, true)
-                if (artistMatch && titleMatch) {
-                    val lyrics = if (plain.isNotBlank()) plain else synced
-                    if (lyrics.isNotBlank()) return Result(true, clean(lyrics))
+                val ia = normalize(item.optString("artistName"))
+                val it = normalize(item.optString("trackName"))
+                val lyrics = item.optString("plainLyrics").ifBlank { item.optString("syncedLyrics") }
+                if (lyrics.isBlank()) continue
+                val score = matchScore(artist, title, ia, it)
+                if (score > bestScore) {
+                    bestScore = score
+                    best = Result(true, clean(lyrics))
                 }
             }
-            Result(false)
+            if (bestScore >= 45) best ?: Result(false) else Result(false)
         } catch (_: Exception) {
             Result(false)
         } finally {
@@ -55,93 +64,132 @@ object LyricsManager {
     }
 
     private fun fetchFromMusicSites(artist: String, title: String): Result {
+        val sites = ServerConfig.MUSIC_SITES.take(18)
+        val siteQuery = sites.joinToString(" OR ") { "site:$it" }
         val query = URLEncoder.encode(
-            "\"$artist $title\" (${ServerConfig.MUSIC_SITES.joinToString(" OR ") { "site:$it" }})",
+            "\"$title\" \"$artist\" ($siteQuery)",
             StandardCharsets.UTF_8.toString()
         )
-        val searchUrl = "https://www.google.com/search?q=$query&num=8"
-        return try {
-            val html = getText(searchUrl, "text/html") ?: return Result(false)
-            val links = extractGoogleLinks(html).filter { ServerConfig.isAllowedPageUrl(it) }.distinct().take(8)
+
+        val searchUrls = listOf(
+            "https://www.google.com/search?q=$query&num=20",
+            "https://html.duckduckgo.com/html/?q=$query"
+        )
+
+        for (searchUrl in searchUrls) {
+            val html = getText(searchUrl, "text/html") ?: continue
+            val links = extractSearchLinks(html)
+                .filter { ServerConfig.isAllowedPageUrl(it) }
+                .distinct()
+                .take(12)
+
             for (pageUrl in links) {
                 val pageHtml = getText(pageUrl, "text/html") ?: continue
                 val lyrics = extractLyrics(pageHtml, artist, title)
                 if (lyrics.isNotBlank()) return Result(true, lyrics)
             }
-            Result(false)
-        } catch (_: Exception) {
-            Result(false)
         }
+        return Result(false)
     }
 
-    private fun extractGoogleLinks(html: String): List<String> {
+    private fun extractSearchLinks(html: String): List<String> {
         val result = LinkedHashSet<String>()
         val regex = Regex("""<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>""", RegexOption.IGNORE_CASE)
-        for (match in regex.findAll(html)) {
-            var href = match.groupValues[1].replace("&amp;", "&").trim()
+        for (m in regex.findAll(html)) {
+            var href = decodeHtml(m.groupValues[1]).trim()
             if (href.startsWith("/url?")) {
-                val query = href.substringAfter('?', "")
-                val encoded = query.split('&').firstOrNull { it.startsWith("q=") }?.substringAfter('=')
-                href = encoded?.let {
-                    try { URLDecoder.decode(it, StandardCharsets.UTF_8.toString()) } catch (_: Exception) { it }
-                }.orEmpty()
+                val q = href.substringAfter('?', "")
+                    .split('&')
+                    .firstOrNull { it.startsWith("q=") }
+                    ?.substringAfter('=')
+                href = q?.let { decodeUrl(it) }.orEmpty()
             }
-            if ((href.startsWith("http://") || href.startsWith("https://")) && ServerConfig.isAllowedPageUrl(href)) result.add(href)
+            if (href.startsWith("http://") || href.startsWith("https://")) {
+                if (ServerConfig.isAllowedPageUrl(href)) result.add(href)
+            }
         }
         return result.toList()
     }
 
     private fun extractLyrics(html: String, artist: String, title: String): String {
-        val normalizedHtml = html
+        val source = html
             .replace(Regex("(?is)<script[^>]*>.*?</script>"), " ")
             .replace(Regex("(?is)<style[^>]*>.*?</style>"), " ")
+            .replace(Regex("(?is)<noscript[^>]*>.*?</noscript>"), " ")
             .replace(Regex("(?is)<!--.*?-->"), " ")
 
-        val candidates = mutableListOf<String>()
-        val blockRegex = Regex(
-            """(?is)<(div|section|article|p)[^>]*(?:id|class)\s*=\s*[\"'][^\"']*(?:lyrics?|songtext|lyric-text|matn|tarane|ترانه|متن)[^\"']*[\"'][^>]*>(.*?)</\1>"""
+        val candidates = ArrayList<String>()
+
+        // Explicit lyric containers. Do not require the whole page to match one nested div.
+        val explicit = Regex(
+            """(?is)<[^>]+(?:id|class)\s*=\s*[\"'][^\"']*(?:lyrics?|lyric-text|songtext|song-text|matn|tarane|ترانه|متن)[^\"']*[\"'][^>]*>(.*?)</[^>]+>"""
         )
-        for (match in blockRegex.findAll(normalizedHtml)) {
-            val text = htmlToText(match.groupValues[2])
-            if (isGoodCandidate(text)) candidates.add(text)
+        for (m in explicit.findAll(source)) {
+            val text = htmlToText(m.groupValues[1])
+            if (isCandidate(text)) candidates.add(text)
         }
 
-        val broadRegex = Regex("""(?is)<(div|section|article)[^>]*>(.*?)</\1>""")
-        for (match in broadRegex.findAll(normalizedHtml)) {
-            val text = htmlToText(match.groupValues[2])
+        // JSON-LD / metadata can contain lyrics on some modern pages.
+        val jsonLyrics = Regex("""(?is)[\"'](?:lyrics|lyric)[\"']\s*:\s*[\"'](.*?)[\"']""")
+        for (m in jsonLyrics.findAll(source)) {
+            val text = decodeJsonText(m.groupValues[1])
+            if (isCandidate(text)) candidates.add(text)
+        }
+
+        // Fall back to meaningful text blocks. This catches sites whose lyrics
+        // container uses generic classes.
+        val blocks = Regex("""(?is)<(?:div|section|article|main|p)[^>]*>(.*?)</(?:div|section|article|main|p)>""")
+        for (m in blocks.findAll(source)) {
+            val text = htmlToText(m.groupValues[1])
             val lower = text.lowercase()
-            if ((lower.contains("متن آهنگ") || lower.contains("متن ترانه") || lower.contains("lyrics")) && isGoodCandidate(text)) candidates.add(text)
+            if (isCandidate(text) && (
+                lower.contains("متن آهنگ") ||
+                lower.contains("متن ترانه") ||
+                lower.contains("lyrics") ||
+                lower.contains(title.lowercase()) ||
+                lower.contains(artist.lowercase())
+            )) candidates.add(text)
         }
 
-        val best = candidates.distinct().maxByOrNull { scoreCandidate(it, artist, title) } ?: return ""
-        return cleanExtractedLyrics(best)
+        return candidates
+            .distinct()
+            .map { cleanExtractedLyrics(it) }
+            .filter { it.length >= 80 }
+            .maxByOrNull { scoreCandidate(it, artist, title) }
+            ?: ""
     }
 
     private fun scoreCandidate(text: String, artist: String, title: String): Int {
         val lower = text.lowercase()
-        var score = text.length.coerceAtMost(5000) / 100
-        if (lower.contains("متن آهنگ")) score += 50
-        if (lower.contains("متن ترانه")) score += 45
-        if (lower.contains("lyrics")) score += 35
-        if (lower.contains(artist.lowercase())) score += 20
-        if (lower.contains(title.lowercase())) score += 20
-        if (text.count { it == '\n' } >= 3) score += 15
+        var score = (text.length / 120).coerceAtMost(35)
+        if (lower.contains("متن آهنگ")) score += 60
+        if (lower.contains("متن ترانه")) score += 55
+        if (lower.contains("lyrics")) score += 40
+        if (lower.contains(normalize(artist).lowercase())) score += 30
+        if (lower.contains(normalize(title).lowercase())) score += 30
+        score += (text.count { it == '\n' } * 2).coerceAtMost(30)
         return score
     }
 
-    private fun isGoodCandidate(text: String): Boolean = text.length >= 80 && text.length <= 30000 && text.count { it == '\n' } >= 2
+    private fun isCandidate(text: String): Boolean =
+        text.length in 80..40000 && text.count { it == '\n' } >= 2
 
     private fun cleanExtractedLyrics(value: String): String {
         return value
             .replace('\u00A0', ' ')
             .replace("\\r\\n", "\n")
+            .replace("\\n", "\n")
             .replace("\\r", "\n")
             .lines()
-            .map { it.replace(Regex("\\s+"), " ").trim() }
+            .map { it.replace(Regex("[ \t]+"), " ").trim() }
             .filter { it.isNotBlank() }
             .filterNot { line ->
-                val lower = line.lowercase()
-                lower.contains("دانلود آهنگ") || lower.contains("download") || lower.contains("اشتراک") || lower.contains("تبلیغ")
+                val l = line.lowercase()
+                l.contains("دانلود آهنگ") ||
+                    l.contains("download music") ||
+                    l == "download" ||
+                    l.contains("اشتراک") ||
+                    l.contains("عضویت در")
             }
             .joinToString("\n")
             .trim()
@@ -149,14 +197,10 @@ object LyricsManager {
 
     private fun htmlToText(html: String): String = html
         .replace(Regex("(?is)<br\\s*/?>"), "\n")
-        .replace(Regex("(?is)</(p|div|section|article|li|h[1-6])>"), "\n")
+        .replace(Regex("(?is)</(?:p|div|section|article|main|li|h[1-6])>"), "\n")
         .replace(Regex("(?is)<[^>]+>"), " ")
-        .replace("&nbsp;", " ")
-        .replace("&amp;", "&")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
+        .let(::decodeHtml)
+        .replace('\u00A0', ' ')
         .trim()
 
     private fun request(url: String): Result {
@@ -166,9 +210,7 @@ object LyricsManager {
             if (connection.responseCode !in 200..299) return Result(false)
             val body = connection.inputStream.bufferedReader().use { it.readText() }
             val json = JSONObject(body)
-            val plain = json.optString("plainLyrics", "").trim()
-            val synced = json.optString("syncedLyrics", "").trim()
-            val lyrics = if (plain.isNotBlank()) plain else synced
+            val lyrics = json.optString("plainLyrics").ifBlank { json.optString("syncedLyrics") }
             if (lyrics.isBlank()) Result(false) else Result(true, clean(lyrics))
         } catch (_: Exception) {
             Result(false)
@@ -190,16 +232,51 @@ object LyricsManager {
         }
     }
 
-    private fun open(url: String, accept: String): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
-        connectTimeout = 8000
-        readTimeout = 10000
-        requestMethod = "GET"
-        instanceFollowRedirects = true
-        setRequestProperty("Accept", accept)
-        setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36")
+    private fun open(url: String, accept: String): HttpURLConnection =
+        (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 7000
+            readTimeout = 9000
+            requestMethod = "GET"
+            instanceFollowRedirects = true
+            setRequestProperty("Accept", accept)
+            setRequestProperty("Accept-Language", "fa-IR,fa;q=0.9,en;q=0.8")
+            setRequestProperty(
+                "User-Agent",
+                "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36"
+            )
+        }
+
+    private fun matchScore(a: String, t: String, ia: String, it: String): Int {
+        var score = 0
+        if (ia == a) score += 50 else if (ia.contains(a) || a.contains(ia)) score += 30
+        if (it == t) score += 50 else if (it.contains(t) || t.contains(it)) score += 30
+        return score
     }
 
-    private fun encode(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
+    private fun normalize(value: String): String = value
+        .replace(Regex("[|•·–—]"), " ")
+        .replace(Regex("(?i)دانلود|download|آهنگ|song|music"), " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
 
-    private fun clean(value: String): String = value.replace("\\r\\n", "\n").replace("\\r", "\n").trim()
+    private fun decodeHtml(value: String): String = value
+        .replace("&nbsp;", " ", true)
+        .replace("&amp;", "&", true)
+        .replace("&quot;", "\"", true)
+        .replace("&#39;", "'", true)
+        .replace("&lt;", "<", true)
+        .replace("&gt;", ">", true)
+
+    private fun decodeUrl(value: String): String = try {
+        URLDecoder.decode(value, StandardCharsets.UTF_8.toString())
+    } catch (_: Exception) { value }
+
+    private fun decodeJsonText(value: String): String =
+        value.replace("\\/", "/").replace("\\\"", "\"").replace("\\n", "\n")
+
+    private fun encode(value: String): String =
+        URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
+
+    private fun clean(value: String): String =
+        value.replace("\\r\\n", "\n").replace("\\r", "\n").trim()
 }
