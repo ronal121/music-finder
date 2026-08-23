@@ -101,9 +101,13 @@ object ServerConfig {
     }
 
     /**
-     * Builds a Google query that is intentionally NOT wrapped in one giant quoted
-     * phrase. Google otherwise treats Persian normalization and the complete site
-     * expression too strictly and can return an empty result set.
+     * Keep the Google query deliberately simple.
+     *
+     * The result page is filtered against MUSIC_SITES after Google responds, so
+     * putting dozens of site: expressions into the query is counterproductive:
+     * Google can collapse the query, ignore terms, or return an empty page.
+     * This lets Google do what it is good at (ranking/fuzzy matching) while the
+     * application remains strict about which music domains it accepts.
      */
     fun searchQuery(song: String): String {
         val normalized = SearchEngine.correctedQuery(song)
@@ -112,15 +116,7 @@ object ServerConfig {
 
         if (normalized.isBlank()) return "music"
 
-        val sites = MUSIC_SITES
-            .take(18)
-            .joinToString(" OR ") { "site:$it" }
-
-        return if (sites.isBlank()) {
-            normalized
-        } else {
-            "$normalized ($sites)"
-        }
+        return "$normalized آهنگ"
     }
 
     fun siteName(url: String): String {
