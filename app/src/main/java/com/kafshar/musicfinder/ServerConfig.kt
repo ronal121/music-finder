@@ -100,10 +100,27 @@ object ServerConfig {
         return server.enabled && server.supportsStreaming
     }
 
+    /**
+     * Builds a Google query that is intentionally NOT wrapped in one giant quoted
+     * phrase. Google otherwise treats Persian normalization and the complete site
+     * expression too strictly and can return an empty result set.
+     */
     fun searchQuery(song: String): String {
-        val normalized = SearchEngine.normalizeQuery(song)
-        val sites = MUSIC_SITES.joinToString(" OR ") { "site:$it" }
-        return if (sites.isBlank()) normalized else "\"$normalized\" ($sites)"
+        val normalized = SearchEngine.correctedQuery(song)
+            .trim()
+            .replace(Regex("\\s+"), " ")
+
+        if (normalized.isBlank()) return "music"
+
+        val sites = MUSIC_SITES
+            .take(18)
+            .joinToString(" OR ") { "site:$it" }
+
+        return if (sites.isBlank()) {
+            normalized
+        } else {
+            "$normalized ($sites)"
+        }
     }
 
     fun siteName(url: String): String {
