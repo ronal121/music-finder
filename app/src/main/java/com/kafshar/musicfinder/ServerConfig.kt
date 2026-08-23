@@ -18,57 +18,34 @@ object ServerConfig {
     const val GOOGLE_HOST = "google.com"
 
     val SERVERS: List<MusicServer> = listOf(
-        MusicServer("rozmusic.com", 100),
-        MusicServer("nex1music.com", 99),
-        MusicServer("musicbaran.ir", 98),
-        MusicServer("mymusicbaran.ir", 98),
-        MusicServer("musicdel.ir", 97),
-        MusicServer("songsara.net", 96),
-        MusicServer("radiojavan.com", 95),
-        MusicServer("musicete.com", 94),
-        MusicServer("musicetu.com", 94),
-        MusicServer("musicsweb.ir", 93),
-        MusicServer("melovy.ir", 92),
-        MusicServer("jenab-music.com", 91),
-        MusicServer("fazamusic.com", 90),
-        MusicServer("360bikalam.com", 89),
-        MusicServer("dtaraneh.net", 88),
-        MusicServer("ahangirani.ir", 87),
-        MusicServer("upmusics.com", 86),
-        MusicServer("nicmusic.net", 85),
-        MusicServer("vmusic.ir", 84),
-        MusicServer("sakhamusic.ir", 83),
-        MusicServer("ganja2music.com", 82),
-        MusicServer("iran-music.net", 81),
-        MusicServer("silamusic.ir", 80),
-        MusicServer("bibakmusic.com", 79),
-        MusicServer("beeptunes.com", 78),
-        MusicServer("blogmusic.ir", 77),
-        MusicServer("pop-music.ir", 76),
-        MusicServer("behmusic.com", 75),
-        MusicServer("irmp3.ir", 74),
-        MusicServer("next1.ir", 73),
-        MusicServer("mytehranmusic.com", 72),
-        MusicServer("mybia2music.com", 70),
-        MusicServer("musics-fa.com", 69),
-        MusicServer("pro.iraniandj.ir", 68),
-        MusicServer("worldofmusic.ir", 67),
-        MusicServer("iranmusic.ir", 66)
+        MusicServer("rozmusic.com", 100), MusicServer("nex1music.com", 99),
+        MusicServer("musicbaran.ir", 98), MusicServer("mymusicbaran.ir", 98),
+        MusicServer("musicdel.ir", 97), MusicServer("songsara.net", 96),
+        MusicServer("radiojavan.com", 95), MusicServer("musicete.com", 94),
+        MusicServer("musicetu.com", 94), MusicServer("musicsweb.ir", 93),
+        MusicServer("melovy.ir", 92), MusicServer("jenab-music.com", 91),
+        MusicServer("fazamusic.com", 90), MusicServer("360bikalam.com", 89),
+        MusicServer("dtaraneh.net", 88), MusicServer("ahangirani.ir", 87),
+        MusicServer("upmusics.com", 86), MusicServer("nicmusic.net", 85),
+        MusicServer("vmusic.ir", 84), MusicServer("sakhamusic.ir", 83),
+        MusicServer("ganja2music.com", 82), MusicServer("iran-music.net", 81),
+        MusicServer("silamusic.ir", 80), MusicServer("bibakmusic.com", 79),
+        MusicServer("beeptunes.com", 78), MusicServer("blogmusic.ir", 77),
+        MusicServer("pop-music.ir", 76), MusicServer("behmusic.com", 75),
+        MusicServer("irmp3.ir", 74), MusicServer("next1.ir", 73),
+        MusicServer("mytehranmusic.com", 72), MusicServer("mybia2music.com", 70),
+        MusicServer("musics-fa.com", 69), MusicServer("pro.iraniandj.ir", 68),
+        MusicServer("worldofmusic.ir", 67), MusicServer("iranmusic.ir", 66)
     )
 
     val MUSIC_HOSTS: Set<String>
-        get() = SERVERS.asSequence()
-            .filter { it.enabled }
+        get() = SERVERS.asSequence().filter { it.enabled }
             .flatMap { sequenceOf(it.domain) + it.mediaHosts.asSequence() }
-            .mapNotNull(::normalizeHost)
-            .toSet()
+            .mapNotNull(::normalizeHost).toSet()
 
     val MUSIC_SITES: List<String>
-        get() = SERVERS.asSequence()
-            .filter { it.enabled && it.supportsSearch }
-            .sortedByDescending { it.priority }
-            .map { it.domain }
-            .toList()
+        get() = SERVERS.asSequence().filter { it.enabled && it.supportsSearch }
+            .sortedByDescending { it.priority }.map { it.domain }.toList()
 
     fun serverFor(host: String?): MusicServer? {
         val normalized = normalizeHost(host) ?: return null
@@ -81,7 +58,6 @@ object ServerConfig {
     }
 
     fun serverForUrl(url: String?): MusicServer? = extractHttpHost(url)?.let(::serverFor)
-
     fun isMusicHost(host: String?): Boolean = serverFor(host)?.supportsStreaming == true
 
     fun isGoogleHost(host: String?): Boolean {
@@ -101,23 +77,17 @@ object ServerConfig {
     }
 
     /**
-     * Build one Google fan-out query that explicitly targets every enabled
-     * music source. Google does the ranking/fuzzy matching, while the domain
-     * clauses force the result set to come from the user's configured sources.
-     * This avoids the old situation where Google returned unrelated pages and
-     * the app then had to serially inspect dozens of pages.
+     * Keep the Google request short and reliable. The previous implementation
+     * put every configured domain into one huge OR expression; Google/WebView
+     * could return an empty/blocked result for that request. We intentionally
+     * search normally here and let MainActivity filter extracted URLs against
+     * MUSIC_SITES. This preserves all configured sources without a giant query.
      */
     fun searchQuery(song: String): String {
         val normalized = SearchEngine.correctedQuery(song)
-            .trim()
-            .replace(Regex("\\s+"), " ")
-
+            .trim().replace(Regex("\\s+"), " ")
         if (normalized.isBlank()) return "music"
-
-        val domainExpression = MUSIC_SITES
-            .joinToString(" OR ") { "site:$it" }
-
-        return "($domainExpression) \"$normalized\""
+        return "$normalized music"
     }
 
     fun siteName(url: String): String {
@@ -170,12 +140,8 @@ object ServerConfig {
         return normalizedHost == normalizedDomain || normalizedHost.endsWith(".$normalizedDomain")
     }
 
-    private fun normalizeHost(host: String?): String? = host
-        ?.trim()
-        ?.lowercase()
-        ?.removePrefix("www.")
-        ?.trimEnd('.')
-        ?.takeIf { it.isNotBlank() }
+    private fun normalizeHost(host: String?): String? = host?.trim()?.lowercase()
+        ?.removePrefix("www.")?.trimEnd('.')?.takeIf { it.isNotBlank() }
 
     private fun extractHttpHost(url: String?): String? {
         if (url.isNullOrBlank()) return null
