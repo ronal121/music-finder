@@ -101,13 +101,11 @@ object ServerConfig {
     }
 
     /**
-     * Keep the Google query deliberately simple.
-     *
-     * The result page is filtered against MUSIC_SITES after Google responds, so
-     * putting dozens of site: expressions into the query is counterproductive:
-     * Google can collapse the query, ignore terms, or return an empty page.
-     * This lets Google do what it is good at (ranking/fuzzy matching) while the
-     * application remains strict about which music domains it accepts.
+     * Build one Google fan-out query that explicitly targets every enabled
+     * music source. Google does the ranking/fuzzy matching, while the domain
+     * clauses force the result set to come from the user's configured sources.
+     * This avoids the old situation where Google returned unrelated pages and
+     * the app then had to serially inspect dozens of pages.
      */
     fun searchQuery(song: String): String {
         val normalized = SearchEngine.correctedQuery(song)
@@ -116,7 +114,10 @@ object ServerConfig {
 
         if (normalized.isBlank()) return "music"
 
-        return "$normalized آهنگ"
+        val domainExpression = MUSIC_SITES
+            .joinToString(" OR ") { "site:$it" }
+
+        return "($domainExpression) \"$normalized\""
     }
 
     fun siteName(url: String): String {
