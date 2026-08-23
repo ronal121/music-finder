@@ -7,16 +7,21 @@ import java.net.URL
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 object LyricsManager {
     data class Result(val found: Boolean, val lyrics: String = "")
+
+    private val executor = Executors.newFixedThreadPool(4)
 
     fun fetch(artist: String, title: String): Result {
         val a = normalize(artist)
         val t = normalize(title)
         if (a.isBlank() || t.isBlank()) return Result(false)
 
-        // 1) Fast public lyrics database. This is only a fallback; site text is preferred below.
+        // First try the fast structured source.
         request("https://lrclib.net/api/get?artist_name=${encode(a)}&track_name=${encode(t)}").let {
             if (it.found) return it
         }
@@ -24,12 +29,68 @@ object LyricsManager {
             if (it.found) return it
         }
 
-        // 2) Search the music sites already registered in ServerConfig and extract
-        // the actual lyrics block from the returned HTML.
-        fetchFromMusicSites(a, t).let {
-            if (it.found) return it
+        // Then query the configured music sites. Each site is independent, so
+        // one blocked/slow site cannot prevent another site from returning lyrics.
+        return fetchFromMusicSites(a, t)
+    }
+
+    private fun fetchFromMusicSites(artist: String, title: String): Result {
+        val sites = ServerConfig.MUSIC_SITES
+            .filter { it.isNotBlank() }
+            .take(35)
+
+        val jobs = sites.map { domain ->
+            Callable {
+                fetchFromSingleSite(domain, artist, title)
+            }
         }
 
+        return try {
+            val futures = executor.invokeAll(jobs, 10, TimeUnit.SECONDS)
+            for (future in futures) {
+                try {
+                    val result = future.get()
+                    if (result.found && result.lyrics.isNotBlank()) return result
+                } catch (_: Exception) {
+                }
+            }
+            Result(false)
+        } catch (_: Exception) {
+            Result(false)
+        }
+    }
+
+    private fun fetchFromSingleSite(domain: String, artist: String, title: String): Result {
+        val queries = listOf(
+            "\"$artist\" \"$title\"",
+            "$artist $title",
+            "$title $artist"
+        )
+
+        val searchUrls = ArrayList<String>()
+        for (rawQuery in queries) {
+            val q = URLEncoder.encode(
+                "$rawQuery site:$domain",
+                StandardCharsets.UTF_8.toString()
+            )
+            searchUrls.add("https://www.google.com/search?q=$q&num=8&gbv=1")
+            searchUrls.add("https://html.duckduckgo.com/html/?q=$q")
+        }
+
+        for (searchUrl in searchUrls) {
+            val html = getText(searchUrl, "text/html") ?: continue
+            val links = extractSearchLinks(html)
+                .filter { ServerConfig.isAllowedPageUrl(it) }
+                .filter { it.contains(domain, ignoreCase = true) }
+                .distinct()
+                .take(6)
+
+            for (pageUrl in links) {
+                val pageHtml = getText(pageUrl, "text/html") ?: continue
+                val lyrics = extractLyrics(pageHtml, artist, title)
+                if (lyrics.isNotBlank()) return Result(true, lyrics)
+            }
+        }
         return Result(false)
     }
 
@@ -63,49 +124,21 @@ object LyricsManager {
         }
     }
 
-    private fun fetchFromMusicSites(artist: String, title: String): Result {
-        val sites = ServerConfig.MUSIC_SITES.take(18)
-        val siteQuery = sites.joinToString(" OR ") { "site:$it" }
-        val query = URLEncoder.encode(
-            "\"$title\" \"$artist\" ($siteQuery)",
-            StandardCharsets.UTF_8.toString()
-        )
-
-        val searchUrls = listOf(
-            "https://www.google.com/search?q=$query&num=20",
-            "https://html.duckduckgo.com/html/?q=$query"
-        )
-
-        for (searchUrl in searchUrls) {
-            val html = getText(searchUrl, "text/html") ?: continue
-            val links = extractSearchLinks(html)
-                .filter { ServerConfig.isAllowedPageUrl(it) }
-                .distinct()
-                .take(12)
-
-            for (pageUrl in links) {
-                val pageHtml = getText(pageUrl, "text/html") ?: continue
-                val lyrics = extractLyrics(pageHtml, artist, title)
-                if (lyrics.isNotBlank()) return Result(true, lyrics)
-            }
-        }
-        return Result(false)
-    }
-
     private fun extractSearchLinks(html: String): List<String> {
         val result = LinkedHashSet<String>()
         val regex = Regex("""<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>""", RegexOption.IGNORE_CASE)
         for (m in regex.findAll(html)) {
             var href = decodeHtml(m.groupValues[1]).trim()
-            if (href.startsWith("/url?")) {
+            if (href.startsWith("/url?", true)) {
                 val q = href.substringAfter('?', "")
                     .split('&')
-                    .firstOrNull { it.startsWith("q=") }
+                    .firstOrNull { it.startsWith("q=") || it.startsWith("url=") }
                     ?.substringAfter('=')
                 href = q?.let { decodeUrl(it) }.orEmpty()
             }
             if (href.startsWith("http://") || href.startsWith("https://")) {
-                if (ServerConfig.isAllowedPageUrl(href)) result.add(href)
+                val cleanUrl = href.substringBefore("&sa=").substringBefore("&ved=")
+                if (ServerConfig.isAllowedPageUrl(cleanUrl)) result.add(cleanUrl)
             }
         }
         return result.toList()
@@ -120,7 +153,6 @@ object LyricsManager {
 
         val candidates = ArrayList<String>()
 
-        // Explicit lyric containers. Do not require the whole page to match one nested div.
         val explicit = Regex(
             """(?is)<[^>]+(?:id|class)\s*=\s*[\"'][^\"']*(?:lyrics?|lyric-text|songtext|song-text|matn|tarane|ترانه|متن)[^\"']*[\"'][^>]*>(.*?)</[^>]+>"""
         )
@@ -129,25 +161,26 @@ object LyricsManager {
             if (isCandidate(text)) candidates.add(text)
         }
 
-        // JSON-LD / metadata can contain lyrics on some modern pages.
         val jsonLyrics = Regex("""(?is)[\"'](?:lyrics|lyric)[\"']\s*:\s*[\"'](.*?)[\"']""")
         for (m in jsonLyrics.findAll(source)) {
             val text = decodeJsonText(m.groupValues[1])
             if (isCandidate(text)) candidates.add(text)
         }
 
-        // Fall back to meaningful text blocks. This catches sites whose lyrics
-        // container uses generic classes.
+        // Many Persian music sites put the lyrics in ordinary containers without
+        // a semantic class. Score blocks instead of depending on one HTML layout.
         val blocks = Regex("""(?is)<(?:div|section|article|main|p)[^>]*>(.*?)</(?:div|section|article|main|p)>""")
         for (m in blocks.findAll(source)) {
             val text = htmlToText(m.groupValues[1])
             val lower = text.lowercase()
+            val normalizedTitle = normalize(title).lowercase()
+            val normalizedArtist = normalize(artist).lowercase()
             if (isCandidate(text) && (
                 lower.contains("متن آهنگ") ||
                 lower.contains("متن ترانه") ||
                 lower.contains("lyrics") ||
-                lower.contains(title.lowercase()) ||
-                lower.contains(artist.lowercase())
+                (normalizedTitle.length > 2 && lower.contains(normalizedTitle)) ||
+                (normalizedArtist.length > 2 && lower.contains(normalizedArtist))
             )) candidates.add(text)
         }
 
@@ -234,8 +267,8 @@ object LyricsManager {
 
     private fun open(url: String, accept: String): HttpURLConnection =
         (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 7000
-            readTimeout = 9000
+            connectTimeout = 5000
+            readTimeout = 7000
             requestMethod = "GET"
             instanceFollowRedirects = true
             setRequestProperty("Accept", accept)
