@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 path = Path("app/src/main/java/com/kafshar/musicfinder/MainActivity.kt")
 text = path.read_text(encoding="utf-8")
@@ -153,15 +154,7 @@ if "private inner class Bridge" not in text:
         raise SystemExit("configureWebView marker not found")
     text = text.replace(marker, bridge + marker, 1)
 
-# Remove every broken/duplicated finishSearch declaration and insert one clean version.
-marker = "    private fun finishSearch()"
-start = text.find(marker)
-if start >= 0:
-    end_marker = "\n    private fun addSong("
-    end = text.find(end_marker, start)
-    if end < 0:
-        raise SystemExit("addSong marker not found after finishSearch")
-    clean = '''    private fun finishSearch() {
+clean = '''    private fun finishSearch() {
 
         if (destroyed) return
 
@@ -181,23 +174,36 @@ if start >= 0:
         saveSearchResults()
     }
 '''
-    text = text[:start] + clean + text[end:]
-else:
+
+# First, replace the original corrupted finishSearch region through addSong.
+first = text.find("    private fun finishSearch()")
+if first >= 0:
+    add_marker = "\n    private fun addSong("
+    add_pos = text.find(add_marker, first)
+    if add_pos < 0:
+        raise SystemExit("addSong marker not found after finishSearch")
+    text = text[:first] + clean + text[add_pos + 1:]
+
+# Remove any later duplicate finishSearch immediately preceding saveSearchResults.
+pattern = re.compile(
+    r'\n    private fun finishSearch\(\) \{.*?\n    \}\n\n    private fun saveSearchResults',
+    re.S,
+)
+text, removed = pattern.subn("\n    private fun saveSearchResults", text)
+if removed > 1:
+    raise SystemExit(f"unexpected duplicate cleanup count: {removed}")
+
+# If no finishSearch remains, add the canonical implementation before saveSearchResults.
+if text.count("private fun finishSearch()") == 0:
     marker = "    private fun saveSearchResults()"
     if marker not in text:
         raise SystemExit("saveSearchResults marker not found")
-    clean = '''    private fun finishSearch() {
+    text = text.replace(marker, clean + "\n" + marker, 1)
 
-        if (destroyed) return
-
-        cancelSearchCallbacks()
-        status.text = if (songs.isEmpty()) "آهنگ قابل پخش پیدا نشد" else "${songs.size} نتیجه پیدا شد"
-        if (songs.isNotEmpty() && currentIndex == -1) currentIndex = 0
-        saveSearchResults()
-    }
-
-'''
-    text = text.replace(marker, clean + marker, 1)
+# Final invariant: exactly one declaration.
+count = text.count("private fun finishSearch()")
+if count != 1:
+    raise SystemExit(f"finishSearch declaration count is {count}, expected 1")
 
 path.write_text(text, encoding="utf-8")
 print("MainActivity.kt repaired")
