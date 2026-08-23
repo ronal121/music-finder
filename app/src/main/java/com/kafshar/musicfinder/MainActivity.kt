@@ -495,988 +495,1120 @@ class MainActivity : Activity() {
         }
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun configureWebView(
-        view: WebView
-    ) {
+@SuppressLint("SetJavaScriptEnabled")
+private fun configureWebView(
+    view: WebView
+) {
 
-        view.settings.apply {
+    view.settings.apply {
 
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            databaseEnabled = false
+        javaScriptEnabled = true
+        domStorageEnabled = true
 
-            mediaPlaybackRequiresUserGesture = false
+        mediaPlaybackRequiresUserGesture = false
 
-            allowFileAccess = false
-            allowContentAccess = false
+        allowFileAccess = false
+        allowContentAccess = false
 
-            javaScriptCanOpenWindowsAutomatically =
-                false
+        javaScriptCanOpenWindowsAutomatically = false
+        setSupportMultipleWindows(false)
 
-            setSupportMultipleWindows(false)
-
-            userAgentString =
-                "Mozilla/5.0 (Linux; Android 12) " +
-                        "AppleWebKit/537.36 " +
-                        "(KHTML, like Gecko) " +
-                        "Chrome/128 Mobile Safari/537.36"
-        }
-
-        view.setLayerType(
-            View.LAYER_TYPE_HARDWARE,
-            null
-        )
-
-        view.addJavascriptInterface(
-            Bridge(),
-            "MusicFinder"
-        )
-
-        view.webViewClient =
-            object : WebViewClient() {
-
-                override fun shouldOverrideUrlLoading(
-                    view: WebView,
-                    request: WebResourceRequest
-                ): Boolean {
-
-                    val url =
-                        request.url.toString()
-
-                    return !ServerConfig.isAllowedPageUrl(
-                        url
-                    )
-                }
-
-                override fun onPageStarted(
-                    view: WebView,
-                    url: String,
-                    favicon: Bitmap?
-                ) {
-
-                    super.onPageStarted(
-                        view,
-                        url,
-                        favicon
-                    )
-
-                    if (destroyed) return
-                }
-
-                override fun onPageFinished(
-                    view: WebView,
-                    url: String
-                ) {
-
-                    super.onPageFinished(
-                        view,
-                        url
-                    )
-
-                    if (destroyed) return
-
-                    if (
-                        url.contains(
-                            "google.com/search",
-                            ignoreCase = true
-                        )
-                    ) {
-
-                        extractGoogleResults()
-
-                        return
-                    }
-
-                    if (
-                        resultGeneration ==
-                        searchGeneration &&
-                        expectedPageUrl.isNotBlank() &&
-                        ServerConfig.isAllowedPageUrl(
-                            url
-                        )
-                    ) {
-
-                        extractMusicPage(url)
-                    }
-                }
-
-                override fun onReceivedError(
-                    view: WebView,
-                    request: WebResourceRequest,
-                    error: WebResourceError
-                ) {
-
-                    super.onReceivedError(
-                        view,
-                        request,
-                        error
-                    )
-
-                    if (
-                        !request.isForMainFrame ||
-                        destroyed
-                    ) {
-                        return
-                    }
-
-                    if (
-                        resultGeneration ==
-                        searchGeneration &&
-                        resultPages.isNotEmpty()
-                    ) {
-
-                        finishCurrentResultPage()
-
-                    } else {
-
-                        status.text =
-                            "خطا در اتصال به جستجو"
-                    }
-                }
-
-                override fun onRenderProcessGone(
-                    view: WebView,
-                    detail: RenderProcessGoneDetail
-                ): Boolean {
-
-                    if (destroyed) {
-                        return true
-                    }
-
-                    status.text =
-                        "در حال بازیابی جستجو..."
-
-                    recreateWebView()
-
-                    return true
-                }
-            }
+        userAgentString =
+            "Mozilla/5.0 (Linux; Android 12) " +
+                    "AppleWebKit/537.36 " +
+                    "(KHTML, like Gecko) " +
+                    "Chrome/128 Mobile Safari/537.36"
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun setupWebView() {
-        configureWebView(web)
-    }
+    view.setLayerType(
+        View.LAYER_TYPE_HARDWARE,
+        null
+    )
 
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun recreateWebView() {
+    view.addJavascriptInterface(
+        Bridge(),
+        "MusicFinder"
+    )
 
-        if (destroyed) return
+    view.webViewClient =
+        object : WebViewClient() {
 
-        try {
+            override fun shouldOverrideUrlLoading(
+                view: WebView,
+                request: WebResourceRequest
+            ): Boolean {
 
-            val oldWeb = web
+                val url =
+                    request.url.toString()
 
-            val parent =
-                oldWeb.parent as? android.view.ViewGroup
-                    ?: return
-
-            val index =
-                parent.indexOfChild(oldWeb)
-
-            val oldParams =
-                oldWeb.layoutParams
-
-            parent.removeView(oldWeb)
-
-            try {
-
-                oldWeb.removeJavascriptInterface(
-                    "MusicFinder"
-                )
-
-                oldWeb.stopLoading()
-                oldWeb.loadUrl("about:blank")
-                oldWeb.removeAllViews()
-                oldWeb.destroy()
-
-            } catch (_: Exception) {
-            }
-
-            val newWeb =
-                WebView(this)
-
-            newWeb.id =
-                R.id.web
-
-            newWeb.layoutParams =
-                oldParams
-                    ?: android.widget.LinearLayout.LayoutParams(
-                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                        1
+                /*
+                 * Google باید داخل WebView باز بماند.
+                 * قبلاً اینجا ServerConfig.isAllowedPageUrl()
+                 * باعث می‌شد redirect های Google مسدود شوند.
+                 */
+                if (
+                    url.contains(
+                        "google.com",
+                        ignoreCase = true
+                    ) ||
+                    url.contains(
+                        "googleusercontent.com",
+                        ignoreCase = true
+                    ) ||
+                    url.contains(
+                        "gstatic.com",
+                        ignoreCase = true
                     )
+                ) {
+                    return false
+                }
 
-            parent.addView(
-                newWeb,
-                index.coerceAtMost(
-                    parent.childCount
-                )
-            )
+                /*
+                 * سایت‌های موسیقی مجاز
+                 */
+                if (
+                    ServerConfig.isAllowedPageUrl(url)
+                ) {
+                    return false
+                }
 
-            web = newWeb
-
-            configureWebView(web)
-
-        } catch (_: Exception) {
-
-            if (!destroyed) {
-
-                status.text =
-                    "جستجو موقتاً در دسترس نیست"
+                return true
             }
-        }
-    }
 
-    private fun setupButtons() {
-
-        findViewById<TextView>(
-            R.id.search
-        ).setOnClickListener {
-
-            searchMusic()
-        }
-
-        query.setOnEditorActionListener {
-                _, actionId, _ ->
-
-            if (
-                actionId ==
-                EditorInfo.IME_ACTION_SEARCH
+            override fun onPageStarted(
+                view: WebView,
+                url: String,
+                favicon: Bitmap?
             ) {
 
-                searchMusic()
+                super.onPageStarted(
+                    view,
+                    url,
+                    favicon
+                )
 
-                true
-
-            } else {
-
-                false
-            }
-        }
-
-        playButton.setOnClickListener {
-
-            val url =
-                currentAudioUrl
-
-            if (url.isBlank()) {
-                return@setOnClickListener
+                if (destroyed) return
             }
 
-            sendServiceAction(
-                MusicService.ACTION_TOGGLE,
-                url,
-                titleText.text.toString(),
-                artistText.text.toString()
-            )
-        }
+            override fun onPageFinished(
+                view: WebView,
+                url: String
+            ) {
 
-        previousButton.setOnClickListener {
-            previousSong()
-        }
+                super.onPageFinished(
+                    view,
+                    url
+                )
 
-        nextButton.setOnClickListener {
-            nextSong()
-        }
+                if (destroyed) return
 
-        randomButton.setOnClickListener {
-
-            randomMode =
-                !randomMode
-
-            randomButton.text =
-                if (randomMode) {
-                    "🔀"
-                } else {
-                    "🔁"
-                }
-        }
-
-        seekBar.setOnSeekBarChangeListener(
-            object :
-                SeekBar.OnSeekBarChangeListener {
-
-                override fun onProgressChanged(
-                    seekBar: SeekBar?,
-                    progress: Int,
-                    fromUser: Boolean
-                ) {
-
-                    if (!fromUser) return
-
-                    val duration =
-                        parseTime(
-                            durationText.text.toString()
-                        )
-
-                    if (duration > 0) {
-
-                        val position =
-                            duration *
-                                    progress /
-                                    100L
-
-                        currentTimeText.text =
-                            formatTime(position)
-                    }
-                }
-
-                override fun onStartTrackingTouch(
-                    seekBar: SeekBar?
-                ) {
-                }
-
-                override fun onStopTrackingTouch(
-                    seekBar: SeekBar?
-                ) {
-
-                    val percent =
-                        seekBar?.progress ?: 0
-
-                    val intent =
-                        Intent(
-                            this@MainActivity,
-                            MusicService::class.java
-                        ).apply {
-
-                            action =
-                                MusicService.ACTION_SEEK_PERCENT
-
-                            putExtra(
-                                MusicService.EXTRA_PERCENT,
-                                percent
-                            )
-                        }
-
-                    safelyStartService(intent)
-                }
-            }
-        )
-
-        downloadButton.setOnClickListener {
-            downloadCurrentSong()
-        }
-
-        pauseDownloadButton.setOnClickListener {
-            toggleDownloadPause()
-        }
-
-        cancelDownloadButton.setOnClickListener {
-            cancelDownload()
-        }
-
-        saveButton.setOnClickListener {
-            saveCurrentSong()
-        }
-
-        libraryButton.setOnClickListener {
-
-            try {
-
-                startActivity(
-                    Intent(
-                        this,
-                        LibraryActivity::class.java
+                /*
+                 * وقتی Google Search کامل شد،
+                 * لینک‌های سایت‌های موسیقی را استخراج می‌کنیم.
+                 */
+                if (
+                    url.contains(
+                        "google.com/search",
+                        ignoreCase = true
                     )
-                )
+                ) {
 
-            } catch (_: Exception) {
+                    extractGoogleResults()
 
-                Toast.makeText(
-                    this,
-                    "کتابخانه باز نشد",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-        }
+                    return
+                }
 
-        historyButton.setOnClickListener {
-            toggleHistory()
-        }
-    }
+                /*
+                 * حالا وارد صفحه یکی از سایت‌های موسیقی شده‌ایم.
+                 */
+                if (
+                    resultGeneration ==
+                    searchGeneration &&
+                    expectedPageUrl.isNotBlank() &&
+                    ServerConfig.isAllowedPageUrl(url)
+                ) {
 
-    private fun searchMusic() {
-
-        if (destroyed) return
-
-        val text =
-            query.text
-                .toString()
-                .trim()
-
-        if (text.isEmpty()) {
-
-            Toast.makeText(
-                this,
-                "نام آهنگ یا خواننده را وارد کنید",
-                Toast.LENGTH_SHORT
-            ).show()
-
-            return
-        }
-
-        searchGeneration++
-
-        cancelSearchCallbacks()
-
-        resultPages = emptyList()
-        resultPageIndex = 0
-
-        resultGeneration =
-            searchGeneration
-
-        expectedPageUrl = ""
-
-        songs.clear()
-        currentIndex = -1
-
-        resultsContainer.removeAllViews()
-
-        titleText.text = text
-
-        artistText.text =
-            "در حال جستجو..."
-
-        status.text =
-            "در حال جستجوی سایت‌ها..."
-
-        seekBar.progress = 0
-
-        currentTimeText.text =
-            "00:00"
-
-        durationText.text =
-            "00:00"
-
-        vinyl.clearCover()
-        vinyl.stopRotation()
-        clearLyrics()
-
-        val searchQuery = ServerConfig.searchQuery(text)
-
-        val encoded =
-            try {
-
-                URLEncoder.encode(
-                    searchQuery,
-                    "UTF-8"
-                )
-
-            } catch (_: Exception) {
-
-                return
+                    extractMusicPage(url)
+                }
             }
 
-        val url =
-            "https://www.google.com/search?q=$encoded&num=50"
+            override fun onReceivedError(
+                view: WebView,
+                request: WebResourceRequest,
+                error: WebResourceError
+            ) {
+
+                super.onReceivedError(
+                    view,
+                    request,
+                    error
+                )
+
+                if (
+                    !request.isForMainFrame ||
+                    destroyed
+                ) {
+                    return
+                }
+
+                if (
+                    resultGeneration ==
+                    searchGeneration &&
+                    resultPages.isNotEmpty()
+                ) {
+
+                    finishCurrentResultPage()
+
+                } else {
+
+                    status.text =
+                        "خطا در اتصال به جستجو"
+                }
+            }
+
+            override fun onRenderProcessGone(
+                view: WebView,
+                detail: RenderProcessGoneDetail
+            ): Boolean {
+
+                if (destroyed) {
+                    return true
+                }
+
+                status.text =
+                    "در حال بازیابی جستجو..."
+
+                recreateWebView()
+
+                return true
+            }
+        }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+private fun setupWebView() {
+    configureWebView(web)
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+private fun recreateWebView() {
+
+    if (destroyed) return
+
+    try {
+
+        val oldWeb = web
+
+        val parent =
+            oldWeb.parent as? android.view.ViewGroup
+                ?: return
+
+        val index =
+            parent.indexOfChild(oldWeb)
+
+        val oldParams =
+            oldWeb.layoutParams
+
+        parent.removeView(oldWeb)
 
         try {
 
-            web.stopLoading()
-            web.loadUrl(url)
+            oldWeb.removeJavascriptInterface(
+                "MusicFinder"
+            )
+
+            oldWeb.stopLoading()
+            oldWeb.loadUrl("about:blank")
+            oldWeb.removeAllViews()
+            oldWeb.destroy()
+
+        } catch (_: Exception) {
+        }
+
+        val newWeb =
+            WebView(this)
+
+        newWeb.id =
+            R.id.web
+
+        newWeb.layoutParams =
+            oldParams
+                ?: android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    1
+                )
+
+        parent.addView(
+            newWeb,
+            index.coerceAtMost(
+                parent.childCount
+            )
+        )
+
+        web = newWeb
+
+        configureWebView(web)
+
+    } catch (_: Exception) {
+
+        if (!destroyed) {
+
+            status.text =
+                "جستجو موقتاً در دسترس نیست"
+        }
+    }
+}
+
+private fun searchMusic() {
+
+    if (destroyed) return
+
+    val text =
+        query.text
+            .toString()
+            .trim()
+
+    if (text.isEmpty()) {
+
+        Toast.makeText(
+            this,
+            "نام آهنگ یا خواننده را وارد کنید",
+            Toast.LENGTH_SHORT
+        ).show()
+
+        return
+    }
+
+    /*
+     * هر جستجوی جدید یک Generation جدید دارد.
+     * این کار جلوی قاطی شدن نتایج جستجوی قبلی و جدید را می‌گیرد.
+     */
+    searchGeneration++
+
+    cancelSearchCallbacks()
+
+    resultPages = emptyList()
+    resultPageIndex = 0
+    resultGeneration = searchGeneration
+    expectedPageUrl = ""
+
+    songs.clear()
+    currentIndex = -1
+
+    resultsContainer.removeAllViews()
+
+    titleText.text = text
+    artistText.text = "در حال جستجو..."
+
+    status.text =
+        "در حال جستجوی سایت‌ها..."
+
+    seekBar.progress = 0
+
+    currentTimeText.text = "00:00"
+    durationText.text = "00:00"
+
+    vinyl.clearCover()
+    vinyl.stopRotation()
+
+    clearLyrics()
+
+    /*
+     * ServerConfig همچنان مسئول هوشمند کردن عبارت جستجو است.
+     */
+    val searchQuery =
+        ServerConfig.searchQuery(text)
+
+    val encoded =
+        try {
+
+            URLEncoder.encode(
+                searchQuery,
+                "UTF-8"
+            )
 
         } catch (_: Exception) {
 
             status.text =
-                "خطا در شروع جستجو"
+                "عبارت جستجو نامعتبر است"
 
             return
         }
 
-        val generation =
-            searchGeneration
+    /*
+     * num=50 برای گرفتن تعداد بیشتری نتیجه.
+     *
+     * hl=en:
+     * خروجی Google برای WebView پایدارتر می‌شود.
+     *
+     * gbv=1:
+     * نسخه ساده‌تر Google برای مرورگرهای embedded.
+     */
+    val url =
+        "https://www.google.com/search" +
+                "?q=$encoded" +
+                "&num=50" +
+                "&hl=en" +
+                "&gbv=1"
 
-        val timeout =
-            Runnable {
+    try {
 
-                if (
-                    !destroyed &&
-                    generation == searchGeneration
-                ) {
+        web.stopLoading()
 
-                    status.text =
-                        if (songs.isEmpty()) {
-                            "جستجو زمان‌بر شد؛ نتیجه‌ای پیدا نشد"
-                        } else {
-                            "${songs.size} نتیجه پیدا شد"
-                        }
-                }
+        web.loadUrl(url)
+
+    } catch (_: Exception) {
+
+        status.text =
+            "خطا در شروع جستجو"
+
+        return
+    }
+
+    val generation =
+        searchGeneration
+
+    val timeout =
+        Runnable {
+
+            if (
+                !destroyed &&
+                generation == searchGeneration
+            ) {
+
+                status.text =
+                    if (songs.isEmpty()) {
+                        "جستجو زمان‌بر شد؛ نتیجه‌ای پیدا نشد"
+                    } else {
+                        "${songs.size} نتیجه پیدا شد"
+                    }
+            }
+        }
+
+    searchTimeoutRunnable =
+        timeout
+
+    mainHandler.postDelayed(
+        timeout,
+        12000L
+    )
+}
+
+private fun cancelSearchCallbacks() {
+
+    searchTimeoutRunnable?.let {
+        mainHandler.removeCallbacks(it)
+    }
+
+    pageTimeoutRunnable?.let {
+        mainHandler.removeCallbacks(it)
+    }
+
+    searchTimeoutRunnable = null
+    pageTimeoutRunnable = null
+}
+
+private fun extractGoogleResults() {
+
+    if (destroyed) return
+
+    val generation =
+        searchGeneration
+
+    if (generation <= 0) return
+
+    /*
+     * دامنه‌های مجاز را از ServerConfig می‌گیریم.
+     */
+    val allowedHostsJs =
+        ServerConfig.MUSIC_SITES
+            .joinToString(",") {
+
+                "\"" +
+                        it
+                            .trim()
+                            .lowercase()
+                            .replace(
+                                "\\",
+                                "\\\\"
+                            )
+                            .replace(
+                                "\"",
+                                "\\\""
+                            ) +
+                        "\""
             }
 
-        searchTimeoutRunnable =
-            timeout
+    val script = """
+        (function() {
 
-        mainHandler.postDelayed(
-            timeout,
-            12000L
-        )
-    }
+            try {
 
-    private fun cancelSearchCallbacks() {
+                var allowedHosts = [
+                    $allowedHostsJs
+                ];
 
-        searchTimeoutRunnable?.let {
-            mainHandler.removeCallbacks(it)
-        }
+                var found = [];
 
-        pageTimeoutRunnable?.let {
-            mainHandler.removeCallbacks(it)
-        }
+                function cleanText(value) {
 
-        searchTimeoutRunnable = null
-        pageTimeoutRunnable = null
-    }
+                    if (!value) {
+                        return "";
+                    }
 
-    private fun extractGoogleResults() {
+                    return value
+                        .replace(
+                            /[\r\n\t]+/g,
+                            " "
+                        )
+                        .replace(
+                            /\s+/g,
+                            " "
+                        )
+                        .trim();
+                }
 
-        if (destroyed) return
+                function decodeUrl(value) {
 
-        val generation =
-            searchGeneration
+                    if (!value) {
+                        return "";
+                    }
 
-        if (generation <= 0) return
+                    try {
+                        return decodeURIComponent(value);
+                    } catch (e) {
+                        return value;
+                    }
+                }
 
-        val allowedHostsJs = ServerConfig.MUSIC_SITES.joinToString(",") { "\"$it\"" }
+                function getRealUrl(href) {
 
-        val script = """
-            (function() {
-                try {
-                    var allowedHosts = [$allowedHostsJs];
-                    var links =
-                        document.querySelectorAll("a");
+                    if (!href) {
+                        return "";
+                    }
 
-                    var found = [];
+                    href =
+                        href.trim();
+
+                    /*
+                     * Google redirect:
+                     *
+                     * /url?q=https://site.com/...
+                     *
+                     * /url?url=https://site.com/...
+                     */
+                    try {
+
+                        var parsed =
+                            new URL(
+                                href,
+                                window.location.href
+                            );
+
+                        var host =
+                            (
+                                parsed.hostname ||
+                                ""
+                            ).toLowerCase();
+
+                        if (
+                            host.indexOf(
+                                "google."
+                            ) >= 0
+                        ) {
+
+                            var q =
+                                parsed.searchParams.get(
+                                    "q"
+                                );
+
+                            if (
+                                q &&
+                                q.indexOf(
+                                    "http"
+                                ) === 0
+                            ) {
+
+                                return decodeUrl(q);
+                            }
+
+                            var urlParam =
+                                parsed.searchParams.get(
+                                    "url"
+                                );
+
+                            if (
+                                urlParam &&
+                                urlParam.indexOf(
+                                    "http"
+                                ) === 0
+                            ) {
+
+                                return decodeUrl(
+                                    urlParam
+                                );
+                            }
+                        }
+
+                    } catch (e) {
+                    }
+
+                    return href;
+                }
+
+                function isAllowed(url) {
+
+                    if (!url) {
+                        return false;
+                    }
+
+                    var lower =
+                        url.toLowerCase();
+
+                    if (
+                        lower.indexOf(
+                            "google.com"
+                        ) >= 0
+                    ) {
+
+                        /*
+                         * لینک Google نباید وارد
+                         * مرحله باز کردن سایت شود.
+                         */
+                        if (
+                            lower.indexOf(
+                                "google.com/url"
+                            ) >= 0
+                        ) {
+
+                            return false;
+                        }
+
+                        if (
+                            lower.indexOf(
+                                "google.com/search"
+                            ) >= 0
+                        ) {
+
+                            return false;
+                        }
+                    }
 
                     for (
                         var i = 0;
-                        i < links.length;
+                        i < allowedHosts.length;
                         i++
                     ) {
-                        var href =
-                            links[i].href || "";
 
-                        var text =
-                            links[i].innerText || "";
+                        var host =
+                            allowedHosts[i];
 
-                        var lower =
-                            href.toLowerCase();
+                        if (!host) {
+                            continue;
+                        }
 
-                        var allowed = false;
-                        for (var h = 0; h < allowedHosts.length; h++) {
-                            if (lower.indexOf(allowedHosts[h]) >= 0) {
-                                allowed = true;
+                        if (
+                            lower.indexOf(
+                                "://" + host
+                            ) >= 0 ||
+                            lower.indexOf(
+                                "://www." + host
+                            ) >= 0 ||
+                            lower.indexOf(
+                                "." + host
+                            ) >= 0
+                        ) {
+
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                var links =
+                    document.querySelectorAll(
+                        "a"
+                    );
+
+                for (
+                    var i = 0;
+                    i < links.length;
+                    i++
+                ) {
+
+                    var link =
+                        links[i];
+
+                    var href =
+                        link.href || "";
+
+                    var realUrl =
+                        getRealUrl(href);
+
+                    if (
+                        !isAllowed(realUrl)
+                    ) {
+                        continue;
+                    }
+
+                    realUrl =
+                        realUrl.split("#")[0];
+
+                    var duplicate =
+                        false;
+
+                    for (
+                        var j = 0;
+                        j < found.length;
+                        j++
+                    ) {
+
+                        if (
+                            found[j]
+                                .split("|||")[0] ===
+                            realUrl
+                        ) {
+
+                            duplicate = true;
+                            break;
+                        }
+                    }
+
+                    if (duplicate) {
+                        continue;
+                    }
+
+                    var text =
+                        cleanText(
+                            link.innerText ||
+                            link.textContent ||
+                            ""
+                        );
+
+                    if (!text) {
+
+                        text =
+                            cleanText(
+                                link.getAttribute(
+                                    "aria-label"
+                                ) || ""
+                            );
+                    }
+
+                    found.push(
+                        realUrl +
+                        "|||" +
+                        text
+                    );
+
+                    if (
+                        found.length >= 50
+                    ) {
+                        break;
+                    }
+                }
+
+                /*
+                 * بعض نسخه‌های Google لینک اصلی را
+                 * در data-href یا data-url قرار می‌دهند.
+                 */
+                if (
+                    found.length === 0
+                ) {
+
+                    var dataElements =
+                        document.querySelectorAll(
+                            "[data-href], [data-url]"
+                        );
+
+                    for (
+                        var k = 0;
+                        k < dataElements.length;
+                        k++
+                    ) {
+
+                        var element =
+                            dataElements[k];
+
+                        var dataUrl =
+                            element.getAttribute(
+                                "data-href"
+                            ) ||
+                            element.getAttribute(
+                                "data-url"
+                            ) ||
+                            "";
+
+                        var realDataUrl =
+                            getRealUrl(dataUrl);
+
+                        if (
+                            !isAllowed(
+                                realDataUrl
+                            )
+                        ) {
+                            continue;
+                        }
+
+                        realDataUrl =
+                            realDataUrl
+                                .split("#")[0];
+
+                        var duplicateData =
+                            false;
+
+                        for (
+                            var x = 0;
+                            x < found.length;
+                            x++
+                        ) {
+
+                            if (
+                                found[x]
+                                    .split("|||")[0] ===
+                                realDataUrl
+                            ) {
+
+                                duplicateData = true;
                                 break;
                             }
                         }
 
-                        if (
-                            allowed &&
-                            href.indexOf("google.com") < 0 &&
-                            found.indexOf(href) < 0
-                        ) {
-                            found.push(
-                                href + "|||" +
-                                text.replace(
-                                    /[\r\n]+/g,
-                                    " "
-                                )
+                        if (duplicateData) {
+                            continue;
+                        }
+
+                        var dataText =
+                            cleanText(
+                                element.innerText ||
+                                element.textContent ||
+                                ""
                             );
+
+                        found.push(
+                            realDataUrl +
+                            "|||" +
+                            dataText
+                        );
+
+                        if (
+                            found.length >= 50
+                        ) {
+                            break;
                         }
                     }
-
-                    MusicFinder.results(
-                        found.join("###")
-                    );
-
-                } catch (e) {
-                    MusicFinder.results("");
                 }
-            })();
-        """.trimIndent()
 
-        try {
+                MusicFinder.results(
+                    found.join("###")
+                );
 
-            web.evaluateJavascript(
-                script,
-                null
-            )
+            } catch (e) {
 
-        } catch (_: Exception) {
-
-            if (!destroyed) {
-
-                status.text =
-                    "خطا در استخراج نتایج"
+                MusicFinder.results("");
             }
+
+        })();
+    """.trimIndent()
+
+    try {
+
+        web.evaluateJavascript(
+            script,
+            null
+        )
+
+    } catch (_: Exception) {
+
+        if (!destroyed) {
+
+            status.text =
+                "خطا در استخراج نتایج"
         }
     }
+}
 
-    private fun extractMusicPage(
-        pageUrl: String
+private fun extractMusicPage(
+    pageUrl: String
+) {
+
+    if (
+        destroyed ||
+        resultGeneration != searchGeneration
+    ) {
+        return
+    }
+
+    val script = """
+        (function() {
+
+            try {
+
+                var title = "";
+                var artist = "";
+                var cover = "";
+                var audioLinks = [];
+
+                var metaTitle =
+                    document.querySelector(
+                        'meta[property="og:title"]'
+                    );
+
+                if (metaTitle) {
+
+                    title =
+                        metaTitle.content || "";
+                }
+
+                var h1 =
+                    document.querySelector("h1");
+
+                if (
+                    !title &&
+                    h1
+                ) {
+
+                    title =
+                        h1.innerText || "";
+                }
+
+                var metaArtist =
+                    document.querySelector(
+                        'meta[property="music:musician"]'
+                    );
+
+                if (metaArtist) {
+
+                    artist =
+                        metaArtist.content || "";
+                }
+
+                var image =
+                    document.querySelector(
+                        'meta[property="og:image"]'
+                    );
+
+                if (image) {
+
+                    cover =
+                        image.content || "";
+                }
+
+                /*
+                 * منابع احتمالی فایل صوتی.
+                 */
+                var media =
+                    document.querySelectorAll(
+                        "audio source, " +
+                        "audio, " +
+                        "video source, " +
+                        "video, " +
+                        "a"
+                    );
+
+                for (
+                    var i = 0;
+                    i < media.length;
+                    i++
+                ) {
+
+                    var el =
+                        media[i];
+
+                    var src =
+                        el.src ||
+                        el.href ||
+                        "";
+
+                    var lower =
+                        src.toLowerCase();
+
+                    if (
+                        lower.indexOf(".mp3") >= 0 ||
+                        lower.indexOf(".m4a") >= 0 ||
+                        lower.indexOf(".aac") >= 0 ||
+                        lower.indexOf(".ogg") >= 0 ||
+                        lower.indexOf(".wav") >= 0 ||
+                        lower.indexOf(".flac") >= 0 ||
+                        lower.indexOf("dl.") >= 0
+                    ) {
+
+                        if (
+                            audioLinks.indexOf(
+                                src
+                            ) < 0
+                        ) {
+
+                            audioLinks.push(src);
+                        }
+                    }
+                }
+
+                MusicFinder.page(
+                    encodeURIComponent(
+                        title
+                    ) +
+                    "###" +
+                    encodeURIComponent(
+                        artist
+                    ) +
+                    "###" +
+                    encodeURIComponent(
+                        cover
+                    ) +
+                    "###" +
+                    encodeURIComponent(
+                        audioLinks.join("|||")
+                    )
+                );
+
+            } catch (e) {
+
+                MusicFinder.page(
+                    "######"
+                );
+            }
+
+        })();
+    """.trimIndent()
+
+    try {
+
+        web.evaluateJavascript(
+            script,
+            null
+        )
+
+    } catch (_: Exception) {
+
+        finishCurrentResultPage()
+    }
+}
+
+private fun processNextResultPage() {
+
+    if (destroyed) return
+
+    if (
+        resultGeneration != searchGeneration
+    ) {
+        return
+    }
+
+    if (
+        resultPageIndex >= resultPages.size
     ) {
 
-        if (
-            destroyed ||
-            resultGeneration != searchGeneration
-        ) {
-            return
-        }
+        finishSearch()
 
-        val script = """
-            (function() {
-                try {
-                    var title = "";
-                    var artist = "";
-                    var cover = "";
-                    var audioLinks = [];
-
-                    var metaTitle =
-                        document.querySelector(
-                            'meta[property="og:title"]'
-                        );
-
-                    if (metaTitle) {
-                        title =
-                            metaTitle.content || "";
-                    }
-
-                    var h1 =
-                        document.querySelector("h1");
-
-                    if (!title && h1) {
-                        title =
-                            h1.innerText || "";
-                    }
-
-                    var metaArtist =
-                        document.querySelector(
-                            'meta[property="music:musician"]'
-                        );
-
-                    if (metaArtist) {
-                        artist =
-                            metaArtist.content || "";
-                    }
-
-                    var image =
-                        document.querySelector(
-                            'meta[property="og:image"]'
-                        );
-
-                    if (image) {
-                        cover =
-                            image.content || "";
-                    }
-
-                    var media =
-                        document.querySelectorAll(
-                            "audio source, audio, video source, video, a"
-                        );
-
-                    for (
-                        var i = 0;
-                        i < media.length;
-                        i++
-                    ) {
-                        var el = media[i];
-
-                        var src =
-                            el.src ||
-                            el.href ||
-                            "";
-
-                        var lower =
-                            src.toLowerCase();
-
-                        if (
-                            lower.indexOf(".mp3") >= 0 ||
-                            lower.indexOf(".m4a") >= 0 ||
-                            lower.indexOf(".aac") >= 0 ||
-                            lower.indexOf(".ogg") >= 0 ||
-                            lower.indexOf(".wav") >= 0 ||
-                            lower.indexOf(".flac") >= 0 ||
-                            lower.indexOf("dl.") >= 0
-                        ) {
-                            if (
-                                audioLinks.indexOf(src) < 0
-                            ) {
-                                audioLinks.push(src);
-                            }
-                        }
-                    }
-
-                    MusicFinder.page(
-                        encodeURIComponent(title) +
-                        "###" +
-                        encodeURIComponent(artist) +
-                        "###" +
-                        encodeURIComponent(cover) +
-                        "###" +
-                        encodeURIComponent(
-                            audioLinks.join("|||")
-                        )
-                    );
-
-                } catch (e) {
-                    MusicFinder.page(
-                        "######"
-                    );
-                }
-            })();
-        """.trimIndent()
-
-        try {
-
-            web.evaluateJavascript(
-                script,
-                null
-            )
-
-        } catch (_: Exception) {
-
-            finishCurrentResultPage()
-        }
+        return
     }
 
-    inner class Bridge {
+    val raw =
+        resultPages[resultPageIndex]
 
-        @JavascriptInterface
-        fun results(
-            data: String
-        ) {
+    val url =
+        raw.substringBefore("|||")
+            .trim()
 
-            runOnUiThread {
+    resultPageIndex++
 
-                if (destroyed) {
-                    return@runOnUiThread
-                }
+    if (
+        url.isBlank() ||
+        !url.startsWith(
+            "http",
+            ignoreCase = true
+        )
+    ) {
 
-                val items =
-                    data.split("###")
-                        .map {
-                            it.trim()
-                        }
-                        .filter {
-                            it.isNotEmpty()
-                        }
-                        .take(50)
+        processNextResultPage()
 
-                if (items.isEmpty()) {
+        return
+    }
 
-                    status.text =
-                        "نتیجه‌ای پیدا نشد"
+    expectedPageUrl =
+        url
 
-                    return@runOnUiThread
-                }
+    pageTimeoutRunnable?.let {
+        mainHandler.removeCallbacks(it)
+    }
 
-                status.text =
-                    "در حال بررسی نتایج..."
+    val generation =
+        searchGeneration
 
-                resultPages = items
-                resultPageIndex = 0
+    val timeout =
+        Runnable {
 
-                resultGeneration =
-                    searchGeneration
+            if (
+                !destroyed &&
+                generation == searchGeneration
+            ) {
 
                 processNextResultPage()
             }
         }
 
-        @JavascriptInterface
-        fun page(
-            data: String
-        ) {
+    pageTimeoutRunnable =
+        timeout
 
-            runOnUiThread {
+    mainHandler.postDelayed(
+        timeout,
+        3500L
+    )
 
-                if (destroyed) {
-                    return@runOnUiThread
-                }
+    try {
 
-                if (
-                    resultGeneration !=
-                    searchGeneration
-                ) {
-                    return@runOnUiThread
-                }
+        web.loadUrl(url)
 
-                val parts =
-                    data.split("###")
+    } catch (_: Exception) {
 
-                if (parts.size < 4) {
+        finishCurrentResultPage()
+    }
+}
 
-                    finishCurrentResultPage()
+private fun finishCurrentResultPage() {
 
-                    return@runOnUiThread
-                }
-
-                val title =
-                    decode(parts[0])
-
-                val artist =
-                    decode(parts[1])
-
-                val cover =
-                    decode(parts[2])
-
-                val audioString =
-                    decode(parts[3])
-
-                val audio =
-                    audioString
-                        .split("|||")
-                        .firstOrNull {
-                            it.isNotBlank()
-                        }
-                        ?: ""
-
-                if (audio.isBlank()) {
-
-                    finishCurrentResultPage()
-
-                    return@runOnUiThread
-                }
-
-                val pageUrl =
-                    web.url
-                        ?: expectedPageUrl
-
-                val song =
-                    SongResult(
-                        url = audio.trim(),
-
-                        title =
-                            if (title.isBlank()) {
-                                query.text
-                                    .toString()
-                                    .trim()
-                            } else {
-                                cleanTitle(title)
-                            },
-
-                        artist =
-                            if (artist.isBlank()) {
-                                query.text
-                                    .toString()
-                                    .trim()
-                            } else {
-                                artist.trim()
-                            },
-
-                        site =
-                            getSiteName(pageUrl),
-
-                        cover =
-                            cover.trim()
-                    )
-
-                addSong(song)
-
-                finishCurrentResultPage()
-            }
-        }
+    pageTimeoutRunnable?.let {
+        mainHandler.removeCallbacks(it)
     }
 
-    private fun processNextResultPage() {
+    pageTimeoutRunnable = null
 
-        if (destroyed) return
+    if (destroyed) return
 
-        if (
-            resultGeneration != searchGeneration
-        ) {
-            return
-        }
-
-        if (
-            resultPageIndex >= resultPages.size
-        ) {
-
-            finishSearch()
-
-            return
-        }
-
-        val raw =
-            resultPages[resultPageIndex]
-
-        val url =
-            raw.substringBefore("|||")
-                .trim()
-
-        resultPageIndex++
-
-        if (
-            url.isBlank() ||
-            !url.startsWith(
-                "http",
-                ignoreCase = true
-            )
-        ) {
-
-            processNextResultPage()
-
-            return
-        }
-
-        expectedPageUrl = url
-
-        pageTimeoutRunnable?.let {
-            mainHandler.removeCallbacks(it)
-        }
-
-        val generation =
-            searchGeneration
-
-        val timeout =
-            Runnable {
-
-                if (
-                    !destroyed &&
-                    generation == searchGeneration
-                ) {
-
-                    processNextResultPage()
-                }
-            }
-
-        pageTimeoutRunnable =
-            timeout
-
-        mainHandler.postDelayed(
-            timeout,
-            3500L
-        )
-
-        try {
-
-            web.loadUrl(url)
-
-        } catch (_: Exception) {
-
-            finishCurrentResultPage()
-        }
+    if (
+        resultGeneration != searchGeneration
+    ) {
+        return
     }
 
-    private fun finishCurrentResultPage() {
+    processNextResultPage()
+}
 
-        pageTimeoutRunnable?.let {
-            mainHandler.removeCallbacks(it)
+private fun finishSearch() {
+
+    if (destroyed) return
+
+    cancelSearchCallbacks()
+
+    status.text =
+        if (songs.isEmpty()) {
+            "آهنگ قابل پخش پیدا نشد"
+        } else {
+            "${songs.size} نتیجه پیدا شد"
         }
 
-        pageTimeoutRunnable = null
+    if (
+        songs.isNotEmpty() &&
+        currentIndex == -1
+    ) {
 
-        if (destroyed) return
-
-        if (
-            resultGeneration != searchGeneration
-        ) {
-            return
-        }
-
-        processNextResultPage()
+        currentIndex = 0
     }
 
-    private fun finishSearch() {
+    saveSearchResults()
+} {
 
         if (destroyed) return
 
