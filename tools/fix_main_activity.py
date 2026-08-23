@@ -1,14 +1,10 @@
 from pathlib import Path
-import re
 
 path = Path("app/src/main/java/com/kafshar/musicfinder/MainActivity.kt")
 text = path.read_text(encoding="utf-8")
 
-setup = r'''
-    private fun setupButtons() {
-        findViewById<TextView>(R.id.search).setOnClickListener {
-            searchMusic()
-        }
+setup = r'''    private fun setupButtons() {
+        findViewById<TextView>(R.id.search).setOnClickListener { searchMusic() }
 
         query.setOnEditorActionListener { _, actionId, event ->
             val submit = actionId == EditorInfo.IME_ACTION_SEARCH ||
@@ -17,9 +13,7 @@ setup = r'''
             if (submit) {
                 searchMusic()
                 true
-            } else {
-                false
-            }
+            } else false
         }
 
         playButton.setOnClickListener {
@@ -48,9 +42,7 @@ setup = r'''
             if (randomMode && songs.isNotEmpty()) {
                 val nextIndex = if (songs.size == 1) 0 else {
                     var value: Int
-                    do {
-                        value = java.util.Random().nextInt(songs.size)
-                    } while (value == currentIndex)
+                    do { value = java.util.Random().nextInt(songs.size) } while (value == currentIndex)
                     value
                 }
                 currentIndex = nextIndex
@@ -77,11 +69,8 @@ setup = r'''
         pauseDownloadButton.setOnClickListener { toggleDownloadPause() }
         saveButton.setOnClickListener { saveCurrentSong() }
         libraryButton.setOnClickListener {
-            try {
-                startActivity(Intent(this, LibraryActivity::class.java))
-            } catch (_: Exception) {
-                Toast.makeText(this, "کتابخانه در دسترس نیست", Toast.LENGTH_SHORT).show()
-            }
+            try { startActivity(Intent(this, LibraryActivity::class.java)) }
+            catch (_: Exception) { Toast.makeText(this, "کتابخانه در دسترس نیست", Toast.LENGTH_SHORT).show() }
         }
         historyButton.setOnClickListener { toggleHistory() }
     }
@@ -94,14 +83,12 @@ if "private fun setupButtons()" not in text:
         raise SystemExit("setupVolumeControl marker not found")
     text = text.replace(marker, setup + marker, 1)
 
-bridge = r'''
-    private inner class Bridge {
+bridge = r'''    private inner class Bridge {
         @JavascriptInterface
         fun results(raw: String?) {
             runOnUiThread {
                 if (destroyed) return@runOnUiThread
-                val generation = searchGeneration
-                resultGeneration = generation
+                resultGeneration = searchGeneration
                 resultPageIndex = 0
                 resultPages = raw.orEmpty()
                     .split("###")
@@ -140,15 +127,17 @@ bridge = r'''
                     .orEmpty()
 
                 if (audioUrl.isNotBlank()) {
-                    addSong(
-                        SongResult(
-                            url = audioUrl,
-                            title = title,
-                            artist = artist,
-                            site = getSiteName(expectedPageUrl),
-                            cover = cover
-                        )
+                    val song = SongResult(
+                        url = audioUrl,
+                        title = title,
+                        artist = artist,
+                        site = getSiteName(expectedPageUrl),
+                        cover = cover
                     )
+                    if (songs.none { it.url == song.url }) {
+                        songs.add(song)
+                        addSongView(song, songs.lastIndex)
+                    }
                 }
 
                 finishCurrentResultPage()
@@ -164,12 +153,15 @@ if "private inner class Bridge" not in text:
         raise SystemExit("configureWebView marker not found")
     text = text.replace(marker, bridge + marker, 1)
 
-# Repair the corrupted duplicated finishSearch declaration/body.
-pattern = re.compile(
-    r'    private fun finishSearch\(\) \{.*?\n    private fun addSong\(',
-    re.S,
-)
-replacement = '''    private fun finishSearch() {
+# Remove every broken/duplicated finishSearch declaration and insert one clean version.
+marker = "    private fun finishSearch()"
+start = text.find(marker)
+if start >= 0:
+    end_marker = "\n    private fun addSong("
+    end = text.find(end_marker, start)
+    if end < 0:
+        raise SystemExit("addSong marker not found after finishSearch")
+    clean = '''    private fun finishSearch() {
 
         if (destroyed) return
 
@@ -182,22 +174,30 @@ replacement = '''    private fun finishSearch() {
                 "${songs.size} نتیجه پیدا شد"
             }
 
-        if (
-            songs.isNotEmpty() &&
-            currentIndex == -1
-        ) {
+        if (songs.isNotEmpty() && currentIndex == -1) {
             currentIndex = 0
         }
 
         saveSearchResults()
     }
+'''
+    text = text[:start] + clean + text[end:]
+else:
+    marker = "    private fun saveSearchResults()"
+    if marker not in text:
+        raise SystemExit("saveSearchResults marker not found")
+    clean = '''    private fun finishSearch() {
 
-    private fun addSong('''
+        if (destroyed) return
 
-new_text, count = pattern.subn(replacement, text, count=1)
-if count != 1:
-    raise SystemExit("corrupted finishSearch block not found")
-text = new_text
+        cancelSearchCallbacks()
+        status.text = if (songs.isEmpty()) "آهنگ قابل پخش پیدا نشد" else "${songs.size} نتیجه پیدا شد"
+        if (songs.isNotEmpty() && currentIndex == -1) currentIndex = 0
+        saveSearchResults()
+    }
+
+'''
+    text = text.replace(marker, clean + marker, 1)
 
 path.write_text(text, encoding="utf-8")
 print("MainActivity.kt repaired")
