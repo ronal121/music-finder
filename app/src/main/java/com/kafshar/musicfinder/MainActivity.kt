@@ -3378,7 +3378,29 @@ private fun finishSearch() {
         }
     }
 
-    override fun onStart() {
+   override fun onStart() {
+    super.onStart()
+
+    if (receiverRegistered) {
+        return
+    }
+
+    val filter = IntentFilter(MusicService.UPDATE)
+
+    try {
+        ContextCompat.registerReceiver(
+            this,
+            playerReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+
+        receiverRegistered = true
+
+    } catch (_: Exception) {
+        receiverRegistered = false
+    }
+}
 
         super.onStart()
 
