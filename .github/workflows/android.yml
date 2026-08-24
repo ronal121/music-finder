@@ -40,6 +40,9 @@ jobs:
             git push
           fi
 
+      - name: Run tests
+        run: gradle --no-daemon --stacktrace test
+
       - name: Build APK
         run: gradle --no-daemon --stacktrace assembleDebug
 
