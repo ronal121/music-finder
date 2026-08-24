@@ -77,17 +77,32 @@ object ServerConfig {
     }
 
     /**
-     * Keep the Google request short and reliable. The previous implementation
-     * put every configured domain into one huge OR expression; Google/WebView
-     * could return an empty/blocked result for that request. We intentionally
-     * search normally here and let MainActivity filter extracted URLs against
-     * MUSIC_SITES. This preserves all configured sources without a giant query.
+     * Build a Google query that strongly prefers the configured music sources.
+     *
+     * The old query was only "$song music". Google could therefore spend the
+     * first result pages on YouTube, Spotify, Wikipedia, lyrics sites, etc.
+     * MainActivity intentionally filters those URLs out, which often resulted
+     * in zero usable results. We now add a compact OR group of the highest
+     * priority configured domains. The complete server registry is still kept
+     * for filtering and playback; only the Google discovery query is narrowed.
      */
     fun searchQuery(song: String): String {
         val normalized = SearchEngine.correctedQuery(song)
             .trim().replace(Regex("\\s+"), " ")
         if (normalized.isBlank()) return "music"
-        return "$normalized music"
+
+        val domains = SERVERS.asSequence()
+            .filter { it.enabled && it.supportsSearch }
+            .sortedByDescending { it.priority }
+            .take(12)
+            .map { "site:${it.domain}" }
+            .joinToString(" OR ")
+
+        return if (domains.isBlank()) {
+            "$normalized music"
+        } else {
+            "($normalized) music ($domains)"
+        }
     }
 
     fun siteName(url: String): String {
