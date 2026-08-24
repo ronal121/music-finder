@@ -17,9 +17,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.text.method.ScrollingMovementMethod
 import android.provider.MediaStore
-import android.util.LruCache
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -37,15 +35,15 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
-import java.io.BufferedInputStream
-import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+
 
 data class SongResult(
     val url: String,
@@ -63,508 +61,198 @@ class MainActivity : Activity() {
     private lateinit var titleText: TextView
     private lateinit var artistText: TextView
     private lateinit var lyricsText: TextView
-
     private lateinit var playButton: TextView
     private lateinit var previousButton: TextView
     private lateinit var nextButton: TextView
     private lateinit var randomButton: TextView
-
     private lateinit var seekBar: SeekBar
     private lateinit var volumeSeekBar: SeekBar
     private lateinit var volumeText: TextView
-
     private lateinit var currentTimeText: TextView
     private lateinit var durationText: TextView
-
     private lateinit var downloadButton: TextView
     private lateinit var cancelDownloadButton: TextView
     private lateinit var pauseDownloadButton: TextView
     private lateinit var downloadProgress: ProgressBar
     private lateinit var downloadText: TextView
-
     private lateinit var saveButton: TextView
     private lateinit var libraryButton: TextView
     private lateinit var historyButton: TextView
-
     private lateinit var historyContainer: LinearLayout
     private lateinit var resultsContainer: LinearLayout
     private lateinit var vinyl: VinylView
 
-    private val turquoiseColor =
-        0xFF20C9C9.toInt()
-
-    private val turquoiseDarkColor =
-        0xFF119999.toInt()
-
-    private val songs =
-        ArrayList<SongResult>()
-
-    private val mainHandler =
-        Handler(Looper.getMainLooper())
-
-    private val imageExecutor =
-        Executors.newFixedThreadPool(2)
-
-    private val downloadExecutor =
-        Executors.newSingleThreadExecutor()
-
-    private val coverCache =
-        object : LruCache<String, Bitmap>(
-            (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt()
-        ) {
-            override fun sizeOf(
-                key: String,
-                bitmap: Bitmap
-            ): Int {
-                return bitmap.byteCount / 1024
-            }
-        }
-
+    private val turquoiseColor = 0xFF20C9C9.toInt()
+    private val songs = ArrayList<SongResult>()
+    private val handler = Handler(Looper.getMainLooper())
+    private val io = Executors.newFixedThreadPool(3)
+    private val downloadExecutor = Executors.newSingleThreadExecutor()
+    private var downloadFuture: Future<*>? = null
     private var currentIndex = -1
     private var currentAudioUrl = ""
     private var currentSong: SongResult? = null
-
     private var randomMode = false
     private var destroyed = false
     private var receiverRegistered = false
-
     private var searchGeneration = 0
-
     private var resultPages: List<String> = emptyList()
     private var resultPageIndex = 0
     private var resultGeneration = 0
     private var expectedPageUrl = ""
-
-    private var searchTimeoutRunnable: Runnable? = null
-    private var pageTimeoutRunnable: Runnable? = null
-
-    private var downloadFuture: Future<*>? = null
-
-    @Volatile
+    private var searchTimeout: Runnable? = null
+    private var pageTimeout: Runnable? = null
     private var cancelDownloadRequested = false
-
-    @Volatile
     private var pauseDownloadRequested = false
-
-    @Volatile
     private var activeConnection: HttpURLConnection? = null
 
-    private var lastProgressUpdate = 0L
-    private var lastProgressValue = -1
-
-    private var lyricsRequestKey = ""
-    private var lyricsRequestGeneration = 0
-
-    private val playerReceiver =
-        object : BroadcastReceiver() {
-
-            override fun onReceive(
-                context: Context?,
-                intent: Intent?
-            ) {
-                if (destroyed) return
-
-                if (intent?.action != MusicService.UPDATE) {
-                    return
+    private val playerReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (destroyed || intent?.action != MusicService.UPDATE) return
+            val playing = intent.getBooleanExtra("playing", false)
+            val position = intent.getLongExtra("position", 0L)
+            val duration = intent.getLongExtra("duration", 0L)
+            val title = intent.getStringExtra(MusicService.EXTRA_TITLE).orEmpty()
+            val artist = intent.getStringExtra(MusicService.EXTRA_ARTIST).orEmpty()
+            val volume = intent.getIntExtra(MusicService.EXTRA_VOLUME, -1)
+            val mediaUrl = intent.getStringExtra(MusicService.EXTRA_URL).orEmpty()
+            runOnUiThread {
+                if (destroyed) return@runOnUiThread
+                updatePlayerProgress(playing, position, duration)
+                if (title.isNotBlank()) titleText.text = title
+                if (artist.isNotBlank()) artistText.text = artist
+                if (volume in 0..100) {
+                    volumeSeekBar.progress = volume
+                    volumeText.text = "$volume%"
                 }
-
-                val playing =
-                    intent.getBooleanExtra(
-                        "playing",
-                        false
-                    )
-
-                val position =
-                    intent.getLongExtra(
-                        "position",
-                        0L
-                    )
-
-                val duration =
-                    intent.getLongExtra(
-                        "duration",
-                        0L
-                    )
-
-                val title =
-                    intent.getStringExtra(
-                        "title"
-                    ) ?: ""
-
-                val artist =
-                    intent.getStringExtra(
-                        "artist"
-                    ) ?: ""
-
-                val volume =
-                    intent.getIntExtra(
-                        "volume",
-                        -1
-                    )
-
-                val mediaUrl = intent.getStringExtra("mediaUrl") ?: ""
-
-                runOnUiThread {
-
-                    if (destroyed) {
-                        return@runOnUiThread
-                    }
-
-                    updatePlayerProgress(
-                        playing,
-                        position,
-                        duration
-                    )
-
-                    if (title.isNotBlank()) {
-                        titleText.text = title
-                    }
-
-                    if (artist.isNotBlank()) {
-                        artistText.text = artist
-                    }
-
-                    if (title.isNotBlank() && artist.isNotBlank()) {
-                        loadLyricsFor(title, artist)
-                    }
-
-                    if (volume in 0..100) {
-                        volumeSeekBar.progress = volume
-                        volumeText.text = "$volume%"
-                    }
-
-                    if (mediaUrl.isNotBlank()) updateActiveResultHighlight(mediaUrl)
-                }
+                if (mediaUrl.isNotBlank()) updateActiveResultHighlight(mediaUrl)
             }
         }
+    }
 
-    override fun onCreate(
-        savedInstanceState: Bundle?
-    ) {
+    override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         destroyed = false
-
-        setContentView(
-            R.layout.activity_main
-        )
-
+        setContentView(R.layout.activity_main)
         bindViews()
         setupWebView()
         setupButtons()
         setupVolumeControl()
         applyTurquoiseButtonStyle()
         restoreSearchResults()
-
         requestNotificationPermission()
-
-        status.text =
-            "نام آهنگ یا خواننده را جستجو کنید"
+        status.text = "نام آهنگ یا خواننده را جستجو کنید"
     }
 
     private fun bindViews() {
-
-        query =
-            findViewById(R.id.query)
-
-        status =
-            findViewById(R.id.status)
-
-        titleText =
-            findViewById(R.id.titleText)
-
-        artistText =
-            findViewById(R.id.artistText)
-
-        lyricsText =
-            findViewById(R.id.lyricsText)
-        lyricsText.movementMethod = ScrollingMovementMethod()
-
-        playButton =
-            findViewById(R.id.playButton)
-
-        previousButton =
-            findViewById(R.id.previousButton)
-
-        nextButton =
-            findViewById(R.id.nextButton)
-
-        randomButton =
-            findViewById(R.id.randomButton)
-
-        seekBar =
-            findViewById(R.id.seekBar)
-
-        volumeSeekBar =
-            findViewById(R.id.volumeSeekBar)
-
-        volumeText =
-            findViewById(R.id.volumeText)
-
-        currentTimeText =
-            findViewById(R.id.currentTimeText)
-
-        durationText =
-            findViewById(R.id.durationText)
-
-        downloadButton =
-            findViewById(R.id.downloadButton)
-
-        cancelDownloadButton =
-            findViewById(R.id.cancelDownloadButton)
-
-        pauseDownloadButton =
-            findViewById(R.id.pauseDownloadButton)
-
-        downloadProgress =
-            findViewById(R.id.downloadProgress)
-
-        downloadText =
-            findViewById(R.id.downloadText)
-
-        saveButton =
-            findViewById(R.id.saveButton)
-
-        libraryButton =
-            findViewById(R.id.libraryButton)
-
-        historyButton =
-            findViewById(R.id.historyButton)
-
-        historyContainer =
-            findViewById(R.id.historyContainer)
-
-        resultsContainer =
-            findViewById(R.id.resultsContainer)
-
-        vinyl =
-            findViewById(R.id.vinyl)
-
-        web =
-            findViewById(R.id.web)
+        query = findViewById(R.id.query)
+        status = findViewById(R.id.status)
+        titleText = findViewById(R.id.titleText)
+        artistText = findViewById(R.id.artistText)
+        lyricsText = findViewById(R.id.lyricsText)
+        playButton = findViewById(R.id.playButton)
+        previousButton = findViewById(R.id.previousButton)
+        nextButton = findViewById(R.id.nextButton)
+        randomButton = findViewById(R.id.randomButton)
+        seekBar = findViewById(R.id.seekBar)
+        volumeSeekBar = findViewById(R.id.volumeSeekBar)
+        volumeText = findViewById(R.id.volumeText)
+        currentTimeText = findViewById(R.id.currentTimeText)
+        durationText = findViewById(R.id.durationText)
+        downloadButton = findViewById(R.id.downloadButton)
+        cancelDownloadButton = findViewById(R.id.cancelDownloadButton)
+        pauseDownloadButton = findViewById(R.id.pauseDownloadButton)
+        downloadProgress = findViewById(R.id.downloadProgress)
+        downloadText = findViewById(R.id.downloadText)
+        saveButton = findViewById(R.id.saveButton)
+        libraryButton = findViewById(R.id.libraryButton)
+        historyButton = findViewById(R.id.historyButton)
+        historyContainer = findViewById(R.id.historyContainer)
+        resultsContainer = findViewById(R.id.resultsContainer)
+        vinyl = findViewById(R.id.vinyl)
     }
 
     private fun setupButtons() {
         findViewById<TextView>(R.id.search).setOnClickListener { searchMusic() }
-
         query.setOnEditorActionListener { _, actionId, event ->
             val submit = actionId == EditorInfo.IME_ACTION_SEARCH ||
-                    actionId == EditorInfo.IME_ACTION_DONE ||
-                    (event != null && event.keyCode == android.view.KeyEvent.KEYCODE_ENTER)
-            if (submit) {
-                searchMusic()
-                true
-            } else false
+                actionId == EditorInfo.IME_ACTION_DONE ||
+                (event != null && event.keyCode == android.view.KeyEvent.KEYCODE_ENTER)
+            if (submit) { searchMusic(); true } else false
         }
-
         playButton.setOnClickListener {
             if (currentAudioUrl.isBlank()) {
-                if (songs.isNotEmpty()) {
-                    currentIndex = currentIndex.coerceIn(0, songs.lastIndex)
-                    playSong(songs[currentIndex])
-                }
+                if (songs.isNotEmpty()) playSong(songs[currentIndex.coerceIn(0, songs.lastIndex)])
             } else {
-                sendServiceAction(
-                    MusicService.ACTION_TOGGLE,
-                    currentAudioUrl,
-                    titleText.text.toString(),
-                    artistText.text.toString(),
-                    currentSong?.cover.orEmpty()
-                )
+                sendServiceAction(MusicService.ACTION_TOGGLE, currentAudioUrl, titleText.text.toString(), artistText.text.toString(), currentSong?.cover.orEmpty())
             }
         }
-
         previousButton.setOnClickListener { previousSong() }
         nextButton.setOnClickListener { nextSong() }
-
         randomButton.setOnClickListener {
             randomMode = !randomMode
             randomButton.text = if (randomMode) "🔀✓" else "🔀"
-            if (randomMode && songs.isNotEmpty()) {
-                val nextIndex = if (songs.size == 1) 0 else {
-                    var value: Int
-                    do { value = java.util.Random().nextInt(songs.size) } while (value == currentIndex)
-                    value
-                }
-                currentIndex = nextIndex
-                playSong(songs[nextIndex])
-            }
+            if (randomMode && songs.isNotEmpty()) nextSong()
         }
-
         seekBar.max = 100
         seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) = Unit
-            override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                val percent = seekBar?.progress?.coerceIn(0, 100) ?: return
-                val intent = Intent(this@MainActivity, MusicService::class.java).apply {
+            override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) = Unit
+            override fun onStartTrackingTouch(s: SeekBar?) = Unit
+            override fun onStopTrackingTouch(s: SeekBar?) {
+                val percent = s?.progress?.coerceIn(0, 100) ?: return
+                safelyStartService(Intent(this@MainActivity, MusicService::class.java).apply {
                     action = MusicService.ACTION_SEEK_PERCENT
                     putExtra(MusicService.EXTRA_PERCENT, percent)
-                }
-                safelyStartService(intent)
+                })
             }
         })
-
         downloadButton.setOnClickListener { downloadCurrentSong() }
         cancelDownloadButton.setOnClickListener { cancelDownload() }
         pauseDownloadButton.setOnClickListener { toggleDownloadPause() }
         saveButton.setOnClickListener { saveCurrentSong() }
-        libraryButton.setOnClickListener {
-            try { startActivity(Intent(this, LibraryActivity::class.java)) }
-            catch (_: Exception) { Toast.makeText(this, "کتابخانه در دسترس نیست", Toast.LENGTH_SHORT).show() }
-        }
+        libraryButton.setOnClickListener { startActivity(Intent(this, LibraryActivity::class.java)) }
         historyButton.setOnClickListener { toggleHistory() }
     }
 
     private fun setupVolumeControl() {
-
-        val prefs =
-            getSharedPreferences(
-                "player_settings",
-                MODE_PRIVATE
-            )
-
-        val savedVolume =
-            prefs.getInt(
-                "volume_percent",
-                80
-            ).coerceIn(0, 100)
-
+        val prefs = getSharedPreferences("player_settings", MODE_PRIVATE)
+        val saved = prefs.getInt("volume_percent", 80).coerceIn(0, 100)
         volumeSeekBar.max = 100
-        volumeSeekBar.progress = savedVolume
-        volumeText.text = "$savedVolume%"
-
-        volumeSeekBar.progressTintList =
-            ColorStateList.valueOf(
-                turquoiseColor
-            )
-
-        volumeSeekBar.thumbTintList =
-            ColorStateList.valueOf(
-                turquoiseColor
-            )
-
-        volumeSeekBar.setOnSeekBarChangeListener(
-            object : SeekBar.OnSeekBarChangeListener {
-
-                override fun onProgressChanged(
-                    seekBar: SeekBar?,
-                    progress: Int,
-                    fromUser: Boolean
-                ) {
-
-                    val volume =
-                        progress.coerceIn(0, 100)
-
-                    volumeText.text =
-                        "$volume%"
-
-                    if (!fromUser) {
-                        return
-                    }
-
-                    prefs.edit()
-                        .putInt(
-                            "volume_percent",
-                            volume
-                        )
-                        .apply()
-
-                    val intent =
-                        Intent(
-                            this@MainActivity,
-                            MusicService::class.java
-                        ).apply {
-
-                            action =
-                                MusicService.ACTION_SET_VOLUME
-
-                            putExtra(
-                                MusicService.EXTRA_VOLUME,
-                                volume
-                            )
-                        }
-
-                    safelyStartService(intent)
-                }
-
-                override fun onStartTrackingTouch(
-                    seekBar: SeekBar?
-                ) {
-                }
-
-                override fun onStopTrackingTouch(
-                    seekBar: SeekBar?
-                ) {
+        volumeSeekBar.progress = saved
+        volumeText.text = "$saved%"
+        volumeSeekBar.progressTintList = ColorStateList.valueOf(turquoiseColor)
+        volumeSeekBar.thumbTintList = ColorStateList.valueOf(turquoiseColor)
+        volumeSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar?, progress: Int, fromUser: Boolean) {
+                val value = progress.coerceIn(0, 100)
+                volumeText.text = "$value%"
+                if (fromUser) {
+                    prefs.edit().putInt("volume_percent", value).apply()
+                    safelyStartService(Intent(this@MainActivity, MusicService::class.java).apply {
+                        action = MusicService.ACTION_SET_VOLUME
+                        putExtra(MusicService.EXTRA_VOLUME, value)
+                    })
                 }
             }
-        )
+            override fun onStartTrackingTouch(s: SeekBar?) = Unit
+            override fun onStopTrackingTouch(s: SeekBar?) = Unit
+        })
     }
 
     private fun applyTurquoiseButtonStyle() {
-
-        val buttons =
-            listOf(
-                playButton,
-                previousButton,
-                nextButton,
-                randomButton,
-                findViewById<TextView>(R.id.search),
-                downloadButton,
-                cancelDownloadButton,
-                pauseDownloadButton,
-                saveButton,
-                libraryButton,
-                historyButton
-            )
-
-        seekBar.progressTintList =
-            ColorStateList.valueOf(turquoiseColor)
-
-        seekBar.thumbTintList =
-            ColorStateList.valueOf(turquoiseColor)
-
-        buttons.forEach { button ->
-
-            try {
-
-                button.setTextColor(
-                    0xFFFFFFFF.toInt()
-                )
-
-                button.backgroundTintList =
-                    ColorStateList.valueOf(
-                        turquoiseColor
-                    )
-
-            } catch (_: Exception) {
-
-                button.setTextColor(
-                    0xFFFFFFFF.toInt()
-                )
-
-                button.setBackgroundColor(
-                    turquoiseColor
-                )
-            }
+        val buttons = listOf(playButton, previousButton, nextButton, randomButton,
+            findViewById<TextView>(R.id.search), downloadButton, cancelDownloadButton,
+            pauseDownloadButton, saveButton, libraryButton, historyButton)
+        seekBar.progressTintList = ColorStateList.valueOf(turquoiseColor)
+        seekBar.thumbTintList = ColorStateList.valueOf(turquoiseColor)
+        buttons.forEach {
+            try { it.backgroundTintList = ColorStateList.valueOf(turquoiseColor) } catch (_: Exception) {}
+            it.setTextColor(0xFFFFFFFF.toInt())
         }
     }
 
     private fun requestNotificationPermission() {
-
-        if (
-            Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(
-                Manifest.permission.POST_NOTIFICATIONS
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-
-            requestPermissions(
-                arrayOf(
-                    Manifest.permission.POST_NOTIFICATIONS
-                ),
-                500
-            )
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 500)
         }
     }
 
@@ -575,1381 +263,433 @@ class MainActivity : Activity() {
                 if (destroyed) return@runOnUiThread
                 resultGeneration = searchGeneration
                 resultPageIndex = 0
-                resultPages = raw.orEmpty()
-                    .split("###")
+                resultPages = raw.orEmpty().split("###")
                     .map { it.trim() }
-                    .filter { it.substringBefore("|||").startsWith("http", ignoreCase = true) }
+                    .filter { it.substringBefore("|||").startsWith("http", true) }
                     .distinctBy { it.substringBefore("|||") }
                     .take(50)
-
-                if (resultPages.isEmpty()) {
-                    finishSearch()
-                } else {
-                    status.text = "در حال بررسی ${resultPages.size} نتیجه..."
-                    processNextResultPage()
-                }
+                if (resultPages.isEmpty()) finishSearch() else processNextResultPage()
             }
         }
-
         @JavascriptInterface
         fun page(raw: String?) {
             runOnUiThread {
                 if (destroyed || resultGeneration != searchGeneration) return@runOnUiThread
-
                 val parts = raw.orEmpty().split("###", limit = 4)
-                if (parts.size < 4) {
-                    finishCurrentResultPage()
-                    return@runOnUiThread
-                }
-
+                if (parts.size < 4) { finishCurrentResultPage(); return@runOnUiThread }
                 val title = cleanTitle(decode(parts[0])).ifBlank { "Music" }
                 val artist = decode(parts[1]).trim().ifBlank { "Unknown Artist" }
                 val cover = decode(parts[2]).trim()
-                val audioRaw = decode(parts[3]).trim()
-                val audioUrl = audioRaw.split("|||")
-                    .map { it.trim() }
-                    .firstOrNull { it.startsWith("http", ignoreCase = true) }
-                    .orEmpty()
-
-                if (audioUrl.isNotBlank()) {
-                    val song = SongResult(
-                        url = audioUrl,
-                        title = title,
-                        artist = artist,
-                        site = getSiteName(expectedPageUrl),
-                        cover = cover
-                    )
+                val audio = decode(parts[3]).split("|||").map { it.trim() }
+                    .firstOrNull { it.startsWith("http", true) }.orEmpty()
+                if (audio.isNotBlank() && ServerConfig.isAllowedMediaUrl(audio)) {
+                    val song = SongResult(audio, title, artist, getSiteName(expectedPageUrl), cover)
                     if (songs.none { it.url == song.url }) {
                         songs.add(song)
                         addSongView(song, songs.lastIndex)
                     }
                 }
-
                 finishCurrentResultPage()
             }
         }
     }
 
-@SuppressLint("SetJavaScriptEnabled")
-private fun configureWebView(
-    view: WebView
-) {
-
-    view.settings.apply {
-
-        javaScriptEnabled = true
-        domStorageEnabled = true
-
-        mediaPlaybackRequiresUserGesture = false
-
-        allowFileAccess = false
-        allowContentAccess = false
-
-        javaScriptCanOpenWindowsAutomatically = false
-        setSupportMultipleWindows(false)
-
-        userAgentString =
-            "Mozilla/5.0 (Linux; Android 12) " +
-                    "AppleWebKit/537.36 " +
-                    "(KHTML, like Gecko) " +
-                    "Chrome/128 Mobile Safari/537.36"
-    }
-
-    view.setLayerType(
-        View.LAYER_TYPE_HARDWARE,
-        null
-    )
-
-    view.addJavascriptInterface(
-        Bridge(),
-        "MusicFinder"
-    )
-
-    view.webViewClient =
-        object : WebViewClient() {
-
-            override fun shouldOverrideUrlLoading(
-                view: WebView,
-                request: WebResourceRequest
-            ): Boolean {
-
-                val url =
-                    request.url.toString()
-
-                /*
-                 * Google باید داخل WebView باز بماند.
-                 * قبلاً اینجا ServerConfig.isAllowedPageUrl()
-                 * باعث می‌شد redirect های Google مسدود شوند.
-                 */
-                if (
-                    url.contains(
-                        "google.com",
-                        ignoreCase = true
-                    ) ||
-                    url.contains(
-                        "googleusercontent.com",
-                        ignoreCase = true
-                    ) ||
-                    url.contains(
-                        "gstatic.com",
-                        ignoreCase = true
-                    )
-                ) {
-                    return false
-                }
-
-                /*
-                 * سایت‌های موسیقی مجاز
-                 */
-                if (
-                    ServerConfig.isAllowedPageUrl(url)
-                ) {
-                    return false
-                }
-
-                return true
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun setupWebView() {
+        web = findViewById(R.id.web)
+        web.settings.javaScriptEnabled = true
+        web.settings.domStorageEnabled = true
+        web.settings.mediaPlaybackRequiresUserGesture = false
+        web.settings.userAgentString = "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36"
+        web.addJavascriptInterface(Bridge(), "MusicFinder")
+        web.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val url = request.url.toString()
+                return !ServerConfig.isAllowedPageUrl(url)
             }
-
-            override fun onPageStarted(
-                view: WebView,
-                url: String,
-                favicon: Bitmap?
-            ) {
-
-                super.onPageStarted(
-                    view,
-                    url,
-                    favicon
-                )
-
+            override fun onPageFinished(view: WebView, url: String) {
+                super.onPageFinished(view, url)
                 if (destroyed) return
+                if (url.contains("google.com/search", true)) extractGoogleResults()
+                else if (resultGeneration == searchGeneration && ServerConfig.isAllowedPageUrl(url)) extractMusicPage(url)
             }
-
-            override fun onPageFinished(
-                view: WebView,
-                url: String
-            ) {
-
-                super.onPageFinished(
-                    view,
-                    url
-                )
-
-                if (destroyed) return
-
-                /*
-                 * وقتی Google Search کامل شد،
-                 * لینک‌های سایت‌های موسیقی را استخراج می‌کنیم.
-                 */
-                if (
-                    url.contains(
-                        "google.com/search",
-                        ignoreCase = true
-                    )
-                ) {
-
-                    extractGoogleResults()
-
-                    return
-                }
-
-                /*
-                 * حالا وارد صفحه یکی از سایت‌های موسیقی شده‌ایم.
-                 */
-                if (
-                    resultGeneration ==
-                    searchGeneration &&
-                    expectedPageUrl.isNotBlank() &&
-                    ServerConfig.isAllowedPageUrl(url)
-                ) {
-
-                    extractMusicPage(url)
-                }
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                super.onReceivedError(view, request, error)
+                if (request.isForMainFrame && !destroyed && resultPages.isNotEmpty()) finishCurrentResultPage()
             }
-
-            override fun onReceivedError(
-                view: WebView,
-                request: WebResourceRequest,
-                error: WebResourceError
-            ) {
-
-                super.onReceivedError(
-                    view,
-                    request,
-                    error
-                )
-
-                if (
-                    !request.isForMainFrame ||
-                    destroyed
-                ) {
-                    return
-                }
-
-                if (
-                    resultGeneration ==
-                    searchGeneration &&
-                    resultPages.isNotEmpty()
-                ) {
-
-                    finishCurrentResultPage()
-
-                } else {
-
-                    status.text =
-                        "خطا در اتصال به جستجو"
-                }
-            }
-
-            override fun onRenderProcessGone(
-                view: WebView,
-                detail: RenderProcessGoneDetail
-            ): Boolean {
-
-                if (destroyed) {
-                    return true
-                }
-
-                status.text =
-                    "در حال بازیابی جستجو..."
-
-                recreateWebView()
-
+            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                if (!destroyed) recreateWebView()
                 return true
             }
         }
-}
+    }
 
-@SuppressLint("SetJavaScriptEnabled")
-private fun setupWebView() {
-    configureWebView(web)
-}
-
-@SuppressLint("SetJavaScriptEnabled")
-private fun recreateWebView() {
-
-    if (destroyed) return
-
-    try {
-
-        val oldWeb = web
-
-        val parent =
-            oldWeb.parent as? android.view.ViewGroup
-                ?: return
-
-        val index =
-            parent.indexOfChild(oldWeb)
-
-        val oldParams =
-            oldWeb.layoutParams
-
-        parent.removeView(oldWeb)
-
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun recreateWebView() {
+        if (destroyed) return
         try {
+            val old = web
+            val parent = old.parent as? android.view.ViewGroup ?: return
+            val index = parent.indexOfChild(old)
+            val params = old.layoutParams
+            parent.removeView(old)
+            try { old.stopLoading(); old.removeJavascriptInterface("MusicFinder"); old.destroy() } catch (_: Exception) {}
+            val replacement = WebView(this)
+            replacement.id = R.id.web
+            replacement.layoutParams = params
+            parent.addView(replacement, index.coerceAtMost(parent.childCount))
+            web = replacement
+            setupWebView()
+        } catch (_: Exception) { status.text = "جستجو موقتاً در دسترس نیست" }
+    }
 
-            oldWeb.removeJavascriptInterface(
-                "MusicFinder"
-            )
-
-            oldWeb.stopLoading()
-            oldWeb.loadUrl("about:blank")
-            oldWeb.removeAllViews()
-            oldWeb.destroy()
-
-        } catch (_: Exception) {
+    private fun searchMusic() {
+        val text = query.text.toString().trim()
+        if (text.isBlank()) { Toast.makeText(this, "نام آهنگ یا خواننده را وارد کنید", Toast.LENGTH_SHORT).show(); return }
+        searchGeneration++
+        cancelSearchCallbacks()
+        resultGeneration = searchGeneration
+        resultPages = emptyList()
+        resultPageIndex = 0
+        expectedPageUrl = ""
+        songs.clear(); currentIndex = -1; currentAudioUrl = ""; currentSong = null
+        resultsContainer.removeAllViews()
+        titleText.text = text
+        artistText.text = "در حال جستجو..."
+        status.text = "در حال جستجوی سایت‌ها..."
+        seekBar.progress = 0
+        currentTimeText.text = "00:00"
+        durationText.text = "00:00"
+        vinyl.clearCover(); vinyl.stopRotation(); clearLyrics()
+        val searchQuery = ServerConfig.searchQuery(text)
+        val encoded = try { URLEncoder.encode(searchQuery, "UTF-8") } catch (_: Exception) { return }
+        try { web.stopLoading(); web.loadUrl("https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1") }
+        catch (_: Exception) { status.text = "خطا در شروع جستجو"; return }
+        val generation = searchGeneration
+        val timeout = Runnable {
+            if (!destroyed && generation == searchGeneration && resultPages.isEmpty()) status.text = "جستجو زمان‌بر شد؛ نتیجه‌ای پیدا نشد"
         }
-
-        val newWeb =
-            WebView(this)
-
-        newWeb.id =
-            R.id.web
-
-        newWeb.layoutParams =
-            oldParams
-                ?: android.widget.LinearLayout.LayoutParams(
-                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                    1
-                )
-
-        parent.addView(
-            newWeb,
-            index.coerceAtMost(
-                parent.childCount
-            )
-        )
-
-        web = newWeb
-
-        configureWebView(web)
-
-    } catch (_: Exception) {
-
-        if (!destroyed) {
-
-            status.text =
-                "جستجو موقتاً در دسترس نیست"
-        }
-    }
-}
-
-private fun searchMusic() {
-
-    if (destroyed) return
-
-    val text =
-        query.text
-            .toString()
-            .trim()
-
-    if (text.isEmpty()) {
-
-        Toast.makeText(
-            this,
-            "نام آهنگ یا خواننده را وارد کنید",
-            Toast.LENGTH_SHORT
-        ).show()
-
-        return
+        searchTimeout = timeout
+        handler.postDelayed(timeout, 12000L)
     }
 
-    /*
-     * هر جستجوی جدید یک Generation جدید دارد.
-     * این کار جلوی قاطی شدن نتایج جستجوی قبلی و جدید را می‌گیرد.
-     */
-    searchGeneration++
-
-    cancelSearchCallbacks()
-
-    resultPages = emptyList()
-    resultPageIndex = 0
-    resultGeneration = searchGeneration
-    expectedPageUrl = ""
-
-    songs.clear()
-    currentIndex = -1
-
-    resultsContainer.removeAllViews()
-
-    titleText.text = text
-    artistText.text = "در حال جستجو..."
-
-    status.text =
-        "در حال جستجوی سایت‌ها..."
-
-    seekBar.progress = 0
-
-    currentTimeText.text = "00:00"
-    durationText.text = "00:00"
-
-    vinyl.clearCover()
-    vinyl.stopRotation()
-
-    clearLyrics()
-
-    /*
-     * ServerConfig همچنان مسئول هوشمند کردن عبارت جستجو است.
-     */
-    val searchQuery =
-        ServerConfig.searchQuery(text)
-
-    val encoded =
-        try {
-
-            URLEncoder.encode(
-                searchQuery,
-                "UTF-8"
-            )
-
-        } catch (_: Exception) {
-
-            status.text =
-                "عبارت جستجو نامعتبر است"
-
-            return
-        }
-
-    /*
-     * num=50 برای گرفتن تعداد بیشتری نتیجه.
-     *
-     * hl=en:
-     * خروجی Google برای WebView پایدارتر می‌شود.
-     *
-     * gbv=1:
-     * نسخه ساده‌تر Google برای مرورگرهای embedded.
-     */
-    val url =
-        "https://www.google.com/search" +
-                "?q=$encoded" +
-                "&num=50" +
-                "&hl=en" +
-                "&gbv=1"
-
-    try {
-
-        web.stopLoading()
-
-        web.loadUrl(url)
-
-    } catch (_: Exception) {
-
-        status.text =
-            "خطا در شروع جستجو"
-
-        return
+    private fun cancelSearchCallbacks() {
+        searchTimeout?.let { handler.removeCallbacks(it) }
+        pageTimeout?.let { handler.removeCallbacks(it) }
+        searchTimeout = null; pageTimeout = null
     }
 
-    val generation =
-        searchGeneration
-
-    val timeout =
-        Runnable {
-
-            if (
-                !destroyed &&
-                generation == searchGeneration
-            ) {
-
-                status.text =
-                    if (songs.isEmpty()) {
-                        "جستجو زمان‌بر شد؛ نتیجه‌ای پیدا نشد"
-                    } else {
-                        "${songs.size} نتیجه پیدا شد"
-                    }
-            }
-        }
-
-    searchTimeoutRunnable =
-        timeout
-
-    mainHandler.postDelayed(
-        timeout,
-        12000L
-    )
-}
-
-private fun cancelSearchCallbacks() {
-
-    searchTimeoutRunnable?.let {
-        mainHandler.removeCallbacks(it)
-    }
-
-    pageTimeoutRunnable?.let {
-        mainHandler.removeCallbacks(it)
-    }
-
-    searchTimeoutRunnable = null
-    pageTimeoutRunnable = null
-}
-
-private fun extractGoogleResults() {
-
-    if (destroyed) return
-
-    val generation =
-        searchGeneration
-
-    if (generation <= 0) return
-
-    /*
-     * دامنه‌های مجاز را از ServerConfig می‌گیریم.
-     */
-    val allowedHostsJs =
-        ServerConfig.MUSIC_SITES
-            .joinToString(",") {
-
-                "\"" +
-                        it
-                            .trim()
-                            .lowercase()
-                            .replace(
-                                "\\",
-                                "\\\\"
-                            )
-                            .replace(
-                                "\"",
-                                "\\\""
-                            ) +
-                        "\""
-            }
-
-    val script = """
-        (function() {
-
-            try {
-
-                var allowedHosts = [
-                    $allowedHostsJs
-                ];
-
-                var found = [];
-
-                function cleanText(value) {
-
-                    if (!value) {
-                        return "";
-                    }
-
-                    return value
-                        .replace(
-                            /[\r\n\t]+/g,
-                            " "
-                        )
-                        .replace(
-                            /\s+/g,
-                            " "
-                        )
-                        .trim();
+    private fun extractGoogleResults() {
+        if (destroyed || searchGeneration <= 0) return
+        val hosts = ServerConfig.MUSIC_SITES.joinToString(",") { "\"${it.replace("\"", "\\\"")}\"" }
+        val script = """
+            (function(){
+              try{
+                var hosts=[$hosts], found=[];
+                function allowed(u){
+                  if(!u) return false;
+                  try{var x=new URL(u); var h=x.hostname.toLowerCase().replace(/^www\./,'');
+                    for(var i=0;i<hosts.length;i++){var d=hosts[i].toLowerCase(); if(h===d||h.endsWith('.'+d)) return true;} }catch(e){}
+                  return false;
                 }
-
-                function decodeUrl(value) {
-
-                    if (!value) {
-                        return "";
-                    }
-
-                    try {
-                        return decodeURIComponent(value);
-                    } catch (e) {
-                        return value;
-                    }
+                function real(h){try{var x=new URL(h,location.href); if(x.hostname.indexOf('google.')>=0){var q=x.searchParams.get('q')||x.searchParams.get('url'); if(q&&q.indexOf('http')===0)return decodeURIComponent(q);} return x.href;}catch(e){return h;}}
+                var links=document.querySelectorAll('a');
+                for(var i=0;i<links.length&&found.length<50;i++){
+                  var u=real(links[i].href||''); if(!allowed(u))continue; u=u.split('#')[0];
+                  var dup=false; for(var j=0;j<found.length;j++)if(found[j].split('|||')[0]===u){dup=true;break;} if(dup)continue;
+                  var t=(links[i].innerText||links[i].textContent||'').replace(/[\\r\\n\\t]+/g,' ').replace(/\\s+/g,' ').trim();
+                  found.push(u+'|||'+t);
                 }
-
-                function getRealUrl(href) {
-
-                    if (!href) {
-                        return "";
-                    }
-
-                    href =
-                        href.trim();
-
-                    /*
-                     * Google redirect:
-                     *
-                     * /url?q=https://site.com/...
-                     *
-                     * /url?url=https://site.com/...
-                     */
-                    try {
-
-                        var parsed =
-                            new URL(
-                                href,
-                                window.location.href
-                            );
-
-                        var host =
-                            (
-                                parsed.hostname ||
-                                ""
-                            ).toLowerCase();
-
-                        if (
-                            host.indexOf(
-                                "google."
-                            ) >= 0
-                        ) {
-
-                            var q =
-                                parsed.searchParams.get(
-                                    "q"
-                                );
-
-                            if (
-                                q &&
-                                q.indexOf(
-                                    "http"
-                                ) === 0
-                            ) {
-
-                                return decodeUrl(q);
-                            }
-
-                            var urlParam =
-                                parsed.searchParams.get(
-                                    "url"
-                                );
-
-                            if (
-                                urlParam &&
-                                urlParam.indexOf(
-                                    "http"
-                                ) === 0
-                            ) {
-
-                                return decodeUrl(
-                                    urlParam
-                                );
-                            }
-                        }
-
-                    } catch (e) {
-                    }
-
-                    return href;
-                }
-
-                function isAllowed(url) {
-
-                    if (!url) {
-                        return false;
-                    }
-
-                    var lower =
-                        url.toLowerCase();
-
-                    if (
-                        lower.indexOf(
-                            "google.com"
-                        ) >= 0
-                    ) {
-
-                        /*
-                         * لینک Google نباید وارد
-                         * مرحله باز کردن سایت شود.
-                         */
-                        if (
-                            lower.indexOf(
-                                "google.com/url"
-                            ) >= 0
-                        ) {
-
-                            return false;
-                        }
-
-                        if (
-                            lower.indexOf(
-                                "google.com/search"
-                            ) >= 0
-                        ) {
-
-                            return false;
-                        }
-                    }
-
-                    for (
-                        var i = 0;
-                        i < allowedHosts.length;
-                        i++
-                    ) {
-
-                        var host =
-                            allowedHosts[i];
-
-                        if (!host) {
-                            continue;
-                        }
-
-                        if (
-                            lower.indexOf(
-                                "://" + host
-                            ) >= 0 ||
-                            lower.indexOf(
-                                "://www." + host
-                            ) >= 0 ||
-                            lower.indexOf(
-                                "." + host
-                            ) >= 0
-                        ) {
-
-                            return true;
-                        }
-                    }
-
-                    return false;
-                }
-
-                var links =
-                    document.querySelectorAll(
-                        "a"
-                    );
-
-                for (
-                    var i = 0;
-                    i < links.length;
-                    i++
-                ) {
-
-                    var link =
-                        links[i];
-
-                    var href =
-                        link.href || "";
-
-                    var realUrl =
-                        getRealUrl(href);
-
-                    if (
-                        !isAllowed(realUrl)
-                    ) {
-                        continue;
-                    }
-
-                    realUrl =
-                        realUrl.split("#")[0];
-
-                    var duplicate =
-                        false;
-
-                    for (
-                        var j = 0;
-                        j < found.length;
-                        j++
-                    ) {
-
-                        if (
-                            found[j]
-                                .split("|||")[0] ===
-                            realUrl
-                        ) {
-
-                            duplicate = true;
-                            break;
-                        }
-                    }
-
-                    if (duplicate) {
-                        continue;
-                    }
-
-                    var text =
-                        cleanText(
-                            link.innerText ||
-                            link.textContent ||
-                            ""
-                        );
-
-                    if (!text) {
-
-                        text =
-                            cleanText(
-                                link.getAttribute(
-                                    "aria-label"
-                                ) || ""
-                            );
-                    }
-
-                    found.push(
-                        realUrl +
-                        "|||" +
-                        text
-                    );
-
-                    if (
-                        found.length >= 50
-                    ) {
-                        break;
-                    }
-                }
-
-                /*
-                 * بعض نسخه‌های Google لینک اصلی را
-                 * در data-href یا data-url قرار می‌دهند.
-                 */
-                if (
-                    found.length === 0
-                ) {
-
-                    var dataElements =
-                        document.querySelectorAll(
-                            "[data-href], [data-url]"
-                        );
-
-                    for (
-                        var k = 0;
-                        k < dataElements.length;
-                        k++
-                    ) {
-
-                        var element =
-                            dataElements[k];
-
-                        var dataUrl =
-                            element.getAttribute(
-                                "data-href"
-                            ) ||
-                            element.getAttribute(
-                                "data-url"
-                            ) ||
-                            "";
-
-                        var realDataUrl =
-                            getRealUrl(dataUrl);
-
-                        if (
-                            !isAllowed(
-                                realDataUrl
-                            )
-                        ) {
-                            continue;
-                        }
-
-                        realDataUrl =
-                            realDataUrl
-                                .split("#")[0];
-
-                        var duplicateData =
-                            false;
-
-                        for (
-                            var x = 0;
-                            x < found.length;
-                            x++
-                        ) {
-
-                            if (
-                                found[x]
-                                    .split("|||")[0] ===
-                                realDataUrl
-                            ) {
-
-                                duplicateData = true;
-                                break;
-                            }
-                        }
-
-                        if (duplicateData) {
-                            continue;
-                        }
-
-                        var dataText =
-                            cleanText(
-                                element.innerText ||
-                                element.textContent ||
-                                ""
-                            );
-
-                        found.push(
-                            realDataUrl +
-                            "|||" +
-                            dataText
-                        );
-
-                        if (
-                            found.length >= 50
-                        ) {
-                            break;
-                        }
-                    }
-                }
-
-                MusicFinder.results(
-                    found.join("###")
-                );
-
-            } catch (e) {
-
-                MusicFinder.results("");
-            }
-
-        })();
-    """.trimIndent()
-
-    try {
-
-        web.evaluateJavascript(
-            script,
-            null
-        )
-
-    } catch (_: Exception) {
-
-        if (!destroyed) {
-
-            status.text =
-                "خطا در استخراج نتایج"
-        }
-    }
-}
-
-private fun extractMusicPage(
-    pageUrl: String
-) {
-
-    if (
-        destroyed ||
-        resultGeneration != searchGeneration
-    ) {
-        return
+                MusicFinder.results(found.join('###'));
+              }catch(e){MusicFinder.results('');}
+            })();
+        """.trimIndent()
+        try { web.evaluateJavascript(script, null) } catch (_: Exception) { finishSearch() }
     }
 
-    val script = """
-        (function() {
-
-            try {
-
-                var title = "";
-                var artist = "";
-                var cover = "";
-                var audioLinks = [];
-
-                var metaTitle =
-                    document.querySelector(
-                        'meta[property="og:title"]'
-                    );
-
-                if (metaTitle) {
-
-                    title =
-                        metaTitle.content || "";
-                }
-
-                var h1 =
-                    document.querySelector("h1");
-
-                if (
-                    !title &&
-                    h1
-                ) {
-
-                    title =
-                        h1.innerText || "";
-                }
-
-                var metaArtist =
-                    document.querySelector(
-                        'meta[property="music:musician"]'
-                    );
-
-                if (metaArtist) {
-
-                    artist =
-                        metaArtist.content || "";
-                }
-
-                var image =
-                    document.querySelector(
-                        'meta[property="og:image"]'
-                    );
-
-                if (image) {
-
-                    cover =
-                        image.content || "";
-                }
-
-                /*
-                 * منابع احتمالی فایل صوتی.
-                 */
-                var media =
-                    document.querySelectorAll(
-                        "audio source, " +
-                        "audio, " +
-                        "video source, " +
-                        "video, " +
-                        "a"
-                    );
-
-                for (
-                    var i = 0;
-                    i < media.length;
-                    i++
-                ) {
-
-                    var el =
-                        media[i];
-
-                    var src =
-                        el.src ||
-                        el.href ||
-                        "";
-
-                    var lower =
-                        src.toLowerCase();
-
-                    if (
-                        lower.indexOf(".mp3") >= 0 ||
-                        lower.indexOf(".m4a") >= 0 ||
-                        lower.indexOf(".aac") >= 0 ||
-                        lower.indexOf(".ogg") >= 0 ||
-                        lower.indexOf(".wav") >= 0 ||
-                        lower.indexOf(".flac") >= 0 ||
-                        lower.indexOf("dl.") >= 0
-                    ) {
-
-                        if (
-                            audioLinks.indexOf(
-                                src
-                            ) < 0
-                        ) {
-
-                            audioLinks.push(src);
-                        }
-                    }
-                }
-
-                MusicFinder.page(
-                    encodeURIComponent(
-                        title
-                    ) +
-                    "###" +
-                    encodeURIComponent(
-                        artist
-                    ) +
-                    "###" +
-                    encodeURIComponent(
-                        cover
-                    ) +
-                    "###" +
-                    encodeURIComponent(
-                        audioLinks.join("|||")
-                    )
-                );
-
-            } catch (e) {
-
-                MusicFinder.page(
-                    "######"
-                );
-            }
-
-        })();
-    """.trimIndent()
-
-    try {
-
-        web.evaluateJavascript(
-            script,
-            null
-        )
-
-    } catch (_: Exception) {
-
-        finishCurrentResultPage()
-    }
-}
-
-private fun processNextResultPage() {
-
-    if (destroyed) return
-
-    if (
-        resultGeneration != searchGeneration
-    ) {
-        return
+    private fun extractMusicPage(pageUrl: String) {
+        if (destroyed || resultGeneration != searchGeneration) return
+        val script = """
+            (function(){
+              try{
+                var title='',artist='',cover='',aud=[];
+                var og=document.querySelector('meta[property="og:title"]'); if(og) title=og.content||'';
+                var h=document.querySelector('h1'); if(!title&&h) title=h.innerText||'';
+                var ma=document.querySelector('meta[property="music:musician"]'); if(ma) artist=ma.content||'';
+                var im=document.querySelector('meta[property="og:image"]'); if(im) cover=im.content||'';
+                var els=document.querySelectorAll('audio source,audio,video source,video,a');
+                for(var i=0;i<els.length;i++){var s=els[i].src||els[i].href||'';var l=s.toLowerCase();if((l.indexOf('.mp3')>=0||l.indexOf('.m4a')>=0||l.indexOf('.aac')>=0||l.indexOf('.ogg')>=0||l.indexOf('.wav')>=0||l.indexOf('.flac')>=0||l.indexOf('dl.')>=0)&&aud.indexOf(s)<0)aud.push(s);}
+                MusicFinder.page(encodeURIComponent(title)+'###'+encodeURIComponent(artist)+'###'+encodeURIComponent(cover)+'###'+encodeURIComponent(aud.join('|||')));
+              }catch(e){MusicFinder.page('######');}
+            })();
+        """.trimIndent()
+        try { web.evaluateJavascript(script, null) } catch (_: Exception) { finishCurrentResultPage() }
     }
 
-    if (
-        resultPageIndex >= resultPages.size
-    ) {
-
-        finishSearch()
-
-        return
+    private fun processNextResultPage() {
+        if (destroyed || resultGeneration != searchGeneration) return
+        if (resultPageIndex >= resultPages.size) { finishSearch(); return }
+        val url = resultPages[resultPageIndex].substringBefore("|||").trim()
+        resultPageIndex++
+        if (url.isBlank() || !ServerConfig.isAllowedPageUrl(url)) { processNextResultPage(); return }
+        expectedPageUrl = url
+        pageTimeout?.let { handler.removeCallbacks(it) }
+        val generation = searchGeneration
+        val timeout = Runnable { if (!destroyed && generation == searchGeneration) processNextResultPage() }
+        pageTimeout = timeout
+        handler.postDelayed(timeout, 3500L)
+        try { web.loadUrl(url) } catch (_: Exception) { finishCurrentResultPage() }
     }
 
-    val raw =
-        resultPages[resultPageIndex]
-
-    val url =
-        raw.substringBefore("|||")
-            .trim()
-
-    resultPageIndex++
-
-    if (
-        url.isBlank() ||
-        !url.startsWith(
-            "http",
-            ignoreCase = true
-        )
-    ) {
-
-        processNextResultPage()
-
-        return
+    private fun finishCurrentResultPage() {
+        pageTimeout?.let { handler.removeCallbacks(it) }
+        pageTimeout = null
+        if (!destroyed && resultGeneration == searchGeneration) processNextResultPage()
     }
 
-    expectedPageUrl =
-        url
-
-    pageTimeoutRunnable?.let {
-        mainHandler.removeCallbacks(it)
-    }
-
-    val generation =
-        searchGeneration
-
-    val timeout =
-        Runnable {
-
-            if (
-                !destroyed &&
-                generation == searchGeneration
-            ) {
-
-                processNextResultPage()
-            }
-        }
-
-    pageTimeoutRunnable =
-        timeout
-
-    mainHandler.postDelayed(
-        timeout,
-        3500L
-    )
-
-    try {
-
-        web.loadUrl(url)
-
-    } catch (_: Exception) {
-
-        finishCurrentResultPage()
-    }
-}
-
-private fun finishCurrentResultPage() {
-
-    pageTimeoutRunnable?.let {
-        mainHandler.removeCallbacks(it)
-    }
-
-    pageTimeoutRunnable = null
-
-    if (destroyed) return
-
-    if (
-        resultGeneration != searchGeneration
-    ) {
-        return
-    }
-
-    processNextResultPage()
-}
     private fun finishSearch() {
         if (destroyed) return
-
         cancelSearchCallbacks()
-
-        status.text =
-            if (songs.isEmpty()) {
-                "آهنگ قابل پخش پیدا نشد"
-            } else {
-                "${songs.size} نتیجه پیدا شد"
-            }
-
-        if (songs.isNotEmpty() && currentIndex == -1) {
-            currentIndex = 0
-        }
-
+        status.text = if (songs.isEmpty()) "آهنگ قابل پخش پیدا نشد" else "${songs.size} نتیجه پیدا شد"
+        if (songs.isNotEmpty() && currentIndex < 0) currentIndex = 0
         saveSearchResults()
     }
 
-    private fun saveSearchResults()
     private fun saveSearchResults() {
-
         if (destroyed) return
-
         val prefs = getSharedPreferences("search_results", MODE_PRIVATE)
-        val oldData = prefs.getString("songs", "") ?: ""
+        val old = prefs.getString("songs", "").orEmpty()
         val merged = ArrayList<SongResult>()
-        oldData.split("\n").forEach { line ->
-            val parts = line.split("|||", limit = 5)
-            if (parts.size == 5 && merged.none { it.url == parts[0] }) {
-                merged.add(SongResult(parts[0], parts[1], parts[2], parts[3], parts[4]))
-            }
+        old.split("\n").forEach { line ->
+            val p = line.split("|||", limit = 5)
+            if (p.size == 5 && p[0].isNotBlank() && merged.none { it.url == p[0] }) merged.add(SongResult(p[0], p[1], p[2], p[3], p[4]))
         }
-        songs.forEach { song -> if (merged.none { it.url == song.url }) merged.add(song) }
-
-        val limited = merged.take(200)
-
-        val data =
-            limited.joinToString("\n") {
-
-                listOf(
-                    it.url,
-                    it.title,
-                    it.artist,
-                    it.site,
-                    it.cover
-                ).joinToString("|||")
-            }
-
-        getSharedPreferences(
-            "search_results",
-            MODE_PRIVATE
-        )
-            .edit()
-            .putString(
-                "songs",
-                data
-            )
-            .apply()
+        songs.forEach { if (merged.none { x -> x.url == it.url }) merged.add(it) }
+        prefs.edit().putString("songs", merged.take(200).joinToString("\n") { listOf(it.url,it.title,it.artist,it.site,it.cover).joinToString("|||") }).apply()
     }
 
     private fun restoreSearchResults() {
-
-        val data =
-            getSharedPreferences(
-                "search_results",
-                MODE_PRIVATE
-            )
-                .getString(
-                    "songs",
-                    ""
-                )
-                ?: ""
-
-        if (data.isBlank()) {
-            return
-        }
-
+        val data = getSharedPreferences("search_results", MODE_PRIVATE).getString("songs", "").orEmpty()
+        if (data.isBlank()) return
         songs.clear()
-
-        data.split("\n")
-            .take(60)
-            .forEach {
-
-                val parts =
-                    it.split(
-                        "|||",
-                        limit = 5
-                    )
-
-                if (
-                    parts.size < 5
-                ) {
-                    return@forEach
-                }
-
-                val url =
-                    parts[0].trim()
-
-                if (url.isBlank()) {
-                    return@forEach
-                }
-
-                songs.add(
-                    SongResult(
-                        url = url,
-                        title = parts[1],
-                        artist = parts[2],
-                        site = parts[3],
-                        cover = parts[4]
-                    )
-                )
-            }
-
-        songs.forEachIndexed {
-                index,
-                song ->
-
-            addSongView(
-                song,
-                index
-            )
+        data.split("\n").take(60).forEach { line ->
+            val p = line.split("|||", limit = 5)
+            if (p.size == 5 && p[0].isNotBlank()) songs.add(SongResult(p[0],p[1],p[2],p[3],p[4]))
         }
-
-        if (songs.isNotEmpty()) {
-
-            currentIndex = 0
-
-            status.text =
-                "${songs.size} نتیجه ذخیره شده"
-        }
-    }
-    override fun onStart() {
-        super.onStart()
-
-        if (receiverRegistered) return
-
-        val filter = IntentFilter(MusicService.UPDATE)
-
-        try {
-            ContextCompat.registerReceiver(
-                this,
-                playerReceiver,
-                filter,
-                ContextCompat.RECEIVER_NOT_EXPORTED
-            )
-            receiverRegistered = true
-        } catch (_: Exception) {
-            receiverRegistered = false
-        }
+        songs.forEachIndexed { index, song -> addSongView(song, index) }
+        if (songs.isNotEmpty()) { currentIndex = 0; status.text = "${songs.size} نتیجه ذخیره شده" }
     }
 
+    private fun addSongView(song: SongResult, index: Int) {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(12,10,12,10)
+            setBackgroundColor(0xFF15151D.toInt())
+            setOnClickListener { playSong(song) }
+        }
+        val cover = ImageView(this).apply { setBackgroundColor(0xFF22222A.toInt()); scaleType = ImageView.ScaleType.CENTER_CROP }
+        row.addView(cover, LinearLayout.LayoutParams(58,58)); loadCover(song.cover, cover)
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL; setPadding(12,0,8,0) }
+        val title = TextView(this).apply { text = "${index+1}. ${song.title}"; setTextColor(0xFFFFFFFF.toInt()); textSize = 15f; maxLines = 2 }
+        val sub = TextView(this).apply { text = "${song.artist} • ${song.site}"; setTextColor(0xFFAAAAAA.toInt()); textSize = 11f; maxLines = 2 }
+        box.addView(title); box.addView(sub); row.addView(box, LinearLayout.LayoutParams(0,LinearLayout.LayoutParams.WRAP_CONTENT,1f))
+        resultsContainer.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0,0,0,8) })
+    }
 
-    override fun onStop() {
-
-        if (receiverRegistered) {
-
+    private fun loadCover(url: String, target: ImageView) {
+        if (url.isBlank()) return
+        io.execute {
             try {
-
-                unregisterReceiver(
-                    playerReceiver
-                )
-
-            } catch (_: Exception) {
-            }
-
-            receiverRegistered = false
+                val c = URL(url).openConnection() as HttpURLConnection
+                c.connectTimeout = 5000; c.readTimeout = 5000; c.connect()
+                val b = c.inputStream.use { it.readBytes() }; c.disconnect()
+                val bitmap = BitmapFactory.decodeByteArray(b,0,b.size)
+                if (bitmap != null && !destroyed) runOnUiThread { if (!destroyed) target.setImageBitmap(bitmap) }
+            } catch (_: Exception) {}
         }
-
-        super.onStop()
     }
 
-    override fun onDestroy() {
+    private fun playSong(song: SongResult) {
+        if (song.url.isBlank()) return
+        currentSong = song
+        currentAudioUrl = song.url
+        currentIndex = songs.indexOfFirst { it.url == song.url }.takeIf { it >= 0 } ?: currentIndex
+        titleText.text = song.title
+        artistText.text = song.artist
+        status.text = "در حال پخش از ${song.site}"
+        if (song.cover.isNotBlank()) loadCoverToVinyl(song.cover)
+        saveHistory(song)
+        sendServiceAction(MusicService.ACTION_PLAY, song.url, song.title, song.artist, song.cover)
+    }
 
-        destroyed = true
+    private fun sendServiceAction(action: String, url: String, title: String, artist: String, cover: String) {
+        safelyStartService(Intent(this, MusicService::class.java).apply {
+            this.action = action
+            putExtra(MusicService.EXTRA_URL, url)
+            putExtra(MusicService.EXTRA_TITLE, title)
+            putExtra(MusicService.EXTRA_ARTIST, artist)
+            putExtra(MusicService.EXTRA_COVER, cover)
+        })
+    }
 
-        cancelSearchCallbacks()
-
-        cancelDownloadRequested = true
-
+    private fun safelyStartService(intent: Intent) {
         try {
-            activeConnection?.disconnect()
-        } catch (_: Exception) {
-        }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ContextCompat.startForegroundService(this, intent) else startService(intent)
+        } catch (e: Exception) { Toast.makeText(this, "سرویس پخش در دسترس نیست", Toast.LENGTH_SHORT).show() }
+    }
 
+    private fun previousSong() {
+        if (songs.isEmpty()) return
+        currentIndex = if (currentIndex <= 0) songs.lastIndex else currentIndex - 1
+        playSong(songs[currentIndex])
+    }
+
+    private fun nextSong() {
+        if (songs.isEmpty()) return
+        currentIndex = if (randomMode && songs.size > 1) {
+            var n: Int; do { n = (0 until songs.size).random() } while (n == currentIndex); n
+        } else (currentIndex + 1) % songs.size
+        playSong(songs[currentIndex])
+    }
+
+    private fun updatePlayerProgress(playing: Boolean, position: Long, duration: Long) {
+        val d = duration.coerceAtLeast(0L); val p = position.coerceAtLeast(0L)
+        seekBar.progress = if (d > 0) ((p.toDouble()/d)*100).toInt().coerceIn(0,100) else 0
+        currentTimeText.text = formatTime(p); durationText.text = formatTime(d)
+        playButton.text = if (playing) "Ⅱ" else "▶"
+        if (playing) vinyl.startRotation() else vinyl.stopRotation()
+    }
+
+    private fun formatTime(ms: Long): String {
+        val total = (ms/1000).coerceAtLeast(0)
+        return String.format(Locale.US, "%02d:%02d", total/60, total%60)
+    }
+
+    private fun updateActiveResultHighlight(mediaUrl: String) {
+        currentAudioUrl = mediaUrl
+        currentSong = songs.firstOrNull { it.url == mediaUrl } ?: currentSong
+        currentIndex = songs.indexOfFirst { it.url == mediaUrl }.takeIf { it >= 0 } ?: currentIndex
+    }
+
+    private fun loadCoverToVinyl(url: String) {
+        io.execute {
+            try {
+                val c = URL(url).openConnection() as HttpURLConnection
+                c.connectTimeout=5000; c.readTimeout=5000; c.connect()
+                val b=c.inputStream.use { it.readBytes() }; c.disconnect()
+                val bitmap=BitmapFactory.decodeByteArray(b,0,b.size)
+                if(bitmap!=null&&!destroyed) runOnUiThread { if(!destroyed) vinyl.setCover(bitmap) }
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun clearLyrics() { lyricsText.text = ""; lyricsText.visibility = View.GONE }
+
+    private fun loadLyricsFor(title: String, artist: String) {
+        if (title.isBlank()) return
+        lyricsText.text = ""
+        lyricsText.visibility = View.GONE
+        io.execute {
+            try {
+                val u = "https://api.lyrics.ovh/v1/${URLEncoder.encode(artist,"UTF-8")}/${URLEncoder.encode(title,"UTF-8")}"
+                val c = URL(u).openConnection() as HttpURLConnection
+                c.connectTimeout=4000; c.readTimeout=5000; c.connect()
+                if(c.responseCode !in 200..299){c.disconnect();return@execute}
+                val text=c.inputStream.bufferedReader().use { it.readText() }; c.disconnect()
+                val lyrics=Regex("\\\"lyrics\\\"\\s*:\\s*\\\"(.*?)\\\"", RegexOption.DOT_MATCHES_ALL).find(text)?.groupValues?.getOrNull(1)?.replace("\\n","\n")?.replace("\\\"","\"")
+                if(!lyrics.isNullOrBlank()&&!destroyed) runOnUiThread { if(!destroyed){lyricsText.text=lyrics;lyricsText.visibility=View.VISIBLE} }
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun getSiteName(url: String): String = ServerConfig.siteName(url)
+    private fun decode(value: String): String = try { URLDecoder.decode(value, "UTF-8") } catch (_: Exception) { value }
+    private fun cleanTitle(value: String): String = value.replace(Regex("\\s+"), " ").trim()
+
+    private fun saveCurrentSong() {
+        val song = currentSong ?: songs.getOrNull(currentIndex)
+        if (song == null) { Toast.makeText(this,"آهنگی انتخاب نشده",Toast.LENGTH_SHORT).show(); return }
+        LibraryManager.add(this, song)
+        Toast.makeText(this,"به کتابخانه اضافه شد",Toast.LENGTH_SHORT).show()
+    }
+
+    private fun saveHistory(song: SongResult) {
+        val list = getHistory().filter { it.url != song.url }.toMutableList(); list.add(0,song)
+        val data=list.take(100).joinToString("\n") { listOf(it.url,it.title,it.artist,it.site,it.cover).joinToString("|||") }
+        getSharedPreferences("history",MODE_PRIVATE).edit().putString("songs",data).apply()
+    }
+
+    private fun getHistory(): List<SongResult> = getSharedPreferences("history",MODE_PRIVATE).getString("songs","").orEmpty().split("\n").mapNotNull {
+        val p=it.split("|||",limit=5); if(p.size==5&&p[0].isNotBlank()) SongResult(p[0],p[1],p[2],p[3],p[4]) else null
+    }
+
+    private fun toggleHistory() {
+        if(historyContainer.visibility==View.VISIBLE){historyContainer.visibility=View.GONE;return}
+        historyContainer.removeAllViews()
+        getHistory().take(30).forEachIndexed { i,song ->
+            val v=TextView(this).apply { text="${i+1}. ${song.title} — ${song.artist}"; textSize=13f; setTextColor(0xFFFFFFFF.toInt()); setPadding(12,14,12,14); setOnClickListener{playSong(song)} }
+            historyContainer.addView(v)
+        }
+        historyContainer.visibility=View.VISIBLE
+    }
+
+    private fun downloadCurrentSong() {
+        val song=currentSong?:songs.getOrNull(currentIndex)
+        if(song==null||song.url.isBlank()){Toast.makeText(this,"آهنگی برای دانلود انتخاب نشده",Toast.LENGTH_SHORT).show();return}
+        if(downloadFuture?.isDone==false){Toast.makeText(this,"دانلود در حال انجام است",Toast.LENGTH_SHORT).show();return}
+        cancelDownloadRequested=false;pauseDownloadRequested=false
+        downloadProgress.visibility=View.VISIBLE; downloadText.visibility=View.VISIBLE; cancelDownloadButton.visibility=View.VISIBLE; pauseDownloadButton.visibility=View.VISIBLE
+        downloadProgress.progress=0; downloadText.text="در حال دانلود..."
+        downloadFuture=downloadExecutor.submit { downloadSong(song) }
+    }
+
+    private fun downloadSong(song: SongResult) {
+        var outputUri: android.net.Uri?=null
         try {
-            downloadFuture?.cancel(true)
-        } catch (_: Exception) {
+            val c=URL(song.url).openConnection() as HttpURLConnection
+            activeConnection=c; c.connectTimeout=10000;c.readTimeout=15000;c.instanceFollowRedirects=true;c.connect()
+            val length=c.contentLengthLong
+            if(c.responseCode !in 200..299) throw Exception("HTTP ${c.responseCode}")
+            val name=cleanTitle(song.title).ifBlank{"music"}.replace(Regex("[^A-Za-z0-9_\\- ]"),"_").take(60)+".mp3"
+            if(Build.VERSION.SDK_INT>=29){
+                val values=ContentValues().apply{put(MediaStore.Downloads.DISPLAY_NAME,name);put(MediaStore.Downloads.MIME_TYPE,"audio/mpeg");put(MediaStore.Downloads.RELATIVE_PATH,Environment.DIRECTORY_DOWNLOADS+"/MusicFinder")}
+                outputUri=contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)?:throw Exception("storage")
+                contentResolver.openOutputStream(outputUri!!).use { out -> c.inputStream.use { input -> copyDownload(input,out,length) } }
+            } else {
+                val dir=Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);val folder=java.io.File(dir,"MusicFinder");folder.mkdirs();val file=java.io.File(folder,name)
+                FileOutputStream(file).use { out->c.inputStream.use{input->copyDownload(input,out,length)} }
+            }
+            if(!cancelDownloadRequested) runOnUiThread{downloadText.text="دانلود کامل شد"}
+            else outputUri?.let{contentResolver.delete(it,null,null)}
+        } catch(e:Exception){if(!cancelDownloadRequested)runOnUiThread{downloadText.text="خطا در دانلود"}} finally {try{activeConnection?.disconnect()}catch(_:Exception){};activeConnection=null;runOnUiThread{downloadProgress.visibility=View.GONE;cancelDownloadButton.visibility=View.GONE;pauseDownloadButton.visibility=View.GONE}}
+    }
+
+    private fun copyDownload(input: java.io.InputStream,out:java.io.OutputStream,total:Long){
+        val buf=ByteArray(32*1024);var done=0L
+        while(true){
+            if(cancelDownloadRequested) break
+            while(pauseDownloadRequested&&!cancelDownloadRequested){Thread.sleep(150)}
+            val n=input.read(buf);if(n<0)break;out.write(buf,0,n);done+=n
+            if(total>0){val p=(done*100/total).toInt().coerceIn(0,100);runOnUiThread{downloadProgress.progress=p;downloadText.text="$p%"}}
         }
+    }
 
-        try {
+    private fun cancelDownload(){cancelDownloadRequested=true;pauseDownloadRequested=false;try{activeConnection?.disconnect()}catch(_:Exception){};downloadText.text="دانلود لغو شد"}
+    private fun toggleDownloadPause(){pauseDownloadRequested=!pauseDownloadRequested;pauseDownloadButton.text=if(pauseDownloadRequested)"▶" else "Ⅱ";downloadText.text=if(pauseDownloadRequested)"دانلود متوقف شد" else "در حال دانلود..."}
 
-            mainHandler.removeCallbacksAndMessages(
-                null
-            )
-
-        } catch (_: Exception) {
-        }
-
-        try {
-
-            web.stopLoading()
-
-            web.removeJavascriptInterface(
-                "MusicFinder"
-            )
-
-            web.loadUrl(
-                "about:blank"
-            )
-
-            web.clearHistory()
-            web.removeAllViews()
-            web.destroy()
-
-        } catch (_: Exception) {
-        }
-
-        try {
-            imageExecutor.shutdownNow()
-        } catch (_: Exception) {
-        }
-
-        try {
-            downloadExecutor.shutdownNow()
-        } catch (_: Exception) {
-        }
-
-        coverCache.evictAll()
-
+    override fun onStart(){
+        super.onStart(); if(receiverRegistered)return
+        try{ContextCompat.registerReceiver(this,playerReceiver,IntentFilter(MusicService.UPDATE),ContextCompat.RECEIVER_NOT_EXPORTED);receiverRegistered=true}catch(_:Exception){receiverRegistered=false}
+    }
+    override fun onStop(){
+        if(receiverRegistered){try{unregisterReceiver(playerReceiver)}catch(_:Exception){};receiverRegistered=false};super.onStop()
+    }
+    override fun onDestroy(){
+        destroyed=true;cancelSearchCallbacks();cancelDownloadRequested=true
+        try{activeConnection?.disconnect()}catch(_:Exception){}
+        try{downloadFuture?.cancel(true)}catch(_:Exception){}
+        handler.removeCallbacksAndMessages(null)
+        try{web.stopLoading();web.removeJavascriptInterface("MusicFinder");web.destroy()}catch(_:Exception){}
+        try{io.shutdownNow();downloadExecutor.shutdownNow()}catch(_:Exception){}
         super.onDestroy()
     }
 }
