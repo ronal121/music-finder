@@ -64,5 +64,31 @@ count = len(re.findall(r'(?m)^\s*private\s+fun\s+finishSearch\s*\(', text))
 if count != 1:
     raise SystemExit(f"finishSearch declaration count is {count}, expected 1")
 
+onstart = re.compile(r'(?ms)^\s*override\s+fun\s+onStart\s*\(\)\s*\{.*?(?=^\s*override\s+fun\s+onStop\s*\(\))')
+clean_onstart = '''    override fun onStart() {
+        super.onStart()
+
+        if (receiverRegistered) return
+
+        val filter = IntentFilter(MusicService.UPDATE)
+
+        try {
+            ContextCompat.registerReceiver(
+                this,
+                playerReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            receiverRegistered = true
+        } catch (_: Exception) {
+            receiverRegistered = false
+        }
+    }
+
+'''
+text, replaced = onstart.subn(clean_onstart, text, count=1)
+if replaced != 1:
+    raise SystemExit(f"onStart declaration count is {replaced}, expected 1")
+
 path.write_text(text, encoding="utf-8")
 print("MainActivity.kt repaired")
