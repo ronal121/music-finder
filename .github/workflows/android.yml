@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -24,26 +24,18 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Set up Gradle 9.7.0
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '9.7.0'
+          gradle-version: '8.9'
 
-      - name: Repair MainActivity
-        run: |
-          python3 tools/fix_main_activity.py
-          if ! git diff --quiet -- app/src/main/java/com/kafshar/musicfinder/MainActivity.kt; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
-            git commit -m "Fix MainActivity compilation errors"
-            git push
-          fi
+      - name: Verify Gradle version
+        run: gradle --version
 
-      - name: Run tests
+      - name: Run unit tests
         run: gradle --no-daemon --stacktrace test
 
-      - name: Build APK
+      - name: Build debug APK
         run: gradle --no-daemon --stacktrace assembleDebug
 
       - name: Upload APK
