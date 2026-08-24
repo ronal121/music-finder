@@ -653,7 +653,8 @@ class MainActivity : Activity() {
             if(Build.VERSION.SDK_INT>=29){
                 val values=ContentValues().apply{put(MediaStore.Downloads.DISPLAY_NAME,name);put(MediaStore.Downloads.MIME_TYPE,"audio/mpeg");put(MediaStore.Downloads.RELATIVE_PATH,Environment.DIRECTORY_DOWNLOADS+"/MusicFinder")}
                 outputUri=contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)?:throw Exception("storage")
-                contentResolver.openOutputStream(outputUri!!).use { out -> c.inputStream.use { input -> copyDownload(input,out,length) } }
+                val outputStream = contentResolver.openOutputStream(outputUri!!) ?: throw Exception("output")
+                outputStream.use { out -> c.inputStream.use { input -> copyDownload(input,out,length) } }
             } else {
                 val dir=Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);val folder=java.io.File(dir,"MusicFinder");folder.mkdirs();val file=java.io.File(folder,name)
                 FileOutputStream(file).use { out->c.inputStream.use{input->copyDownload(input,out,length)} }
