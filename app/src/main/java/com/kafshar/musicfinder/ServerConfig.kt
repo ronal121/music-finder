@@ -17,7 +17,10 @@ object ServerConfig {
     const val GOOGLE_HOST = "google.com"
     private val youtubeDomains = setOf("youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "www.youtu.be")
 
+    // Search sources. Beroosic is deliberately included because its song pages
+    // follow a stable /songs/<artist>-<title>/ pattern and are directly playable.
     val SERVERS: List<MusicServer> = listOf(
+        MusicServer("beroosic.ir",110),
         MusicServer("rozmusic.com",100), MusicServer("nex1music.com",99),
         MusicServer("musicbaran.ir",98), MusicServer("mymusicbaran.ir",98),
         MusicServer("musicviral.ir",97), MusicServer("musicdel.ir",96),
@@ -45,18 +48,11 @@ object ServerConfig {
             .flatMap { listOf(it.domain) + it.mediaHosts }
             .mapNotNull(::normalizeHost).toSet()
 
-    /*
-     * This list is intentionally broad. MainActivity's Google extractor uses it
-     * only as a host/TLD gate; the actual search query is no longer restricted to
-     * these domains. This keeps Google as the discovery engine instead of turning
-     * the app into a fixed-site searcher.
-     */
+    // Exact domains used in Google site: filters. Do NOT use bare TLDs here:
+    // accepting every .ir/.com result was causing unrelated pages to enter the
+    // scraper and making the search pipeline slow and unreliable.
     val MUSIC_SITES: List<String>
-        get() = listOf(
-            "com", "ir", "net", "org", "io", "co", "me", "tv", "fm", "info",
-            "online", "site", "xyz", "cc", "ly", "de", "uk", "ru", "tr", "in",
-            "ca", "au", "us", "be", "app", "pro", "live"
-        )
+        get() = SERVERS.filter { it.enabled && it.supportsSearch }.map { it.domain }
 
     fun serverFor(host: String?): MusicServer? {
         val h = normalizeHost(host) ?: return null
@@ -74,21 +70,14 @@ object ServerConfig {
 
     fun isAllowedPageUrl(url: String): Boolean {
         val host = extractHttpHost(url) ?: return false
-        return isGoogleHost(host) || isYouTubeHost(host) || host.isNotBlank()
+        return isGoogleHost(host) || isYouTubeHost(host) || serverFor(host) != null
     }
 
-    /*
-     * Google is the discovery layer. A result page may expose its audio file on
-     * the same host, a CDN, or a download host. If the URL itself clearly looks
-     * like audio, accept it instead of rejecting it because the domain wasn't
-     * manually registered in SERVERS.
-     */
     fun isAllowedMediaUrl(url: String, pageUrl: String? = null): Boolean {
         val host = extractHttpHost(url) ?: return false
         if (isYouTubeHost(host)) return false
         if (serverFor(host)?.supportsStreaming == true) return true
-        if (!looksLikeAudioUrl(url)) return false
-        return true
+        return looksLikeAudioUrl(url)
     }
 
     fun looksLikeAudioUrl(url: String): Boolean {
@@ -102,13 +91,20 @@ object ServerConfig {
 
     fun searchQuery(song: String): String {
         val q = SearchEngine.correctedQuery(song).trim().replace(Regex("\\s+"), " ")
-        return q.ifBlank { "music" }
+        if (q.isBlank()) return "music"
+
+        // Search exactly the music sources we can subsequently scrape. This is
+        // much closer to the way a user searches Google manually: Google finds
+        // the song page first, then the app opens that page and extracts its audio.
+        val siteFilter = MUSIC_SITES.joinToString(" OR ") { "site:$it" }
+        return "\"$q\" ($siteFilter)"
     }
 
     fun siteName(url: String): String {
         val host = extractHttpHost(url) ?: return "Music"
         if (isYouTubeHost(host)) return "YouTube"
         return when {
+            hostMatchesDomain(host,"beroosic.ir") -> "Beroosic"
             hostMatchesDomain(host,"rozmusic.com") -> "RozMusic"
             hostMatchesDomain(host,"musicviral.ir") -> "MusicViral"
             hostMatchesDomain(host,"nex1music.com") -> "Nex1Music"
