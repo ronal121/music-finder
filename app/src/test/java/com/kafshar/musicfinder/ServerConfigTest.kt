@@ -27,8 +27,11 @@ class ServerConfigTest {
         )
     }
 
-    @Test fun rejectsCrossHostDirectAudioWhenPageHostIsKnown() {
-        assertFalse(
+    @Test fun acceptsCrossHostDirectAudioDiscoveredFromGoogle() {
+        // Google may discover a page on one host whose actual media file is
+        // served by a CDN/download host. The search engine is intentionally
+        // not restricted to the manually configured server list.
+        assertTrue(
             ServerConfig.isAllowedMediaUrl(
                 "https://cdn.example.net/song.mp3",
                 "https://example.com/music/song"
