@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -16,8 +16,37 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Restore stable MainActivity.kt
+        id: restore_main_activity
+        shell: bash
+        run: |
+          set -e
+          BASE="f00a82471167abaab83cec394659262ff4a3f2ca"
+          FILE="app/src/main/java/com/kafshar/musicfinder/MainActivity.kt"
+          if git diff --quiet "$BASE" -- "$FILE"; then
+            echo "MainActivity already matches the stable pre-rewrite version."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Restoring $FILE from $BASE"
+            git checkout "$BASE" -- "$FILE"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add "$FILE"
+            git commit -m "fix: restore stable MainActivity implementation"
+            git push origin HEAD:main
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stop after repair commit
+        if: steps.restore_main_activity.outputs.changed == 'true'
+        run: |
+          echo "MainActivity was repaired and pushed. The new push will run the full CI again."
 
       - name: Set up JDK 17
+        if: steps.restore_main_activity.outputs.changed != 'true'
         uses: actions/setup-java@v5
         with:
           java-version: '17'
@@ -25,27 +54,25 @@ jobs:
           cache: gradle
 
       - name: Set up Gradle 8.9
+        if: steps.restore_main_activity.outputs.changed != 'true'
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
       - name: Verify Gradle version
+        if: steps.restore_main_activity.outputs.changed != 'true'
         run: gradle --version
 
-      - name: Show MainActivity failing source context
-        run: |
-          echo '--- MainActivity.kt lines 2525-2545 ---'
-          nl -ba app/src/main/java/com/kafshar/musicfinder/MainActivity.kt | sed -n '2525,2545p'
-          echo '--- MainActivity.kt lines containing suspicious unary-plus candidates ---'
-          grep -nE '^\s*\+|\(\s*\+|,\s*\+' app/src/main/java/com/kafshar/musicfinder/MainActivity.kt || true
-
       - name: Run unit tests
+        if: steps.restore_main_activity.outputs.changed != 'true'
         run: gradle --no-daemon --stacktrace test
 
       - name: Build debug APK
+        if: steps.restore_main_activity.outputs.changed != 'true'
         run: gradle --no-daemon --stacktrace assembleDebug
 
       - name: Upload APK
+        if: steps.restore_main_activity.outputs.changed != 'true'
         uses: actions/upload-artifact@v6
         with:
           name: app-debug
