@@ -41,10 +41,22 @@ object ServerConfig {
     )
 
     val MUSIC_HOSTS: Set<String>
-        get() = SERVERS.filter { it.enabled }.flatMap { listOf(it.domain) + it.mediaHosts }.mapNotNull(::normalizeHost).toSet()
+        get() = SERVERS.filter { it.enabled }
+            .flatMap { listOf(it.domain) + it.mediaHosts }
+            .mapNotNull(::normalizeHost).toSet()
 
+    /*
+     * This list is intentionally broad. MainActivity's Google extractor uses it
+     * only as a host/TLD gate; the actual search query is no longer restricted to
+     * these domains. This keeps Google as the discovery engine instead of turning
+     * the app into a fixed-site searcher.
+     */
     val MUSIC_SITES: List<String>
-        get() = SERVERS.filter { it.enabled && it.supportsSearch }.sortedByDescending { it.priority }.map { it.domain }
+        get() = listOf(
+            "com", "ir", "net", "org", "io", "co", "me", "tv", "fm", "info",
+            "online", "site", "xyz", "cc", "ly", "de", "uk", "ru", "tr", "in",
+            "ca", "au", "us", "be", "app", "pro", "live"
+        )
 
     fun serverFor(host: String?): MusicServer? {
         val h = normalizeHost(host) ?: return null
@@ -62,30 +74,35 @@ object ServerConfig {
 
     fun isAllowedPageUrl(url: String): Boolean {
         val host = extractHttpHost(url) ?: return false
-        return isGoogleHost(host) || isYouTubeHost(host) || isMusicHost(host)
+        return isGoogleHost(host) || isYouTubeHost(host) || host.isNotBlank()
     }
 
+    /*
+     * Google is the discovery layer. A result page may expose its audio file on
+     * the same host, a CDN, or a download host. If the URL itself clearly looks
+     * like audio, accept it instead of rejecting it because the domain wasn't
+     * manually registered in SERVERS.
+     */
     fun isAllowedMediaUrl(url: String, pageUrl: String? = null): Boolean {
         val host = extractHttpHost(url) ?: return false
-        if (serverFor(host)?.supportsStreaming == true) return true
         if (isYouTubeHost(host)) return false
+        if (serverFor(host)?.supportsStreaming == true) return true
         if (!looksLikeAudioUrl(url)) return false
-        if (pageUrl.isNullOrBlank()) return true
-        val pageHost = extractHttpHost(pageUrl) ?: return false
-        return hostMatchesDomain(host, pageHost)
+        return true
     }
 
     fun looksLikeAudioUrl(url: String): Boolean {
         val l = url.lowercase()
-        return listOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm", "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile").any { l.contains(it) }
+        return listOf(
+            ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm",
+            "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile",
+            ".mp4"
+        ).any { l.contains(it) }
     }
 
     fun searchQuery(song: String): String {
         val q = SearchEngine.correctedQuery(song).trim().replace(Regex("\\s+"), " ")
-        if (q.isBlank()) return "music"
-        // Keep Google query broad enough to include all configured servers, including musicviral.ir.
-        val filter = MUSIC_SITES.take(25).joinToString(" OR ") { "site:$it" }
-        return if (filter.isBlank()) q else "$q ($filter)"
+        return q.ifBlank { "music" }
     }
 
     fun siteName(url: String): String {
