@@ -19,8 +19,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Restore stable MainActivity.kt
-        id: restore_main_activity
+      - name: Restore stable MainActivity.kt if needed
         shell: bash
         run: |
           set -e
@@ -28,7 +27,6 @@ jobs:
           FILE="app/src/main/java/com/kafshar/musicfinder/MainActivity.kt"
           if git diff --quiet "$BASE" -- "$FILE"; then
             echo "MainActivity already matches the stable pre-rewrite version."
-            echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "Restoring $FILE from $BASE"
             git checkout "$BASE" -- "$FILE"
@@ -37,16 +35,9 @@ jobs:
             git add "$FILE"
             git commit -m "fix: restore stable MainActivity implementation"
             git push origin HEAD:main
-            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Stop after repair commit
-        if: steps.restore_main_activity.outputs.changed == 'true'
-        run: |
-          echo "MainActivity was repaired and pushed. The new push will run the full CI again."
-
       - name: Set up JDK 17
-        if: steps.restore_main_activity.outputs.changed != 'true'
         uses: actions/setup-java@v5
         with:
           java-version: '17'
@@ -54,25 +45,28 @@ jobs:
           cache: gradle
 
       - name: Set up Gradle 8.9
-        if: steps.restore_main_activity.outputs.changed != 'true'
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
       - name: Verify Gradle version
-        if: steps.restore_main_activity.outputs.changed != 'true'
         run: gradle --version
 
       - name: Run unit tests
-        if: steps.restore_main_activity.outputs.changed != 'true'
         run: gradle --no-daemon --stacktrace test
 
       - name: Build debug APK
-        if: steps.restore_main_activity.outputs.changed != 'true'
         run: gradle --no-daemon --stacktrace assembleDebug
 
+      - name: Verify APK exists
+        shell: bash
+        run: |
+          set -e
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          ls -lh "$APK"
+
       - name: Upload APK
-        if: steps.restore_main_activity.outputs.changed != 'true'
         uses: actions/upload-artifact@v6
         with:
           name: app-debug
