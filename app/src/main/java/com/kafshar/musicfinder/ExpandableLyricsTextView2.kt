@@ -1,0 +1,2 @@
+package com.kafshar.musicfinder
+class ExpandableLyricsTextView2
