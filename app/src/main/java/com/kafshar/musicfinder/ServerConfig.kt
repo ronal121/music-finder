@@ -2,7 +2,6 @@ package com.kafshar.musicfinder
 
 import java.net.URI
 
-/** Declarative registry for known sources plus safe helpers for dynamically discovered pages. */
 data class MusicServer(
     val domain: String,
     val priority: Int,
@@ -37,7 +36,8 @@ object ServerConfig {
         MusicServer("irmp3.ir", 74), MusicServer("next1.ir", 73),
         MusicServer("mytehranmusic.com", 72), MusicServer("mybia2music.com", 70),
         MusicServer("musics-fa.com", 69), MusicServer("pro.iraniandj.ir", 68),
-        MusicServer("worldofmusic.ir", 67), MusicServer("iranmusic.ir", 66)
+        MusicServer("worldofmusic.ir", 67), MusicServer("iranmusic.ir", 66),
+        MusicServer("sahand-music.ir", 65), MusicServer("nakaman-music.ir", 64)
     )
 
     val MUSIC_HOSTS: Set<String>
@@ -45,9 +45,15 @@ object ServerConfig {
             .flatMap { sequenceOf(it.domain) + it.mediaHosts.asSequence() }
             .mapNotNull(::normalizeHost).toSet()
 
+    /**
+     * Kept broad intentionally. MainActivity uses this list only inside the JavaScript
+     * Google-result filter. TLDs let Google results from previously unknown music sites pass
+     * through; the actual media URL is validated separately.
+     */
     val MUSIC_SITES: List<String>
-        get() = SERVERS.asSequence().filter { it.enabled && it.supportsSearch }
-            .sortedByDescending { it.priority }.map { it.domain }.toList()
+        get() = listOf(
+            "com", "ir", "net", "org", "io", "me", "tv", "co", "ly", "fm", "be", "info"
+        ) + SERVERS.asSequence().filter { it.enabled && it.supportsSearch }.map { it.domain }.toList()
 
     fun serverFor(host: String?): MusicServer? {
         val normalized = normalizeHost(host) ?: return null
@@ -74,36 +80,40 @@ object ServerConfig {
 
     fun isYouTubeHost(host: String?): Boolean = youtubeDomains.any { hostMatchesDomain(normalizeHost(host).orEmpty(), it) }
 
-    /** Google result pages are candidates; the actual media URL is validated separately. */
     fun isAllowedPageUrl(url: String): Boolean {
         val host = extractHttpHost(url) ?: return false
         return isGoogleHost(host) || isYouTubeHost(host) || host.isNotBlank()
     }
 
-    /** Known media hosts are always accepted. Dynamic sources are accepted only when their URL
-     * is an ordinary direct audio resource and belongs to the same host as the discovered page. */
+    /**
+     * Known streaming hosts are accepted. For a newly discovered music site, a direct audio
+     * resource is accepted as well. YouTube remains deliberately excluded because a YouTube
+     * watch URL is not an audio stream and must not be fed to ExoPlayer as if it were one.
+     */
     fun isAllowedMediaUrl(url: String, pageUrl: String? = null): Boolean {
         val host = extractHttpHost(url) ?: return false
         val server = serverFor(host)
         if (server?.enabled == true && server.supportsStreaming) return true
         if (isYouTubeHost(host)) return false
-        if (pageUrl.isNullOrBlank()) return false
+        if (!looksLikeAudioUrl(url)) return false
+        if (pageUrl.isNullOrBlank()) return true
         val pageHost = extractHttpHost(pageUrl) ?: return false
-        if (!hostMatchesDomain(host, pageHost)) return false
-        return looksLikeAudioUrl(url)
+        return hostMatchesDomain(host, pageHost)
     }
 
     fun looksLikeAudioUrl(url: String): Boolean {
         val lower = url.lowercase()
-        return listOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm", "audio/", "/download", "/dl/").any { lower.contains(it) }
+        return listOf(
+            ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm",
+            "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile"
+        ).any { lower.contains(it) }
     }
 
-    /** Keep Google discovery broad. Do not inject site: filters; Google itself ranks the web. */
+    /** Do not restrict Google with site: filters. Google decides ranking across the web. */
     fun searchQuery(song: String): String {
         val normalized = SearchEngine.correctedQuery(song)
             .trim().replace(Regex("\\s+"), " ")
-        if (normalized.isBlank()) return "music"
-        return normalized
+        return normalized.ifBlank { "music" }
     }
 
     fun siteName(url: String): String {
@@ -146,6 +156,8 @@ object ServerConfig {
             hostMatchesDomain(host, "pro.iraniandj.ir") -> "IranianDJ Pro"
             hostMatchesDomain(host, "worldofmusic.ir") -> "World of Music"
             hostMatchesDomain(host, "iranmusic.ir") -> "IranMusic"
+            hostMatchesDomain(host, "sahand-music.ir") -> "Sahand Music"
+            hostMatchesDomain(host, "nakaman-music.ir") -> "Nakaman Music"
             else -> host.removePrefix("www.")
         }
     }
