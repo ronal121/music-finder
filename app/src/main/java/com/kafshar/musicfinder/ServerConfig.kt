@@ -45,15 +45,14 @@ object ServerConfig {
             .flatMap { sequenceOf(it.domain) + it.mediaHosts.asSequence() }
             .mapNotNull(::normalizeHost).toSet()
 
-    /**
-     * Kept broad intentionally. MainActivity uses this list only inside the JavaScript
-     * Google-result filter. TLDs let Google results from previously unknown music sites pass
-     * through; the actual media URL is validated separately.
-     */
+    // IMPORTANT: this list contains real hostnames only. Do not put bare TLDs such as
+    // "com" or "ir" here; doing so makes every .com/.ir Google result look like a music site.
     val MUSIC_SITES: List<String>
-        get() = listOf(
-            "com", "ir", "net", "org", "io", "me", "tv", "co", "ly", "fm", "be", "info"
-        ) + SERVERS.asSequence().filter { it.enabled && it.supportsSearch }.map { it.domain }.toList()
+        get() = SERVERS.asSequence()
+            .filter { it.enabled && it.supportsSearch }
+            .sortedByDescending { it.priority }
+            .map { it.domain }
+            .toList()
 
     fun serverFor(host: String?): MusicServer? {
         val normalized = normalizeHost(host) ?: return null
@@ -82,14 +81,9 @@ object ServerConfig {
 
     fun isAllowedPageUrl(url: String): Boolean {
         val host = extractHttpHost(url) ?: return false
-        return isGoogleHost(host) || isYouTubeHost(host) || host.isNotBlank()
+        return isGoogleHost(host) || isYouTubeHost(host) || isMusicHost(host)
     }
 
-    /**
-     * Known streaming hosts are accepted. For a newly discovered music site, a direct audio
-     * resource is accepted as well. YouTube remains deliberately excluded because a YouTube
-     * watch URL is not an audio stream and must not be fed to ExoPlayer as if it were one.
-     */
     fun isAllowedMediaUrl(url: String, pageUrl: String? = null): Boolean {
         val host = extractHttpHost(url) ?: return false
         val server = serverFor(host)
@@ -109,11 +103,20 @@ object ServerConfig {
         ).any { lower.contains(it) }
     }
 
-    /** Do not restrict Google with site: filters. Google decides ranking across the web. */
+    /** Build a Google query that strongly targets the configured music servers. */
     fun searchQuery(song: String): String {
         val normalized = SearchEngine.correctedQuery(song)
             .trim().replace(Regex("\\s+"), " ")
-        return normalized.ifBlank { "music" }
+        if (normalized.isBlank()) return "music"
+
+        // Keep the query compact enough for WebView/Google while covering the highest priority servers.
+        val siteFilter = SERVERS.asSequence()
+            .filter { it.enabled && it.supportsSearch }
+            .sortedByDescending { it.priority }
+            .take(18)
+            .joinToString(" OR ") { "site:${it.domain}" }
+
+        return if (siteFilter.isBlank()) normalized else "$normalized ($siteFilter)"
     }
 
     fun siteName(url: String): String {
