@@ -2,7 +2,7 @@ package com.kafshar.musicfinder
 
 import java.net.URI
 
-/** Declarative registry for search/playback sources and their trust policy. */
+/** Declarative registry for known sources plus safe helpers for dynamically discovered pages. */
 data class MusicServer(
     val domain: String,
     val priority: Int,
@@ -16,6 +16,8 @@ data class MusicServer(
 
 object ServerConfig {
     const val GOOGLE_HOST = "google.com"
+
+    private val youtubeDomains = setOf("youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "www.youtu.be")
 
     val SERVERS: List<MusicServer> = listOf(
         MusicServer("rozmusic.com", 100), MusicServer("nex1music.com", 99),
@@ -65,48 +67,48 @@ object ServerConfig {
         return hostMatchesDomain(normalized, GOOGLE_HOST)
     }
 
+    fun isYouTubeUrl(url: String?): Boolean {
+        val host = extractHttpHost(url) ?: return false
+        return youtubeDomains.any { hostMatchesDomain(host, it) }
+    }
+
+    fun isYouTubeHost(host: String?): Boolean = youtubeDomains.any { hostMatchesDomain(normalizeHost(host).orEmpty(), it) }
+
+    /** Google result pages are candidates; the actual media URL is validated separately. */
     fun isAllowedPageUrl(url: String): Boolean {
         val host = extractHttpHost(url) ?: return false
-        return isGoogleHost(host) || serverFor(host)?.enabled == true
+        return isGoogleHost(host) || isYouTubeHost(host) || host.isNotBlank()
     }
 
-    fun isAllowedMediaUrl(url: String): Boolean {
+    /** Known media hosts are always accepted. Dynamic sources are accepted only when their URL
+     * is an ordinary direct audio resource and belongs to the same host as the discovered page. */
+    fun isAllowedMediaUrl(url: String, pageUrl: String? = null): Boolean {
         val host = extractHttpHost(url) ?: return false
-        val server = serverFor(host) ?: return false
-        return server.enabled && server.supportsStreaming
+        val server = serverFor(host)
+        if (server?.enabled == true && server.supportsStreaming) return true
+        if (isYouTubeHost(host)) return false
+        if (pageUrl.isNullOrBlank()) return false
+        val pageHost = extractHttpHost(pageUrl) ?: return false
+        if (!hostMatchesDomain(host, pageHost)) return false
+        return looksLikeAudioUrl(url)
     }
 
-    /**
-     * Build a Google query that strongly prefers the configured music sources.
-     *
-     * The old query was only "$song music". Google could therefore spend the
-     * first result pages on YouTube, Spotify, Wikipedia, lyrics sites, etc.
-     * MainActivity intentionally filters those URLs out, which often resulted
-     * in zero usable results. We now add a compact OR group of the highest
-     * priority configured domains. The complete server registry is still kept
-     * for filtering and playback; only the Google discovery query is narrowed.
-     */
+    fun looksLikeAudioUrl(url: String): Boolean {
+        val lower = url.lowercase()
+        return listOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm", "audio/", "/download", "/dl/").any { lower.contains(it) }
+    }
+
+    /** Keep Google discovery broad. Do not inject site: filters; Google itself ranks the web. */
     fun searchQuery(song: String): String {
         val normalized = SearchEngine.correctedQuery(song)
             .trim().replace(Regex("\\s+"), " ")
         if (normalized.isBlank()) return "music"
-
-        val domains = SERVERS.asSequence()
-            .filter { it.enabled && it.supportsSearch }
-            .sortedByDescending { it.priority }
-            .take(12)
-            .map { "site:${it.domain}" }
-            .joinToString(" OR ")
-
-        return if (domains.isBlank()) {
-            "$normalized music"
-        } else {
-            "($normalized) music ($domains)"
-        }
+        return normalized
     }
 
     fun siteName(url: String): String {
         val host = extractHttpHost(url) ?: return "Music"
+        if (isYouTubeHost(host)) return "YouTube"
         return when {
             hostMatchesDomain(host, "rozmusic.com") -> "RozMusic"
             hostMatchesDomain(host, "nex1music.com") -> "Nex1Music"
@@ -144,8 +146,7 @@ object ServerConfig {
             hostMatchesDomain(host, "pro.iraniandj.ir") -> "IranianDJ Pro"
             hostMatchesDomain(host, "worldofmusic.ir") -> "World of Music"
             hostMatchesDomain(host, "iranmusic.ir") -> "IranMusic"
-            hostMatchesDomain(host, GOOGLE_HOST) -> "Google"
-            else -> "Music"
+            else -> host.removePrefix("www.")
         }
     }
 
