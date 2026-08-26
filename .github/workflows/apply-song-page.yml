@@ -1,0 +1,61 @@
+name: Apply Song Page Link
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Patch MainActivity
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('app/src/main/java/com/kafshar/musicfinder/MainActivity.kt')
+          s = p.read_text(encoding='utf-8')
+
+          if 'private val songPageUrls' not in s:
+              s = s.replace('private val songs = ArrayList<SongResult>()', 'private val songs = ArrayList<SongResult>()\n    private val songPageUrls = HashMap<String, String>()\n    private var currentSongPageUrl = ""')
+
+          if 'android.net.Uri' not in s:
+              s = s.replace('import android.graphics.BitmapFactory', 'import android.graphics.BitmapFactory\nimport android.net.Uri')
+
+          old = 'songs.clear(); currentIndex = -1; currentAudioUrl = ""; currentSong = null'
+          new = 'songs.clear(); songPageUrls.clear(); currentIndex = -1; currentAudioUrl = ""; currentSong = null; currentSongPageUrl = ""'
+          s = s.replace(old, new)
+
+          old = 'if (songs.none { it.url == song.url }) {\n                        songs.add(song)\n                        addSongView(song, songs.lastIndex)\n                    }'
+          new = 'if (songs.none { it.url == song.url }) {\n                        songs.add(song)\n                        songPageUrls[song.url] = expectedPageUrl\n                        addSongView(song, songs.lastIndex)\n                    }'
+          s = s.replace(old, new)
+
+          marker = 'historyButton.setOnClickListener { toggleHistory() }'
+          insertion = '''historyButton.setOnClickListener { toggleHistory() }\n        lyricsText.setOnClickListener {\n            val page = currentSongPageUrl.trim()\n            if (page.startsWith("http", true)) {\n                try {\n                    hideKeyboard()\n                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(page)))\n                } catch (_: Exception) {\n                    Toast.makeText(this, "صفحه آهنگ قابل باز کردن نیست", Toast.LENGTH_SHORT).show()\n                }\n            }\n        }'''
+          if 'lyricsText.setOnClickListener' not in s:
+              s = s.replace(marker, insertion)
+
+          old = 'private fun playSong(song: SongResult) {\n        if (song.url.isBlank()) return\n        currentSong = song'
+          new = 'private fun playSong(song: SongResult) {\n        if (song.url.isBlank()) return\n        hideKeyboard()\n        currentSongPageUrl = songPageUrls[song.url].orEmpty()\n        if (currentSongPageUrl.isNotBlank()) {\n            lyricsText.visibility = View.VISIBLE\n            lyricsText.text = "📄  مشاهده متن و صفحه آهنگ در سایت  ›"\n        } else {\n            lyricsText.visibility = View.GONE\n        }\n        currentSong = song'
+          s = s.replace(old, new)
+
+          if 'private fun hideKeyboard()' not in s:
+              anchor = 'private fun searchMusic() {'
+              helper = '''private fun hideKeyboard() {\n        try {\n            val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager\n            imm.hideSoftInputFromWindow(query.windowToken, 0)\n            query.clearFocus()\n        } catch (_: Exception) {}\n    }\n\n    '''
+              s = s.replace(anchor, helper + anchor)
+
+          p.write_text(s, encoding='utf-8')
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
+          git diff --cached --quiet || git commit -m "Open current song page from lyrics panel"
+          git push
