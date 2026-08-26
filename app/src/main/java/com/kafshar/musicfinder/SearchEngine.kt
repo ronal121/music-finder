@@ -1,6 +1,6 @@
 package com.kafshar.musicfinder
 
-/** Lightweight, offline query intelligence. No network/API dependency. */
+/** Offline query intelligence used by both Google and direct site search. */
 object SearchEngine {
     private val whitespace = Regex("\\s+")
     private val punctuation = Regex("[^\\p{L}\\p{N}\\s-]")
@@ -22,22 +22,22 @@ object SearchEngine {
         "michal" to "michael",
         "michal jakson" to "michael jackson",
         "michal jackson" to "michael jackson",
+        "michal jaskon" to "michael jackson",
         "jakson" to "jackson",
         "jaskon" to "jackson",
+        "micheal" to "michael",
         "swft" to "swift",
         "talyor" to "taylor",
         "taylor swft" to "taylor swift",
         "bill jin" to "billie jean",
         "billie jin" to "billie jean",
+        "billie jine" to "billie jean",
         "adel" to "adele",
-        "adel hello" to "adele hello"
+        "adele helol" to "adele hello"
     )
 
-    /** Normalizes Arabic/Persian variants without destroying the user's words. */
     fun normalizeQuery(input: String): String = input
-        .mapNotNull { ch ->
-            persianToCanonical[ch] ?: digitMap[ch] ?: ch
-        }
+        .mapNotNull { ch -> persianToCanonical[ch] ?: digitMap[ch] ?: ch }
         .joinToString("")
         .replace('\u200c', ' ')
         .replace('\u200f', ' ')
@@ -55,139 +55,108 @@ object SearchEngine {
     fun correctedQuery(input: String): String {
         val normalized = normalizeQuery(input)
         if (normalized.isBlank()) return ""
-
         commonTypos[normalized]?.let { return it }
 
         val words = normalized.split(' ').filter { it.isNotBlank() }
-        if (words.isEmpty()) return ""
-
-        // First try multi-word corrections, then individual tokens.
         val result = ArrayList<String>(words.size)
         var i = 0
         while (i < words.size) {
             if (i + 1 < words.size) {
                 val pair = "${words[i]} ${words[i + 1]}"
-                val pairCorrection = commonTypos[pair]
-                if (pairCorrection != null) {
-                    result += pairCorrection
+                commonTypos[pair]?.let {
+                    result += it
                     i += 2
                     continue
                 }
             }
-            result += commonTypos[words[i]] ?: words[i]
+            result += bestCorrection(words[i])
             i++
         }
         return result.joinToString(" ")
     }
 
+    private fun bestCorrection(word: String): String {
+        commonTypos[word]?.let { return it }
+        if (word.length < 4) return word
+        val best = commonTypos.entries
+            .filter { it.key.length >= 4 && kotlin.math.abs(it.key.length - word.length) <= 2 }
+            .maxByOrNull { levenshteinSimilarity(word, it.key) }
+        return if (best != null && levenshteinSimilarity(word, best.key) >= 86) best.value else word
+    }
+
     fun suggestions(input: String): List<String> {
         val original = displayQuery(input)
         if (original.isBlank()) return emptyList()
-
         val normalized = normalizeQuery(original)
         val corrected = correctedQuery(original)
-
         return linkedSetOf(
-            original,
             corrected,
+            original,
             "$corrected song",
             "$corrected music",
             "$corrected آهنگ"
-        )
-            .filter { it.isNotBlank() && normalizeQuery(it) != normalized }
-            .take(5)
+        ).filter { it.isNotBlank() && normalizeQuery(it) != normalized }.take(5)
     }
 
-    /** Search variants ordered from most natural to most explicit. */
+    /** Multiple independent search variants; callers should deduplicate results. */
     fun buildQueries(input: String): List<String> {
         val original = displayQuery(input)
         if (original.isBlank()) return emptyList()
-
         val normalized = normalizeQuery(original)
         val corrected = correctedQuery(original)
-
-        return linkedSetOf(
-            original,
-            corrected,
-            normalized,
-            "$corrected official",
-            "$corrected song"
-        )
-            .filter { it.isNotBlank() }
-            .take(5)
+        val words = corrected.split(' ').filter { it.isNotBlank() }
+        val variants = linkedSetOf<String>()
+        variants += original
+        variants += corrected
+        if (normalized != corrected) variants += normalized
+        if (words.size > 1) variants += words.asReversed().joinToString(" ")
+        variants += "$corrected song"
+        return variants.filter { it.isNotBlank() }.take(6)
     }
 
-    fun buildGoogleQuery(input: String): String =
-        ServerConfig.searchQuery(correctedQuery(input))
+    fun buildGoogleQuery(input: String): String = ServerConfig.searchQuery(correctedQuery(input))
 
     fun parseArtistTitle(input: String): Pair<String?, String?> {
         val clean = displayQuery(input)
         if (clean.isBlank()) return null to null
-
         val parts = clean.split(" - ", " — ", " – ")
         return if (parts.size >= 2) {
-            parts[0].trim().ifBlank { null } to
-                parts.drop(1).joinToString(" - ").trim().ifBlank { null }
-        } else {
-            null to clean
-        }
+            parts[0].trim().ifBlank { null } to parts.drop(1).joinToString(" - ").trim().ifBlank { null }
+        } else null to clean
     }
 
-    /**
-     * Token-aware similarity. This is intentionally tolerant of Persian/Arabic
-     * spelling variants and small English typos.
-     */
     fun similarity(a: String, b: String): Int {
         val left = normalizeQuery(a)
         val right = normalizeQuery(b)
         if (left.isBlank() || right.isBlank()) return 0
         if (left == right) return 100
-        if (left.contains(right) || right.contains(left)) return 82
+        if (left.contains(right) || right.contains(left)) return 88
 
         val leftWords = left.split(' ').filter { it.isNotBlank() }
         val rightWords = right.split(' ').filter { it.isNotBlank() }
         if (leftWords.isEmpty() || rightWords.isEmpty()) return 0
 
-        val rightSet = rightWords.toSet()
-        val exactWords = leftWords.count { it in rightSet }
-        val exactScore = exactWords.toDouble() / maxOf(leftWords.size, rightWords.size)
-
-        var fuzzyTotal = 0
-        var fuzzyMatches = 0
-        for (lw in leftWords) {
-            val best = rightWords.maxOfOrNull { rw -> levenshteinSimilarity(lw, rw) } ?: 0
-            if (best >= 70) {
-                fuzzyTotal += best
-                fuzzyMatches++
-            }
-        }
-
-        val fuzzyScore = if (fuzzyMatches == 0) 0 else fuzzyTotal / fuzzyMatches
-        val coverageScore = ((exactScore * 100.0).toInt())
-        return maxOf(coverageScore, fuzzyScore).coerceIn(0, 100)
+        val exact = leftWords.count { it in rightWords }
+        val exactCoverage = exact.toDouble() / maxOf(leftWords.size, rightWords.size)
+        val fuzzy = leftWords.mapNotNull { lw -> rightWords.maxOfOrNull { rw -> levenshteinSimilarity(lw, rw) } }
+            .filter { it >= 65 }
+        val fuzzyCoverage = if (fuzzy.isEmpty()) 0 else fuzzy.average()
+        return maxOf((exactCoverage * 100).toInt(), fuzzyCoverage.toInt()).coerceIn(0, 100)
     }
 
     private fun levenshteinSimilarity(a: String, b: String): Int {
         if (a == b) return 100
         if (a.isEmpty() || b.isEmpty()) return 0
-
         var row = IntArray(b.length + 1) { it }
         for (i in a.indices) {
             val next = IntArray(b.length + 1)
             next[0] = i + 1
             for (j in b.indices) {
-                next[j + 1] = minOf(
-                    next[j] + 1,
-                    row[j + 1] + 1,
-                    row[j] + if (a[i] == b[j]) 0 else 1
-                )
+                next[j + 1] = minOf(next[j] + 1, row[j + 1] + 1, row[j] + if (a[i] == b[j]) 0 else 1)
             }
             row = next
         }
-
         val distance = row[b.length]
-        return ((1.0 - distance.toDouble() / maxOf(a.length, b.length)) * 100)
-            .toInt()
-            .coerceIn(0, 100)
+        return ((1.0 - distance.toDouble() / maxOf(a.length, b.length)) * 100).toInt().coerceIn(0, 100)
     }
 }
