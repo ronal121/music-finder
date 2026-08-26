@@ -1,0 +1,31 @@
+name: Fix AutoPlay Guard
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  fix:
+    if: ${{ github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, '[autofix]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Correct autoplay guard
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('app/src/main/java/com/kafshar/musicfinder/MainActivity.kt')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace('if (destroyed || !autoPlaySearch.not()) return', 'if (destroyed || autoPlaySearch) return')
+          p.write_text(s, encoding='utf-8')
+          print('guard corrected')
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
+          git diff --cached --quiet || git commit -m '[autofix] Correct autoplay guard'
+          git push
