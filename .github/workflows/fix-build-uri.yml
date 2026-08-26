@@ -1,0 +1,25 @@
+name: Fix Build Import
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add missing Uri import
+        run: |
+          FILE="app/src/main/java/com/kafshar/musicfinder/MainActivity.kt"
+          if grep -q 'Uri.parse(page)' "$FILE" && ! grep -q '^import android.net.Uri$' "$FILE"; then
+            sed -i '/^import android.os.Build$/i import android.net.Uri' "$FILE"
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add "$FILE"
+            git commit -m 'Fix missing Uri import for song page'
+            git push
+          fi
