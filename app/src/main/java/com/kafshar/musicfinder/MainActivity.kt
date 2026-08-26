@@ -84,6 +84,8 @@ class MainActivity : Activity() {
 
     private val turquoiseColor = 0xFF20C9C9.toInt()
     private val songs = ArrayList<SongResult>()
+    private val songPageUrls = HashMap<String, String>()
+    private var currentSongPageUrl = ""
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newFixedThreadPool(3)
     private val downloadExecutor = Executors.newSingleThreadExecutor()
@@ -211,6 +213,17 @@ class MainActivity : Activity() {
         saveButton.setOnClickListener { saveCurrentSong() }
         libraryButton.setOnClickListener { startActivity(Intent(this, LibraryActivity::class.java)) }
         historyButton.setOnClickListener { toggleHistory() }
+        lyricsText.setOnClickListener {
+            val page = currentSongPageUrl.trim()
+            if (page.startsWith("http", true)) {
+                try {
+                    hideKeyboard()
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(page)))
+                } catch (_: Exception) {
+                    Toast.makeText(this, "صفحه آهنگ قابل باز کردن نیست", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 
     private fun setupVolumeControl() {
@@ -286,6 +299,7 @@ class MainActivity : Activity() {
                     val song = SongResult(audio, title, artist, getSiteName(expectedPageUrl), cover)
                     if (songs.none { it.url == song.url }) {
                         songs.add(song)
+                        songPageUrls[song.url] = expectedPageUrl
                         addSongView(song, songs.lastIndex)
                     }
                 }
@@ -343,6 +357,14 @@ class MainActivity : Activity() {
         } catch (_: Exception) { status.text = "جستجو موقتاً در دسترس نیست" }
     }
 
+    private fun hideKeyboard() {
+        try {
+            val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            imm.hideSoftInputFromWindow(query.windowToken, 0)
+            query.clearFocus()
+        } catch (_: Exception) {}
+    }
+
     private fun searchMusic() {
         val text = query.text.toString().trim()
         if (text.isBlank()) { Toast.makeText(this, "نام آهنگ یا خواننده را وارد کنید", Toast.LENGTH_SHORT).show(); return }
@@ -352,7 +374,7 @@ class MainActivity : Activity() {
         resultPages = emptyList()
         resultPageIndex = 0
         expectedPageUrl = ""
-        songs.clear(); currentIndex = -1; currentAudioUrl = ""; currentSong = null
+        songs.clear(); songPageUrls.clear(); currentIndex = -1; currentAudioUrl = ""; currentSong = null; currentSongPageUrl = ""
         resultsContainer.removeAllViews()
         titleText.text = text
         artistText.text = "در حال جستجو..."
@@ -510,6 +532,14 @@ class MainActivity : Activity() {
 
     private fun playSong(song: SongResult) {
         if (song.url.isBlank()) return
+        hideKeyboard()
+        currentSongPageUrl = songPageUrls[song.url].orEmpty()
+        if (currentSongPageUrl.isNotBlank()) {
+            lyricsText.visibility = View.VISIBLE
+            lyricsText.text = "📄  مشاهده متن و صفحه آهنگ در سایت  ›"
+        } else {
+            lyricsText.visibility = View.GONE
+        }
         currentSong = song
         currentAudioUrl = song.url
         currentIndex = songs.indexOfFirst { it.url == song.url }.takeIf { it >= 0 } ?: currentIndex
