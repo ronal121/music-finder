@@ -1,1 +1,1 @@
-Search UI and AutoPlay enhancements are being applied by GitHub Actions.
+Full repository repair triggered on 2026-08-26.
