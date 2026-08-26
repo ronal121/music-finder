@@ -1,0 +1,17 @@
+name: Runner Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-runner:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Runner check
+        run: |
+          echo "GitHub Runner is working"
+          uname -a
+          echo "Runner: $RUNNER_NAME"
