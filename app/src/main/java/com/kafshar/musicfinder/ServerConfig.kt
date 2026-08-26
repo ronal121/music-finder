@@ -17,8 +17,6 @@ object ServerConfig {
     const val GOOGLE_HOST = "google.com"
     private val youtubeDomains = setOf("youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "www.youtu.be")
 
-    // Search sources. Beroosic is deliberately included because its song pages
-    // follow a stable /songs/<artist>-<title>/ pattern and are directly playable.
     val SERVERS: List<MusicServer> = listOf(
         MusicServer("beroosic.ir",110),
         MusicServer("rozmusic.com",100), MusicServer("nex1music.com",99),
@@ -48,9 +46,6 @@ object ServerConfig {
             .flatMap { listOf(it.domain) + it.mediaHosts }
             .mapNotNull(::normalizeHost).toSet()
 
-    // Exact domains used in Google site: filters. Do NOT use bare TLDs here:
-    // accepting every .ir/.com result was causing unrelated pages to enter the
-    // scraper and making the search pipeline slow and unreliable.
     val MUSIC_SITES: List<String>
         get() = SERVERS.filter { it.enabled && it.supportsSearch }.map { it.domain }
 
@@ -93,11 +88,14 @@ object ServerConfig {
         val q = SearchEngine.correctedQuery(song).trim().replace(Regex("\\s+"), " ")
         if (q.isBlank()) return "music"
 
-        // Search exactly the music sources we can subsequently scrape. This is
-        // much closer to the way a user searches Google manually: Google finds
-        // the song page first, then the app opens that page and extracts its audio.
+        // Do not put the user's query inside quotes. Exact-phrase matching is
+        // too strict for Persian lyric/title searches: Google can find a song
+        // from a lyric fragment even when the page title is the artist + song
+        // title (or contains slightly different spacing/wording).
+        // Keep the site restriction so unrelated Google pages never enter the
+        // scraper, but let Google perform its normal relevance matching.
         val siteFilter = MUSIC_SITES.joinToString(" OR ") { "site:$it" }
-        return "\"$q\" ($siteFilter)"
+        return "$q ($siteFilter)"
     }
 
     fun siteName(url: String): String {
