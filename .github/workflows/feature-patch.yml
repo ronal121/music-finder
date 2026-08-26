@@ -1,0 +1,38 @@
+name: Feature Patch
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Apply source patch
+        run: python3 tools/apply_user_features.py
+
+      - name: Build debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Commit source changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt app/src/main/java/com/kafshar/musicfinder/MusicService.kt app/src/main/res/layout/activity_main.xml
+          if git diff --cached --quiet; then echo 'No source changes'; else git commit -m '[auto-feature-patch] Apply requested UX and autoplay modes'; git push; fi
