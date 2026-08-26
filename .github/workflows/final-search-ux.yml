@@ -1,0 +1,219 @@
+name: Final Search Modes and Keyboard UX
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, '[auto-final]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch app
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          main = Path('app/src/main/java/com/kafshar/musicfinder/MainActivity.kt')
+          s = main.read_text(encoding='utf-8')
+
+          # Fields
+          if 'private lateinit var sameArtistMode: TextView' not in s:
+              s = s.replace('    private lateinit var vinyl: VinylView\n', '    private lateinit var vinyl: VinylView\n    private lateinit var sameArtistMode: TextView\n    private lateinit var allArtistsMode: TextView\n')
+          if 'private var autoPlayMode = 0' not in s:
+              s = s.replace('    private var activeConnection: HttpURLConnection? = null\n', '    private var activeConnection: HttpURLConnection? = null\n    private var autoPlayMode = 0 // 0=same artist, 1=any artist\n    private var autoPlayArtist = ""\n    private var autoPlaySite = ""\n    private var autoPlaySearch = false\n    private var autoPlayBatchStart = 0\n    private val autoPlayedUrls = LinkedHashSet<String>()\n')
+
+          # Bind mode views (layout is patched below)
+          if 'sameArtistMode = findViewById' not in s:
+              s = s.replace('        query = findViewById(R.id.query)\n', '        query = findViewById(R.id.query)\n        sameArtistMode = findViewById(R.id.sameArtistMode)\n        allArtistsMode = findViewById(R.id.allArtistsMode)\n')
+
+          # Replace setupButtons completely so all relevant clicks hide keyboard.
+          start = s.find('    private fun setupButtons() {')
+          end = s.find('\n    private fun setupVolumeControl()', start)
+          if start >= 0 and end > start:
+              method = '''    private fun setupButtons() {
+        findViewById<TextView>(R.id.search).setOnClickListener { hideKeyboard(); searchMusic() }
+        findViewById<TextView>(R.id.clearSearch).setOnClickListener { query.text.clear(); hideKeyboard() }
+        sameArtistMode.setOnClickListener { autoPlayMode = 0; updateAutoPlayModeUi(); hideKeyboard() }
+        allArtistsMode.setOnClickListener { autoPlayMode = 1; updateAutoPlayModeUi(); hideKeyboard() }
+        updateAutoPlayModeUi()
+        query.setOnEditorActionListener { _, actionId, event ->
+            val submit = actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE ||
+                (event != null && event.keyCode == android.view.KeyEvent.KEYCODE_ENTER)
+            if (submit) { hideKeyboard(); searchMusic(); true } else false
+        }
+        playButton.setOnClickListener {
+            hideKeyboard()
+            if (currentAudioUrl.isBlank()) {
+                if (songs.isNotEmpty()) playSong(songs[currentIndex.coerceIn(0, songs.lastIndex)])
+            } else sendServiceAction(MusicService.ACTION_TOGGLE, currentAudioUrl, titleText.text.toString(), artistText.text.toString(), currentSong?.cover.orEmpty())
+        }
+        previousButton.setOnClickListener { hideKeyboard(); previousSong() }
+        nextButton.setOnClickListener { hideKeyboard(); nextSong() }
+        randomButton.setOnClickListener {
+            hideKeyboard()
+            randomMode = !randomMode
+            randomButton.text = if (randomMode) "🔀✓" else "🔀"
+            if (randomMode && songs.isNotEmpty()) nextSong()
+        }
+        seekBar.max = 100
+        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) = Unit
+            override fun onStartTrackingTouch(s: SeekBar?) = Unit
+            override fun onStopTrackingTouch(s: SeekBar?) {
+                val percent = s?.progress?.coerceIn(0, 100) ?: return
+                safelyStartService(Intent(this@MainActivity, MusicService::class.java).apply {
+                    action = MusicService.ACTION_SEEK_PERCENT
+                    putExtra(MusicService.EXTRA_PERCENT, percent)
+                })
+            }
+        })
+        downloadButton.setOnClickListener { hideKeyboard(); downloadCurrentSong() }
+        cancelDownloadButton.setOnClickListener { hideKeyboard(); cancelDownload() }
+        pauseDownloadButton.setOnClickListener { hideKeyboard(); toggleDownloadPause() }
+        saveButton.setOnClickListener { hideKeyboard(); saveCurrentSong() }
+        libraryButton.setOnClickListener { hideKeyboard(); startActivity(Intent(this, LibraryActivity::class.java)) }
+        historyButton.setOnClickListener { hideKeyboard(); toggleHistory() }
+    }
+'''
+              s = s[:start] + method + s[end:]
+
+          # Receiver: detect actual end state.
+          if 'val ended = intent.getBooleanExtra(MusicService.EXTRA_ENDED' not in s:
+              s = s.replace('            val mediaUrl = intent.getStringExtra(MusicService.EXTRA_URL).orEmpty()\n', '            val mediaUrl = intent.getStringExtra(MusicService.EXTRA_URL).orEmpty()\n            val ended = intent.getBooleanExtra(MusicService.EXTRA_ENDED, false)\n')
+              s = s.replace('                if (mediaUrl.isNotBlank()) updateActiveResultHighlight(mediaUrl)\n', '                if (mediaUrl.isNotBlank()) updateActiveResultHighlight(mediaUrl)\n                if (ended) handleAutoPlayEnded(mediaUrl)\n')
+
+          # Set artist/site whenever a song becomes current. Find the currentSong assignment and add state once.
+          if 'autoPlayArtist = song.artist.trim()' not in s:
+              needle = '        currentSong = song\n'
+              replacement = '        currentSong = song\n        autoPlayArtist = song.artist.trim()\n        autoPlaySite = ServerConfig.serverForUrl(song.url)?.domain.orEmpty()\n        autoPlayedUrls.add(song.url)\n'
+              s = s.replace(needle, replacement, 1)
+
+          # Helpers inserted before volume setup.
+          if 'private fun handleAutoPlayEnded(' not in s:
+              helpers = '''    private fun handleAutoPlayEnded(mediaUrl: String) {
+        if (destroyed || !autoPlaySearch && mediaUrl.isBlank()) return
+        if (mediaUrl.isNotBlank() && !autoPlayedUrls.contains(mediaUrl)) return
+        startAutoPlaySearch()
+    }
+
+    private fun startAutoPlaySearch() {
+        val domain = autoPlaySite.ifBlank { ServerConfig.SERVERS.firstOrNull()?.domain.orEmpty() }
+        if (domain.isBlank()) return
+        val base = if (autoPlayMode == 0 && autoPlayArtist.isNotBlank()) autoPlayArtist else "music"
+        val q = "$base site:$domain"
+        autoPlaySearch = true
+        autoPlayBatchStart = songs.size
+        searchGeneration++
+        cancelSearchCallbacks()
+        resultGeneration = searchGeneration
+        resultPages = emptyList()
+        resultPageIndex = 0
+        expectedPageUrl = ""
+        status.text = if (autoPlayMode == 0) "در حال پیدا کردن آهنگ بعدی از $autoPlayArtist..." else "در حال پیدا کردن آهنگ بعدی..."
+        val encoded = try { URLEncoder.encode(q, "UTF-8") } catch (_: Exception) { autoPlaySearch = false; return }
+        try { web.stopLoading(); web.loadUrl("https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1") } catch (_: Exception) { autoPlaySearch = false; return }
+        val generation = searchGeneration
+        val timeout = Runnable {
+            if (!destroyed && generation == searchGeneration && autoPlaySearch) {
+                autoPlaySearch = false
+                playRandomAutoSong()
+            }
+        }
+        searchTimeout = timeout
+        handler.postDelayed(timeout, 12000L)
+    }
+
+    private fun playRandomAutoSong() {
+        autoPlaySearch = false
+        val fresh = songs.drop(autoPlayBatchStart).filter { it.url !in autoPlayedUrls }
+        val candidates = if (autoPlayMode == 0 && autoPlayArtist.isNotBlank()) {
+            fresh.filter { sameArtist(it.artist, autoPlayArtist) }
+        } else fresh
+        val fallback = if (candidates.isNotEmpty()) candidates else songs.filter {
+            it.url !in autoPlayedUrls && (autoPlayMode == 1 || sameArtist(it.artist, autoPlayArtist))
+        }
+        fallback.shuffled().firstOrNull()?.let { song ->
+            autoPlayedUrls.add(song.url)
+            playSong(song)
+        } ?: run { status.text = "آهنگ تصادفی دیگری پیدا نشد" }
+    }
+
+    private fun sameArtist(a: String, b: String): Boolean {
+        fun n(x: String) = x.lowercase(Locale.ROOT).replace("ي", "ی").replace("ك", "ک").replace(Regex("\\s+"), " ").trim()
+        val x = n(a); val y = n(b)
+        return x == y || x.contains(y) || y.contains(x)
+    }
+
+    private fun updateAutoPlayModeUi() {
+        sameArtistMode.alpha = if (autoPlayMode == 0) 1f else .55f
+        allArtistsMode.alpha = if (autoPlayMode == 1) 1f else .55f
+        sameArtistMode.text = if (autoPlayMode == 0) "● فقط همین خواننده" else "○ فقط همین خواننده"
+        allArtistsMode.text = if (autoPlayMode == 1) "● همه خواننده‌ها" else "○ همه خواننده‌ها"
+    }
+
+    private fun hideKeyboard() {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        imm.hideSoftInputFromWindow(query.windowToken, 0)
+        query.clearFocus()
+    }
+
+'''
+              pos = s.find('    private fun setupVolumeControl()')
+              s = s[:pos] + helpers + s[pos:]
+
+          # finishSearch: after an auto-play search, select a random fresh result instead of stopping.
+          if 'if (autoPlaySearch) {' not in s[s.find('private fun finishSearch'):s.find('private fun finishSearch')+1200]:
+              fs = s.find('    private fun finishSearch() {')
+              fe = s.find('\n    private fun ', fs + 10)
+              if fs >= 0 and fe > fs:
+                  old = s[fs:fe]
+                  new = old.replace('        cancelSearchCallbacks()\n', '        cancelSearchCallbacks()\n        if (autoPlaySearch) {\n            if (songs.size > autoPlayBatchStart) {\n                playRandomAutoSong()\n            }\n            return\n        }\n', 1)
+                  s = s[:fs] + new + s[fe:]
+
+          main.write_text(s, encoding='utf-8')
+
+          # Layout: clear button and two mode choices.
+          layout = Path('app/src/main/res/layout/activity_main.xml')
+          x = layout.read_text(encoding='utf-8')
+          if 'android:id="@+id/clearSearch"' not in x:
+              search_button = '<com.kafshar.musicfinder.HarmonizedButton android:id="@+id/search" android:layout_width="48dp" android:layout_height="48dp" android:layout_marginStart="6dp" android:gravity="center" android:background="@drawable/bg_search_button" android:text="→" android:textColor="@color/white" android:textSize="22sp" android:fontFamily="sans-serif-medium" android:clickable="true" android:focusable="true" android:contentDescription="Search"/>'
+              clear_button = '<TextView android:id="@+id/clearSearch" android:layout_width="34dp" android:layout_height="48dp" android:gravity="center" android:text="×" android:textColor="@color/muted" android:textSize="24sp" android:clickable="true" android:focusable="true" android:contentDescription="Clear search"/>'
+              x = x.replace(search_button, clear_button + search_button)
+          if 'android:id="@+id/sameArtistMode"' not in x:
+              marker = '<LinearLayout android:id="@+id/resultsSection"'
+              modes = '<LinearLayout android:layout_width="match_parent" android:layout_height="42dp" android:layout_marginTop="7dp" android:gravity="center" android:orientation="horizontal" android:background="@drawable/bg_secondary_button"><TextView android:id="@+id/sameArtistMode" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:text="● فقط همین خواننده" android:textColor="@color/accent" android:textSize="12sp" android:clickable="true" android:focusable="true"/><TextView android:id="@+id/allArtistsMode" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:text="○ همه خواننده‌ها" android:textColor="@color/accent" android:textSize="12sp" android:clickable="true" android:focusable="true"/></LinearLayout>\n\n            ' + marker
+              x = x.replace(marker, modes, 1)
+          layout.write_text(x, encoding='utf-8')
+
+          # Service: broadcast explicit ended state.
+          service = Path('app/src/main/java/com/kafshar/musicfinder/MusicService.kt')
+          y = service.read_text(encoding='utf-8')
+          if 'const val EXTRA_ENDED' not in y:
+              y = y.replace('        const val EXTRA_MUTED = "muted"\n', '        const val EXTRA_MUTED = "muted"\n        const val EXTRA_ENDED = "ended"\n')
+          if 'putExtra(EXTRA_ENDED' not in y:
+              y = y.replace('                putExtra(EXTRA_URL, player.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty())\n', '                putExtra(EXTRA_URL, player.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty())\n                putExtra(EXTRA_ENDED, player.playbackState == Player.STATE_ENDED)\n')
+          service.write_text(y, encoding='utf-8')
+
+          print('FINAL PATCH COMPLETE')
+      - name: Verify source
+        run: |
+          grep -q 'clearSearch' app/src/main/res/layout/activity_main.xml
+          grep -q 'sameArtistMode' app/src/main/res/layout/activity_main.xml
+          grep -q 'handleAutoPlayEnded' app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
+          grep -q 'EXTRA_ENDED' app/src/main/java/com/kafshar/musicfinder/MusicService.kt
+      - name: Commit patched app
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt app/src/main/java/com/kafshar/musicfinder/MusicService.kt app/src/main/res/layout/activity_main.xml
+          git diff --cached --quiet || git commit -m '[auto-final] Apply search modes and keyboard UX'
+          git push
