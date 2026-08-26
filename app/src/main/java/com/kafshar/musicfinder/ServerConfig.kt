@@ -15,7 +15,6 @@ data class MusicServer(
 
 object ServerConfig {
     const val GOOGLE_HOST = "google.com"
-
     private val youtubeDomains = setOf("youtube.com", "m.youtube.com", "youtu.be")
 
     val SERVERS: List<MusicServer> = listOf(
@@ -46,11 +45,10 @@ object ServerConfig {
             .sortedByDescending { it.priority }
             .map { it.domain }
 
-    /** Keep individual Google queries small. The complete server list remains available for validation. */
     val PRIMARY_SEARCH_SITES: List<String>
         get() = SERVERS.filter { it.enabled && it.supportsSearch }
             .sortedByDescending { it.priority }
-            .take(6)
+            .take(8)
             .map { it.domain }
 
     fun serverFor(host: String?): MusicServer? {
@@ -83,22 +81,19 @@ object ServerConfig {
 
     fun looksLikeAudioUrl(url: String): Boolean {
         val l = url.lowercase()
-        return listOf(
-            ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm",
-            "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile", ".mp4"
-        ).any { l.contains(it) }
+        return listOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm", "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile", ".mp4").any { l.contains(it) }
     }
 
     /**
-     * Build a Google query that works well for both Persian and English input.
-     * Exact phrase and flexible token matching are combined without a giant OR list.
+     * Do not put dozens of site: clauses into the primary Google request.
+     * Google is much more reliable when allowed to discover pages broadly;
+     * isAllowedPageUrl() performs the authoritative domain filtering afterward.
      */
     fun searchQuery(song: String): String {
         val q = SearchEngine.correctedQuery(song).trim().replace(Regex("\\s+"), " ")
         if (q.isBlank()) return "music"
         val phrase = if (q.contains(' ')) "\"$q\"" else q
-        val siteFilter = PRIMARY_SEARCH_SITES.joinToString(" OR ") { "site:$it" }
-        return "($phrase OR $q) ($siteFilter)"
+        return "($phrase OR $q) music"
     }
 
     fun siteName(url: String): String {
