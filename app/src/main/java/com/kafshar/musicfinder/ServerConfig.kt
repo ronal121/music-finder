@@ -72,11 +72,11 @@ object ServerConfig {
     fun isAllowedMediaUrl(url: String, pageUrl: String? = null): Boolean {
         val host = extractHttpHost(url) ?: return false
         if (isYouTubeHost(host)) return false
-        val server = serverFor(host)
-        if (server?.supportsStreaming == true) return true
-        if (!looksLikeAudioUrl(url)) return false
-        val parentHost = extractHttpHost(pageUrl)
-        return parentHost == null || serverFor(parentHost)?.supportsSearch == true
+        if (serverFor(host)?.supportsStreaming == true) return true
+        // Search results can legitimately expose direct audio on a host that
+        // is not in the static server list, including a separate CDN host.
+        // The media URL itself must be an HTTP(S) audio resource.
+        return looksLikeAudioUrl(url)
     }
 
     fun looksLikeAudioUrl(url: String): Boolean {
