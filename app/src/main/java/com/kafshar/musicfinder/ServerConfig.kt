@@ -84,11 +84,6 @@ object ServerConfig {
         return listOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm", "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile", ".mp4").any { l.contains(it) }
     }
 
-    /**
-     * Do not put dozens of site: clauses into the primary Google request.
-     * Google is much more reliable when allowed to discover pages broadly;
-     * isAllowedPageUrl() performs the authoritative domain filtering afterward.
-     */
     fun searchQuery(song: String): String {
         val q = SearchEngine.correctedQuery(song).trim().replace(Regex("\\s+"), " ")
         if (q.isBlank()) return "music"
@@ -99,49 +94,7 @@ object ServerConfig {
     fun siteName(url: String): String {
         val host = extractHttpHost(url) ?: return "Music"
         if (isYouTubeHost(host)) return "YouTube"
-        return when {
-            hostMatchesDomain(host, "beroosic.ir") -> "Beroosic"
-            hostMatchesDomain(host, "rozmusic.com") -> "RozMusic"
-            hostMatchesDomain(host, "musicviral.ir") -> "MusicViral"
-            hostMatchesDomain(host, "nex1music.com") -> "Nex1Music"
-            hostMatchesDomain(host, "musicbaran.ir") -> "MusicBaran"
-            hostMatchesDomain(host, "mymusicbaran.ir") -> "MyMusicBaran"
-            hostMatchesDomain(host, "musicdel.ir") -> "Musicdel"
-            hostMatchesDomain(host, "songsara.net") -> "Songsara"
-            hostMatchesDomain(host, "radiojavan.com") -> "Radio Javan"
-            hostMatchesDomain(host, "musicete.com") -> "Musicete"
-            hostMatchesDomain(host, "musicetu.com") -> "Musicetu"
-            hostMatchesDomain(host, "musicsweb.ir") -> "MusicsWeb"
-            hostMatchesDomain(host, "melovy.ir") -> "Melovy"
-            hostMatchesDomain(host, "jenab-music.com") -> "Jenab Music"
-            hostMatchesDomain(host, "fazamusic.com") -> "FazaMusic"
-            hostMatchesDomain(host, "360bikalam.com") -> "360BiKalam"
-            hostMatchesDomain(host, "dtaraneh.net") -> "DTaraneh"
-            hostMatchesDomain(host, "ahangirani.ir") -> "Ahangirani"
-            hostMatchesDomain(host, "upmusics.com") -> "UpMusics"
-            hostMatchesDomain(host, "nicmusic.net") -> "NicMusic"
-            hostMatchesDomain(host, "vmusic.ir") -> "VMusic"
-            hostMatchesDomain(host, "sakhamusic.ir") -> "SakhaMusic"
-            hostMatchesDomain(host, "ganja2music.com") -> "Ganja2Music"
-            hostMatchesDomain(host, "iran-music.net") -> "Iran-Music"
-            hostMatchesDomain(host, "silamusic.ir") -> "SilaMusic"
-            hostMatchesDomain(host, "bibakmusic.com") -> "BibakMusic"
-            hostMatchesDomain(host, "beeptunes.com") -> "Beeptunes"
-            hostMatchesDomain(host, "blogmusic.ir") -> "BlogMusic"
-            hostMatchesDomain(host, "pop-music.ir") -> "Pop-Music"
-            hostMatchesDomain(host, "behmusic.com") -> "BehMusic"
-            hostMatchesDomain(host, "irmp3.ir") -> "IRMP3"
-            hostMatchesDomain(host, "next1.ir") -> "Next1"
-            hostMatchesDomain(host, "mytehranmusic.com") -> "MyTehranMusic"
-            hostMatchesDomain(host, "mybia2music.com") -> "Bia2Music"
-            hostMatchesDomain(host, "musics-fa.com") -> "Musics-FA"
-            hostMatchesDomain(host, "pro.iraniandj.ir") -> "IranianDJ Pro"
-            hostMatchesDomain(host, "worldofmusic.ir") -> "World of Music"
-            hostMatchesDomain(host, "iranmusic.ir") -> "IranMusic"
-            hostMatchesDomain(host, "sahand-music.ir") -> "Sahand Music"
-            hostMatchesDomain(host, "nakaman-music.ir") -> "Nakaman Music"
-            else -> host.removePrefix("www.")
-        }
+        return host.removePrefix("www.")
     }
 
     private fun hostMatchesDomain(host: String, domain: String): Boolean {
