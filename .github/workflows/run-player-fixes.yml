@@ -31,5 +31,23 @@ jobs:
       - name: Verify Gradle
         run: gradle --version
 
-      - name: Run tests and compile
-        run: gradle --no-daemon --stacktrace test assembleDebug
+      - name: Run tests
+        run: gradle --no-daemon --stacktrace test
+
+      - name: Build debug APK
+        run: gradle --no-daemon --stacktrace assembleDebug
+
+      - name: Verify APK exists
+        shell: bash
+        run: |
+          set -e
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          ls -lh "$APK"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: app-debug-player-fixes
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
