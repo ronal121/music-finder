@@ -3,4 +3,5 @@
     <issue id="UnspecifiedRegisterReceiverFlag" severity="ignore" />
     <issue id="NewApi" severity="ignore" />
     <issue id="WebViewLayout" severity="ignore" />
+    <issue id="SuspiciousIndentation" severity="ignore" />
 </lint>
