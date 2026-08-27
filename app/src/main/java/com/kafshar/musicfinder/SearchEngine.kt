@@ -63,8 +63,9 @@ object SearchEngine {
         while (i < words.size) {
             if (i + 1 < words.size) {
                 val pair = "${words[i]} ${words[i + 1]}"
-                commonTypos[pair]?.let {
-                    result += it
+                val correction = commonTypos[pair]
+                if (correction != null) {
+                    result += correction
                     i += 2
                     continue
                 }
