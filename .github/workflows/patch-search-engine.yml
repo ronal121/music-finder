@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Patch MainActivity search pipeline
+      - name: Replace broken WebView-first search with parallel search
         shell: python
         run: |
           from pathlib import Path
@@ -23,120 +23,103 @@ jobs:
           p = Path('app/src/main/java/com/kafshar/musicfinder/MainActivity.kt')
           s = p.read_text(encoding='utf-8')
 
-          new_extract = r'''    private fun extractGoogleResults() {
+          new_search = r'''    private fun searchMusic() {
 
-        if (destroyed || searchGeneration <= 0) return
+        val text = query.text.toString().trim()
 
-        val hosts = ServerConfig.MUSIC_SITES.joinToString(",") {
-            "\\\"${it.replace(\"\\\"\", \"\\\\\\\"\")}\\\""
+        if (text.isBlank()) {
+            Toast.makeText(
+                this,
+                "نام آهنگ یا خواننده را وارد کنید",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
         }
 
-        val script = """
-            (function(){
-              try{
-                var hosts=[$hosts], found=[], seen={};
-                var wanted=${org.json.JSONObject.quote(SearchEngine.correctedQuery(query.text.toString()))};
+        searchGeneration++
+        val generation = searchGeneration
 
-                function norm(s){
-                  return (s||'').toString().toLowerCase()
-                    .replace(/[آأإ]/g,'ا').replace(/ي/g,'ی').replace(/ك/g,'ک')
-                    .replace(/[^\\u0600-\\u06ff\\u00c0-\\u024f\\w\\s-]/g,' ')
-                    .replace(/\\s+/g,' ').trim();
+        cancelSearchCallbacks()
+        resultGeneration = generation
+        resultPages = emptyList()
+        resultPageIndex = 0
+        expectedPageUrl = ""
+
+        songs.clear()
+        currentIndex = -1
+        currentAudioUrl = ""
+        currentSong = null
+        resultsContainer.removeAllViews()
+
+        titleText.text = text
+        artistText.text = "در حال جستجو..."
+        status.text = "در حال جستجوی سایت‌ها..."
+        seekBar.progress = 0
+        currentTimeText.text = "00:00"
+        durationText.text = "00:00"
+        vinyl.clearCover()
+        vinyl.stopRotation()
+        clearLyrics()
+
+        try {
+            web.stopLoading()
+        } catch (_: Exception) {
+        }
+
+        ParallelSearchEngine.search(text, generation) { callbackGeneration, candidates ->
+            runOnUiThread {
+                if (destroyed || callbackGeneration != searchGeneration) return@runOnUiThread
+
+                val pages = candidates
+                    .asSequence()
+                    .filter { ServerConfig.serverForUrl(it.url) != null }
+                    .distinctBy { it.url.substringBefore('#').trimEnd('/').lowercase() }
+                    .take(20)
+                    .map { "${it.url}|||${it.title}" }
+                    .toList()
+
+                resultGeneration = callbackGeneration
+                resultPages = pages
+                resultPageIndex = 0
+
+                if (pages.isEmpty()) {
+                    status.text = "نتیجه‌ای از سایت‌های موسیقی پیدا نشد"
+                    finishSearch()
+                    return@runOnUiThread
                 }
 
-                function allowed(u){
-                  if(!u) return false;
-                  try{
-                    var x=new URL(u,location.href);
-                    var h=(x.hostname||'').toLowerCase().replace(/^www\\./,'');
-                    for(var i=0;i<hosts.length;i++){
-                      var d=hosts[i].toLowerCase().replace(/^www\\./,'');
-                      if(h===d || h.endsWith('.'+d)) return true;
-                    }
-                  }catch(e){}
-                  return false;
-                }
+                status.text = "${pages.size} صفحه پیدا شد؛ در حال بررسی لینک آهنگ..."
+                processNextResultPage()
+            }
+        }
 
-                function real(h){
-                  try{
-                    var x=new URL(h,location.href);
-                    var host=(x.hostname||'').toLowerCase();
-                    if(host.indexOf('google.')>=0){
-                      var keys=['q','url','uddg','u'];
-                      for(var k=0;k<keys.length;k++){
-                        var q=x.searchParams.get(keys[k]);
-                        if(q && /^https?:/i.test(q)){
-                          try{return decodeURIComponent(q);}catch(e){return q;}
-                        }
-                      }
-                      var m=h.match(/[?&](?:q|url|uddg|u)=([^&]+)/i);
-                      if(m){
-                        try{return decodeURIComponent(m[1]);}catch(e){}
-                      }
-                    }
-                    return x.href;
-                  }catch(e){ return h; }
-                }
-
-                function textFor(a){
-                  var el=a, text='';
-                  for(var depth=0; el && depth<5; depth++,el=el.parentElement){
-                    var h=el.querySelector ? el.querySelector('h3') : null;
-                    if(h && (h.innerText||h.textContent)){ text=h.innerText||h.textContent; break; }
-                  }
-                  if(!text) text=a.getAttribute('aria-label')||a.title||a.innerText||a.textContent||'';
-                  return text.replace(/[\\r\\n\\t]+/g,' ').replace(/\\s+/g,' ').trim();
-                }
-
-                function score(u,t){
-                  var q=norm(wanted), x=norm((t||'')+' '+u), score=0;
-                  if(!q) return 0;
-                  if(x.indexOf(q)>=0) score+=100;
-                  var words=q.split(' ');
-                  for(var i=0;i<words.length;i++){
-                    if(words[i].length<2) continue;
-                    if(x.indexOf(words[i])>=0) score+=20;
-                  }
-                  for(var j=0;j<hosts.length;j++){
-                    if(u.toLowerCase().indexOf(hosts[j].toLowerCase())>=0){ score += Math.max(1,20-j); break; }
-                  }
-                  if(/(?:lyrics|lyric|دانلود|download|music|آهنگ|موزیک|song)/i.test(t)) score+=5;
-                  return score;
-                }
-
-                var links=document.querySelectorAll('a[href]');
-                for(var i=0;i<links.length && found.length<100;i++){
-                  var a=links[i], u=real(a.href||'');
-                  if(!allowed(u)) continue;
-                  u=u.split('#')[0];
-                  if(seen[u]) continue;
-                  seen[u]=1;
-                  var t=textFor(a);
-                  if(!t) t=u.split('/').pop().replace(/[-_+]/g,' ');
-                  found.push({u:u,t:t,s:score(u,t)});
-                }
-
-                found.sort(function(a,b){ return b.s-a.s; });
-                found=found.slice(0,50).map(function(x){ return x.u+'|||'+x.t; });
-                MusicFinder.results(found.join('###'));
-              }catch(e){ MusicFinder.results(''); }
-            })();
-        """.trimIndent()
-
-        try { web.evaluateJavascript(script, null) } catch (_: Exception) { finishSearch() }
+        val timeout = Runnable {
+            if (!destroyed && generation == searchGeneration && songs.isEmpty()) {
+                status.text = "جستجو زمان‌بر شد؛ نتیجه‌های موجود در حال بررسی هستند..."
+            }
+        }
+        searchTimeout = timeout
+        handler.postDelayed(timeout, 15000L)
     }
 
 '''
 
-          pattern = r'    private fun extractGoogleResults\(\) \{.*?\n    private fun extractMusicPage\('
-          replacement = new_extract + '    private fun extractMusicPage('
-          s2, n = re.subn(pattern, replacement, s, count=1, flags=re.S)
+          pattern = r'    private fun searchMusic\(\) \{.*?\n    private fun cancelSearchCallbacks\(\)'
+          s2, n = re.subn(pattern, new_search + '    private fun cancelSearchCallbacks()', s, count=1, flags=re.S)
           if n != 1:
-              raise SystemExit('extractGoogleResults block not found')
-
-          # Make Google result loading faster and give the DOM time to settle.
-          s2 = s2.replace('web.loadUrl(\n                "https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1"\n            )',
-              'web.loadUrl(\n                "https://www.google.com/search?q=$encoded&num=50&hl=en&safe=off&filter=0&gbv=1"\n            )')
+              raise SystemExit('searchMusic block not found')
 
           p.write_text(s2, encoding='utf-8')
-          print('MainActivity.kt patched successfully')
+          print('Search pipeline patched successfully')
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Fix search pipeline to use parallel site search"
+            git push
+          fi
