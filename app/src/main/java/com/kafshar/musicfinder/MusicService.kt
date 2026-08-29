@@ -10,6 +10,7 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import androidx.annotation.OptIn
 import androidx.core.app.NotificationCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -23,7 +24,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.MediaStyleNotificationHelper
 
-@OptIn(UnstableApi::class)
+@OptIn(markerClass = UnstableApi::class)
 class MusicService : MediaSessionService() {
     companion object {
         const val ACTION_PLAY = "com.kafshar.musicfinder.PLAY"
