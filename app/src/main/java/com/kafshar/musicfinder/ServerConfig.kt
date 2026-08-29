@@ -48,7 +48,7 @@ object ServerConfig {
     val PRIMARY_SEARCH_SITES: List<String>
         get() = SERVERS.filter { it.enabled && it.supportsSearch }
             .sortedByDescending { it.priority }
-            .take(8)
+            .take(12)
             .map { it.domain }
 
     fun serverFor(host: String?): MusicServer? {
@@ -73,22 +73,36 @@ object ServerConfig {
         val host = extractHttpHost(url) ?: return false
         if (isYouTubeHost(host)) return false
         if (serverFor(host)?.supportsStreaming == true) return true
-        // Search results can legitimately expose direct audio on a host that
-        // is not in the static server list, including a separate CDN host.
-        // The media URL itself must be an HTTP(S) audio resource.
         return looksLikeAudioUrl(url)
     }
 
     fun looksLikeAudioUrl(url: String): Boolean {
         val l = url.lowercase()
-        return listOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm", "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile", ".mp4").any { l.contains(it) }
+        return listOf(
+            ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm",
+            "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile", ".mp4"
+        ).any { l.contains(it) }
     }
 
+    /**
+     * Build a Google query that strongly prefers the configured music sites.
+     * The WebView parser only accepts those domains, so adding site filters
+     * here prevents Google from spending its result slots on unrelated pages.
+     */
     fun searchQuery(song: String): String {
-        val q = SearchEngine.correctedQuery(song).trim().replace(Regex("\\s+"), " ")
+        val q = SearchEngine.correctedQuery(song)
+            .trim()
+            .replace(Regex("\\s+"), " ")
+
         if (q.isBlank()) return "music"
-        val phrase = if (q.contains(' ')) "\"$q\"" else q
-        return "($phrase OR $q) music"
+
+        val escaped = q.replace("\"", " ").replace(Regex("\\s+"), " ").trim()
+        val phrase = if (escaped.contains(' ')) "\"$escaped\"" else escaped
+
+        val siteFilter = PRIMARY_SEARCH_SITES
+            .joinToString(" OR ") { "site:$it" }
+
+        return "($phrase OR $escaped OR \"$escaped آهنگ\") music ($siteFilter)"
     }
 
     fun siteName(url: String): String {
