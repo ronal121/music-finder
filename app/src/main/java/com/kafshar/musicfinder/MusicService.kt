@@ -17,11 +17,13 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.MediaStyleNotificationHelper
 
+@OptIn(UnstableApi::class)
 class MusicService : MediaSessionService() {
     companion object {
         const val ACTION_PLAY = "com.kafshar.musicfinder.PLAY"
