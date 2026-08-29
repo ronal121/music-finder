@@ -23,6 +23,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.MediaStyleNotificationHelper
 
+@OptIn(UnstableApi::class)
 class MusicService : MediaSessionService() {
     companion object {
         const val ACTION_PLAY = "com.kafshar.musicfinder.PLAY"
@@ -74,7 +75,6 @@ class MusicService : MediaSessionService() {
         }
     }
 
-    @UnstableApi
     override fun onCreate() {
         super.onCreate()
         released = false
@@ -224,7 +224,6 @@ class MusicService : MediaSessionService() {
         }
     }
 
-    @UnstableApi
     private fun startPlaybackForeground() {
         if (foregroundStarted) return
         val notification = buildNotification()
@@ -236,12 +235,10 @@ class MusicService : MediaSessionService() {
         foregroundStarted = true
     }
 
-    @UnstableApi
     private fun ensureForeground() {
         if (!foregroundStarted && !released) startPlaybackForeground()
     }
 
-    @UnstableApi
     private fun buildNotification(): Notification {
         val session = mediaSession
         val isPlaying = ::player.isInitialized && player.isPlaying
@@ -266,7 +263,6 @@ class MusicService : MediaSessionService() {
         return builder.build()
     }
 
-    @UnstableApi
     private fun updateNotification() {
         if (released) return
         try {
@@ -303,7 +299,6 @@ class MusicService : MediaSessionService() {
         player.currentMediaItem?.mediaMetadata?.artist?.toString()?.takeIf { it.isNotBlank() } ?: lastArtist
     } catch (_: Exception) { lastArtist }
 
-    @UnstableApi
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         ensureForeground()
