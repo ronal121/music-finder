@@ -3,14 +3,13 @@ package com.kafshar.musicfinder
 import android.content.Context
 import android.util.AttributeSet
 import android.view.Gravity
-import android.view.View
-import android.widget.TextView
+import androidx.appcompat.widget.AppCompatTextView
 
 class ExpandableLyricsTextView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = android.R.attr.textViewStyle
-) : TextView(context, attrs, defStyleAttr) {
+) : AppCompatTextView(context, attrs, defStyleAttr) {
 
     private var expanded = false
 
