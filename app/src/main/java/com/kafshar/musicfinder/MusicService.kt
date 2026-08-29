@@ -23,7 +23,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.MediaStyleNotificationHelper
 
-@OptIn(UnstableApi::class)
+@UnstableApi
 class MusicService : MediaSessionService() {
     companion object {
         const val ACTION_PLAY = "com.kafshar.musicfinder.PLAY"
