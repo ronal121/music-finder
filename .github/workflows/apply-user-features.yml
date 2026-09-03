@@ -31,135 +31,173 @@ jobs:
           gradle-version: '8.9'
           cache-read-only: false
 
-      - name: Patch source files
+      - name: Apply native-first search integration
         shell: python
         run: |
           from pathlib import Path
-          import re
 
-          main = Path('app/src/main/java/com/kafshar/musicfinder/MainActivity.kt')
-          service = Path('app/src/main/java/com/kafshar/musicfinder/MusicService.kt')
-          layout = Path('app/src/main/res/layout/activity_main.xml')
+          path = Path('app/src/main/java/com/kafshar/musicfinder/MainActivity.kt')
+          s = path.read_text(encoding='utf-8')
 
-          s = main.read_text(encoding='utf-8')
+          if 'private var searchFuture: Future<*>? = null' not in s:
+              s = s.replace(
+                  '    private var downloadFuture: Future<*>? = null',
+                  '    private var downloadFuture: Future<*>? = null\n\n    private var searchFuture: Future<*>? = null'
+              )
 
-          if 'private var autoPlaySameArtist = true' not in s:
-              s = s.replace('    private var randomMode = false', '''    private var randomMode = false
-    private var autoPlaySameArtist = true
-    private var autoPlayActive = false
-    private var autoPlayStartCount = 0
-    private val autoPlayedUrls = LinkedHashSet<String>()''')
+          if 'private var googleFallbackUsed = false' not in s:
+              s = s.replace(
+                  '    private var searchGeneration = 0',
+                  '    private var searchGeneration = 0\n\n    private var googleFallbackUsed = false'
+              )
 
-          marker = '        findViewById<TextView>(R.id.search).setOnClickListener { searchMusic() }'
-          if marker in s and 'R.id.clearSearch' not in s:
-              s = s.replace(marker, '''        findViewById<TextView>(R.id.search).setOnClickListener { hideKeyboard(); searchMusic() }
-        findViewById<TextView>(R.id.clearSearch).setOnClickListener { query.text.clear(); hideKeyboard() }
-        findViewById<TextView>(R.id.sameArtistMode).setOnClickListener { autoPlaySameArtist = true; updateAutoPlayModeUi(); hideKeyboard() }
-        findViewById<TextView>(R.id.allArtistsMode).setOnClickListener { autoPlaySameArtist = false; updateAutoPlayModeUi(); hideKeyboard() }
-        updateAutoPlayModeUi()''')
-          elif 'R.id.clearSearch' not in s:
-              s = s.replace(marker, 'findViewById<TextView>(R.id.search).setOnClickListener { hideKeyboard(); searchMusic() }')
+          start = s.index('    private fun searchMusic() {')
+          end = s.index('    private fun cancelSearchCallbacks() {', start)
+          method = r'''    private fun searchMusic() {
 
-          replacements = {
-              'previousButton.setOnClickListener { previousSong() }':'previousButton.setOnClickListener { hideKeyboard(); previousSong() }',
-              'nextButton.setOnClickListener { nextSong() }':'nextButton.setOnClickListener { hideKeyboard(); nextSong() }',
-              'downloadButton.setOnClickListener { downloadCurrentSong() }':'downloadButton.setOnClickListener { hideKeyboard(); downloadCurrentSong() }',
-              'saveButton.setOnClickListener { saveCurrentSong() }':'saveButton.setOnClickListener { hideKeyboard(); saveCurrentSong() }',
-              'libraryButton.setOnClickListener { startActivity(Intent(this, LibraryActivity::class.java)) }':'libraryButton.setOnClickListener { hideKeyboard(); startActivity(Intent(this, LibraryActivity::class.java)) }'
-          }
-          for a,b in replacements.items(): s=s.replace(a,b)
-          s=s.replace('playButton.setOnClickListener {', 'playButton.setOnClickListener { hideKeyboard()\n            ', 1)
+        if (destroyed) return
 
-          needle = '        currentSong = song\n'
-          if 'currentSongPageUrl = songPageUrls[song.url].orEmpty()' not in s and needle in s:
-              s=s.replace(needle, needle + '''        currentSongPageUrl = songPageUrls[song.url].orEmpty()
-        if (currentSongPageUrl.isNotBlank()) {
-            lyricsText.text = "📄  مشاهده متن و صفحه آهنگ در سایت  ›"
-            lyricsText.visibility = View.VISIBLE
+        val text = query.text.toString().trim()
+        if (text.isBlank()) {
+            Toast.makeText(this, "نام آهنگ یا خواننده را وارد کنید", Toast.LENGTH_SHORT).show()
+            return
         }
-        autoPlayedUrls.add(song.url)
-''', 1)
 
-          if 'private fun startAutoPlaySearch()' not in s:
-              insert_at = s.find('    private fun setupVolumeControl()')
-              helper = '''    private fun updateAutoPlayModeUi() {
-        val same = findViewById<TextView>(R.id.sameArtistMode)
-        val all = findViewById<TextView>(R.id.allArtistsMode)
-        same.text = if (autoPlaySameArtist) "● 🎤 فقط همین خواننده" else "○ 🎤 فقط همین خواننده"
-        all.text = if (!autoPlaySameArtist) "● 🎵 همه خواننده‌ها" else "○ 🎵 همه خواننده‌ها"
-        same.alpha = if (autoPlaySameArtist) 1f else .55f
-        all.alpha = if (!autoPlaySameArtist) 1f else .55f
-    }
-
-    private fun startAutoPlaySearch() {
-        val current = currentSong ?: return
-        val host = try { Uri.parse(currentSongPageUrl).host.orEmpty().removePrefix("www.") } catch (_: Exception) { "" }
-        if (host.isBlank()) return
-        val queryText = if (autoPlaySameArtist && current.artist.isNotBlank() && current.artist != "Unknown Artist") {
-            "${current.artist} site:$host"
-        } else {
-            "music site:$host"
-        }
-        val encoded = try { URLEncoder.encode(queryText, "UTF-8") } catch (_: Exception) { return }
-        autoPlayActive = true
-        autoPlayStartCount = songs.size
         searchGeneration++
+        val generation = searchGeneration
         cancelSearchCallbacks()
-        resultGeneration = searchGeneration
+        googleFallbackUsed = false
+
+        resultGeneration = generation
         resultPages = emptyList()
         resultPageIndex = 0
         expectedPageUrl = ""
-        status.text = if (autoPlaySameArtist) "در حال پیدا کردن آهنگ بعدی از ${current.artist}..." else "در حال پیدا کردن آهنگ بعدی از همین سایت..."
-        try { web.stopLoading(); web.loadUrl("https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1") } catch (_: Exception) { autoPlayActive = false }
+        songs.clear()
+        currentIndex = -1
+        currentAudioUrl = ""
+        currentSong = null
+        resultsContainer.removeAllViews()
+
+        titleText.text = text
+        artistText.text = "در حال جستجو..."
+        status.text = "در حال جستجوی منابع موسیقی..."
+        seekBar.progress = 0
+        currentTimeText.text = "00:00"
+        durationText.text = "00:00"
+        vinyl.clearCover()
+        vinyl.stopRotation()
+        clearLyrics()
+
+        searchFuture = ParallelSearchEngine.searchDirect(text, generation) { callbackGeneration, candidates ->
+            runOnUiThread {
+                if (destroyed || callbackGeneration != searchGeneration) return@runOnUiThread
+
+                resultPages = candidates
+                    .map { it.url }
+                    .filter { ServerConfig.isAllowedPageUrl(it) }
+                    .distinctBy { it.substringBefore('#').trimEnd('/').lowercase() }
+                    .take(60)
+                resultPageIndex = 0
+
+                if (resultPages.isEmpty()) {
+                    status.text = "منابع مستقیم نتیجه‌ای ندادند؛ در حال جستجوی جایگزین..."
+                    loadGoogleFallback(text, generation)
+                } else {
+                    status.text = "${resultPages.size} صفحه پیدا شد؛ در حال استخراج آهنگ..."
+                    processNextResultPage()
+                }
+            }
+        }
     }
 
-    private fun handlePlaybackEnded() {
-        if (!autoPlayActive) return
-        startAutoPlaySearch()
+    private fun loadGoogleFallback(text: String, generation: Int) {
+        if (destroyed || generation != searchGeneration || googleFallbackUsed) return
+        googleFallbackUsed = true
+        resultGeneration = generation
+        resultPages = emptyList()
+        resultPageIndex = 0
+
+        val encoded = try {
+            URLEncoder.encode(SearchEngine.buildGoogleQuery(text), "UTF-8")
+        } catch (_: Exception) {
+            status.text = "خطا در آماده‌سازی جستجو"
+            return
+        }
+
+        try {
+            web.stopLoading()
+            web.loadUrl("https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1")
+        } catch (_: Exception) {
+            status.text = "جستجوی جایگزین در دسترس نیست"
+        }
     }
 
 '''
-              if insert_at >= 0: s=s[:insert_at]+helper+s[insert_at:]
+          s = s[:start] + method + s[end:]
 
-          auto_marker = '                        addSongView(song, songs.lastIndex)'
-          if auto_marker in s and 'if (autoPlayActive && songs.size > autoPlayStartCount)' not in s:
-              s=s.replace(auto_marker, auto_marker + '''
-                        if (autoPlayActive && songs.size > autoPlayStartCount && song.url !in autoPlayedUrls) {
-                            autoPlayActive = false
-                            handler.postDelayed({ playSong(song) }, 250L)
-                        }''', 1)
+          if 'searchFuture?.cancel(true)' not in s:
+              s = s.replace(
+                  '    private fun cancelSearchCallbacks() {\n\n        searchTimeoutRunnable?.let {',
+                  '    private fun cancelSearchCallbacks() {\n\n        try { searchFuture?.cancel(true) } catch (_: Exception) {}\n        searchFuture = null\n\n        searchTimeoutRunnable?.let {',
+                  1
+              )
+              s = s.replace(
+                  '    private fun cancelSearchCallbacks() {\n\n        searchTimeout?.let {',
+                  '    private fun cancelSearchCallbacks() {\n\n        try { searchFuture?.cancel(true) } catch (_: Exception) {}\n        searchFuture = null\n\n        searchTimeout?.let {',
+                  1
+              )
 
-          if 'MusicService.EXTRA_ENDED' not in s:
-              s=s.replace('            val mediaUrl = intent.getStringExtra(MusicService.EXTRA_URL).orEmpty()', '            val mediaUrl = intent.getStringExtra(MusicService.EXTRA_URL).orEmpty()\n            val ended = intent.getBooleanExtra(MusicService.EXTRA_ENDED, false)')
-              s=s.replace('                if (mediaUrl.isNotBlank()) updateActiveResultHighlight(mediaUrl)', '                if (mediaUrl.isNotBlank()) updateActiveResultHighlight(mediaUrl)\n                if (ended) handlePlaybackEnded()')
+          marker = '''    private fun finishSearch() {
 
-          main.write_text(s, encoding='utf-8')
+        if (destroyed) return
 
-          y=service.read_text(encoding='utf-8')
-          if 'const val EXTRA_ENDED = "ended"' not in y:
-              y=y.replace('const val EXTRA_MUTED = "muted"', 'const val EXTRA_MUTED = "muted"\n        const val EXTRA_ENDED = "ended"')
-          if 'putExtra(EXTRA_ENDED' not in y:
-              y=y.replace('putExtra(EXTRA_URL, player.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty())', 'putExtra(EXTRA_URL, player.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty())\n                putExtra(EXTRA_ENDED, player.playbackState == Player.STATE_ENDED)')
-          service.write_text(y, encoding='utf-8')
+        cancelSearchCallbacks()
+'''
+          if marker in s and 'در منابع مستقیم آهنگ قابل پخش پیدا نشد' not in s:
+              s = s.replace(marker, marker + '''
+        if (songs.isEmpty() && !googleFallbackUsed && resultGeneration == searchGeneration) {
+            status.text = "در منابع مستقیم آهنگ قابل پخش پیدا نشد؛ در حال جستجوی Google..."
+            loadGoogleFallback(query.text.toString(), searchGeneration)
+            return
+        }
+''', 1)
 
-          x=layout.read_text(encoding='utf-8')
-          if 'android:id="@+id/clearSearch"' not in x:
-              x=x.replace('<com.kafshar.musicfinder.HarmonizedButton android:id="@+id/search"', '<TextView android:id="@+id/clearSearch" android:layout_width="34dp" android:layout_height="48dp" android:gravity="center" android:text="×" android:textColor="@color/muted" android:textSize="24sp" android:clickable="true" android:focusable="true" android:contentDescription="Clear search"/>\n                <com.kafshar.musicfinder.HarmonizedButton android:id="@+id/search"',1)
-          if 'android:id="@+id/sameArtistMode"' not in x:
-              x=x.replace('<LinearLayout android:id="@+id/resultsSection"', '''<LinearLayout android:layout_width="match_parent" android:layout_height="42dp" android:layout_marginTop="8dp" android:gravity="center" android:orientation="horizontal" android:background="@drawable/bg_secondary_button">
-                <TextView android:id="@+id/sameArtistMode" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:text="● 🎤 فقط همین خواننده" android:textColor="@color/accent" android:textSize="12sp" android:clickable="true" android:focusable="true"/>
-                <TextView android:id="@+id/allArtistsMode" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:text="○ 🎵 همه خواننده‌ها" android:textColor="@color/accent" android:textSize="12sp" android:clickable="true" android:focusable="true"/>
-            </LinearLayout>
-            <LinearLayout android:id="@+id/resultsSection"''',1)
-          layout.write_text(x,encoding='utf-8')
-          print('SOURCE PATCHED')
+          path.write_text(s, encoding='utf-8')
+          print('Native-first search integration applied')
 
-      - name: Build APK before commit
+      - name: Verify tests
+        run: gradle --no-daemon --stacktrace test
+
+      - name: Assemble debug APK
         run: gradle --no-daemon --stacktrace assembleDebug
 
-      - name: Commit only if build succeeds
+      - name: Android lint
+        run: gradle --no-daemon --stacktrace lint
+
+      - name: Verify APK exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: music-finder-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Commit source changes
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt app/src/main/java/com/kafshar/musicfinder/MusicService.kt app/src/main/res/layout/activity_main.xml
-          if git diff --cached --quiet; then echo 'No source changes'; else git commit -m '[auto-user-features] Random modes and search UX'; git push; fi
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'No source changes'
+          else
+            git commit -m '[auto-user-features] Integrate native-first search'
+            git push
+          fi
