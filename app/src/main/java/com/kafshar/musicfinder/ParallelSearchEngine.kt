@@ -3,17 +3,26 @@ package com.kafshar.musicfinder
 import android.text.Html
 import java.net.HttpURLConnection
 import java.net.URI
-import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 
 /**
- * Network search coordinator. Searches Google and configured music domains in
- * parallel, follows Google redirect URLs, and extracts useful music pages.
+ * Native-first search coordinator.
+ *
+ * It searches the configured music sites directly over HTTP. Google remains a
+ * WebView fallback in MainActivity, so Google/consent/CAPTCHA cannot make the
+ * primary search path fail by itself.
  */
 object ParallelSearchEngine {
+    private const val CONNECT_TIMEOUT_MS = 3500
+    private const val READ_TIMEOUT_MS = 5000
+    private const val BATCH_TIMEOUT_SECONDS = 9L
+    private const val MAX_RESULTS_PER_SITE = 8
+    private const val MAX_RESULTS = 60
+
     private val executor = Executors.newFixedThreadPool(12)
 
     data class Candidate(
@@ -25,24 +34,36 @@ object ParallelSearchEngine {
         val score: Int = 0
     )
 
-    fun search(query: String, generation: Int, callback: (Int, List<Candidate>) -> Unit) {
+    /**
+     * Search music domains without Google. The returned Future is cancellable;
+     * MainActivity uses the generation as a second guard against stale results.
+     */
+    fun searchDirect(
+        query: String,
+        generation: Int,
+        callback: (Int, List<Candidate>) -> Unit
+    ): Future<*> {
         val q = SearchEngine.correctedQuery(query).trim()
         if (q.isBlank()) {
             callback(generation, emptyList())
-            return
+            return FutureTaskCompleted
         }
 
-        val tasks = ArrayList<Callable<List<Candidate>>>()
-        tasks += Callable { searchGoogle(q) }
-        ServerConfig.MUSIC_SITES.forEach { domain ->
-            tasks += Callable { searchSite(domain, q) }
-        }
-
-        Thread {
+        return executor.submit {
             val merged = LinkedHashMap<String, Candidate>()
+            val sites = ServerConfig.PRIMARY_SEARCH_SITES
+
             try {
-                val futures = executor.invokeAll(tasks, 12, TimeUnit.SECONDS)
+                val tasks = sites.map { domain ->
+                    Callable { searchSite(domain, SearchEngine.buildQueries(q)) }
+                }
+                val futures = executor.invokeAll(
+                    tasks,
+                    BATCH_TIMEOUT_SECONDS,
+                    TimeUnit.SECONDS
+                )
                 futures.forEach { future ->
+                    if (Thread.currentThread().isInterrupted) return@forEach
                     try {
                         future.get().forEach { candidate ->
                             val key = canonical(candidate.url)
@@ -51,120 +72,171 @@ object ParallelSearchEngine {
                                 merged[key] = candidate
                             }
                         }
-                    } catch (_: Exception) { }
+                    } catch (_: Exception) {
+                        // One unavailable source must not fail the whole search.
+                    }
                 }
-            } catch (_: Exception) { }
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            } catch (_: Exception) {
+                // The UI will use the Google fallback if no direct results exist.
+            }
 
-            callback(generation, merged.values.sortedByDescending { it.score }.take(60))
-        }.start()
-    }
+            val ranked = merged.values
+                .sortedWith(
+                    compareByDescending<Candidate> { it.score }
+                        .thenBy { it.site }
+                        .thenBy { it.title.lowercase() }
+                )
+                .take(MAX_RESULTS)
 
-    private fun searchGoogle(q: String): List<Candidate> {
-        val url = "https://www.google.com/search?q=" + URLEncoder.encode(q + " music", "UTF-8") + "&num=50"
-        val html = get(url) ?: return emptyList()
-        return extractLinks(html, "Google", q, true)
-    }
-
-    private fun searchSite(domain: String, q: String): List<Candidate> {
-        val encoded = URLEncoder.encode(q, "UTF-8")
-        val candidates = listOf(
-            "https://$domain/?s=$encoded",
-            "https://$domain/search?q=$encoded",
-            "https://$domain/?q=$encoded"
-        )
-        for (url in candidates) {
-            val html = get(url) ?: continue
-            val results = extractLinks(html, domain, q, false)
-            if (results.isNotEmpty()) return results
+            if (!Thread.currentThread().isInterrupted) {
+                callback(generation, ranked)
+            }
         }
-        return emptyList()
+    }
+
+    /** Backward-compatible entry point; native direct search is now primary. */
+    fun search(
+        query: String,
+        generation: Int,
+        callback: (Int, List<Candidate>) -> Unit
+    ): Future<*> = searchDirect(query, generation, callback)
+
+    private fun searchSite(domain: String, queries: List<String>): List<Candidate> {
+        val out = ArrayList<Candidate>()
+        val seen = HashSet<String>()
+
+        for (q in queries.take(4)) {
+            if (Thread.currentThread().isInterrupted) break
+            val encoded = URLEncoder.encode(q, "UTF-8")
+            val urls = listOf(
+                "https://$domain/?s=$encoded",
+                "https://$domain/search?q=$encoded",
+                "https://$domain/?q=$encoded",
+                "https://$domain/search?query=$encoded"
+            )
+
+            for (url in urls) {
+                if (Thread.currentThread().isInterrupted || out.size >= MAX_RESULTS_PER_SITE) break
+                val html = get(url) ?: continue
+                val results = extractLinks(html, domain, q)
+                for (candidate in results) {
+                    if (seen.add(canonical(candidate.url))) {
+                        out += candidate
+                        if (out.size >= MAX_RESULTS_PER_SITE) break
+                    }
+                }
+                if (out.isNotEmpty()) break
+            }
+        }
+
+        return out
     }
 
     private fun get(url: String): String? {
+        var connection: HttpURLConnection? = null
         return try {
-            val c = URI(url).toURL().openConnection() as HttpURLConnection
-            c.connectTimeout = 4500
-            c.readTimeout = 6500
-            c.instanceFollowRedirects = true
-            c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36")
-            c.setRequestProperty("Accept", "text/html,application/xhtml+xml")
-            c.connect()
-            if (c.responseCode !in 200..399) {
-                c.disconnect()
-                return null
-            }
-            c.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(900_000) }
-                .also { c.disconnect() }
-        } catch (_: Exception) { null }
+            connection = URI(url).toURL().openConnection() as HttpURLConnection
+            connection.connectTimeout = CONNECT_TIMEOUT_MS
+            connection.readTimeout = READ_TIMEOUT_MS
+            connection.instanceFollowRedirects = true
+            connection.requestMethod = "GET"
+            connection.setRequestProperty(
+                "User-Agent",
+                "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36"
+            )
+            connection.setRequestProperty(
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            )
+            connection.setRequestProperty("Accept-Language", "fa-IR,fa;q=0.9,en;q=0.8")
+            connection.connect()
+
+            val status = connection.responseCode
+            if (status !in 200..399) return null
+
+            connection.inputStream.bufferedReader(Charsets.UTF_8)
+                .use { it.readText().take(900_000) }
+        } catch (_: Exception) {
+            null
+        } finally {
+            connection?.disconnect()
+        }
     }
 
-    private fun extractLinks(html: String, site: String, q: String, google: Boolean): List<Candidate> {
+    private fun extractLinks(
+        html: String,
+        site: String,
+        query: String
+    ): List<Candidate> {
         val out = ArrayList<Candidate>()
-        val queryTokens = SearchEngine.normalizeQuery(q)
+        val queryTokens = SearchEngine.normalizeQuery(query)
             .split(' ')
             .filter { it.length > 1 }
 
-        val regex = Regex("(?is)<a[^>]+href=[\\\"']([^\\\"']+)[\\\"'][^>]*>(.*?)</a>")
-        for (m in regex.findAll(html).take(800)) {
-            val rawHref = Html.fromHtml(m.groupValues[1], Html.FROM_HTML_MODE_LEGACY).toString()
-            val text = Html.fromHtml(m.groupValues[2], Html.FROM_HTML_MODE_LEGACY).toString()
-                .replace(Regex("\\s+"), " ").trim()
+        val regex = Regex(
+            "(?is)<a\\b([^>]*?)href=[\\\"']([^\\\"']+)[\\\"']([^>]*)>(.*?)</a>"
+        )
 
-            val href = unwrapGoogleUrl(rawHref)
+        for (match in regex.findAll(html).take(1000)) {
+            if (Thread.currentThread().isInterrupted) break
+
+            val before = match.groupValues[1]
+            val hrefRaw = match.groupValues[2]
+            val after = match.groupValues[3]
+            val body = match.groupValues[4]
+
+            val href = Html.fromHtml(
+                hrefRaw,
+                Html.FROM_HTML_MODE_LEGACY
+            ).toString().trim()
             val absolute = absoluteUrl(href, site) ?: continue
-            if (!isUsefulUrl(absolute, google) || text.length < 3) continue
+            if (!ServerConfig.isAllowedPageUrl(absolute)) continue
 
-            val lower = SearchEngine.normalizeQuery(text + " " + absolute)
-            val hits = queryTokens.count { lower.contains(it) }
-            if (hits == 0 && !google) continue
+            val text = Html.fromHtml(
+                body,
+                Html.FROM_HTML_MODE_LEGACY
+            ).toString()
+                .replace(Regex("\\s+"), " ")
+                .trim()
 
-            val titleScore = SearchEngine.similarity(q, text)
-            val siteScore = if (google && ServerConfig.serverForUrl(absolute) != null) 15 else 0
-            val score = hits * 20 + titleScore + siteScore
+            val titleAttr = Regex(
+                "(?i)(?:title|aria-label)=[\\\"']([^\\\"']+)[\\\"']"
+            ).find(before + after)?.groupValues?.getOrNull(1).orEmpty()
+            val display = text.ifBlank { titleAttr }.trim()
+            if (display.length < 2) continue
+
+            val normalized = SearchEngine.normalizeQuery(display + " " + absolute)
+            val hits = queryTokens.count { normalized.contains(it) }
+            if (hits == 0) continue
+
+            val score =
+                hits * 24 +
+                    SearchEngine.similarity(query, display) +
+                    if (display.length <= 180) 8 else 0 +
+                    (ServerConfig.serverForUrl(absolute)?.priority ?: 0) / 10
 
             out += Candidate(
-                url = absolute,
-                title = cleanTitle(text),
+                url = absolute.substringBefore('#').trimEnd('/'),
+                title = cleanTitle(display),
                 artist = "",
                 site = ServerConfig.siteName(absolute),
                 score = score
             )
         }
 
-        return out.distinctBy { canonical(it.url) }
+        return out
+            .distinctBy { canonical(it.url) }
             .sortedByDescending { it.score }
-            .take(30)
+            .take(MAX_RESULTS_PER_SITE)
     }
 
-    private fun unwrapGoogleUrl(href: String): String {
-        val decoded = try {
-            URLDecoder.decode(href, "UTF-8")
-        } catch (_: Exception) {
-            href
-        }
+    private fun cleanTitle(value: String): String =
+        value.replace(Regex("\\s+"), " ").trim().take(180)
 
-        if (!decoded.contains("google.com", ignoreCase = true)) return decoded
-
-        return try {
-            val uri = URI(decoded)
-            val query = uri.rawQuery ?: return decoded
-            query.split('&').forEach { part ->
-                val key = part.substringBefore('=')
-                val value = part.substringAfter('=', "")
-                if (key == "q" || key == "url" || key == "u") {
-                    val target = URLDecoder.decode(value, "UTF-8")
-                    if (target.startsWith("http://") || target.startsWith("https://")) return target
-                }
-            }
-            decoded
-        } catch (_: Exception) {
-            decoded
-        }
-    }
-
-    private fun cleanTitle(s: String): String = s.replace(Regex("\\s+"), " ").trim().take(180)
-
-    private fun canonical(url: String): String = url.substringBefore('#').trimEnd('/').lowercase()
+    private fun canonical(url: String): String =
+        url.substringBefore('#').trimEnd('/').lowercase()
 
     private fun absoluteUrl(href: String, site: String): String? {
         return try {
@@ -174,14 +246,17 @@ object ParallelSearchEngine {
                 href.startsWith("/") -> "https://$site$href"
                 else -> null
             }
-        } catch (_: Exception) { null }
+        } catch (_: Exception) {
+            null
+        }
     }
 
-    private fun isUsefulUrl(url: String, google: Boolean): Boolean {
-        val lower = url.lowercase()
-        if (lower.startsWith("javascript:") || lower.startsWith("mailto:")) return false
-        if (lower.contains("google.com/search")) return false
-        if (google) return ServerConfig.isAllowedPageUrl(url) && !ServerConfig.isGoogleHost(URI(url).host)
-        return ServerConfig.isAllowedPageUrl(url)
+    /** A no-op Future used for blank queries without allocating a worker. */
+    private object FutureTaskCompleted : Future<Any?> {
+        override fun cancel(mayInterruptIfRunning: Boolean): Boolean = false
+        override fun isCancelled(): Boolean = false
+        override fun isDone(): Boolean = true
+        override fun get(): Any? = null
+        override fun get(timeout: Long, unit: TimeUnit): Any? = null
     }
 }
