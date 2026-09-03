@@ -1,0 +1,220 @@
+name: One-time native search integration
+
+on:
+  push:
+    branches: [ "search-native-integration" ]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Patch MainActivity
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("app/src/main/java/com/kafshar/musicfinder/MainActivity.kt")
+          text = path.read_text(encoding="utf-8")
+
+          if "private var searchFuture: Future<*>? = null" not in text:
+              text = text.replace(
+                  "private var downloadFuture: Future<*>? = null",
+                  "private var downloadFuture: Future<*>? = null\n\n    private var searchFuture: Future<*>? = null"
+              )
+
+          if "private var googleFallbackUsed = false" not in text:
+              text = text.replace(
+                  "private var searchGeneration = 0",
+                  "private var searchGeneration = 0\n\n    private var googleFallbackUsed = false"
+              )
+
+          start = text.index("    private fun searchMusic() {")
+          end = text.index("    private fun cancelSearchCallbacks() {", start)
+          new_method = r'''    private fun searchMusic() {
+
+        val text = query.text.toString().trim()
+
+        if (text.isBlank()) {
+            Toast.makeText(
+                this,
+                "نام آهنگ یا خواننده را وارد کنید",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
+        searchGeneration++
+        val generation = searchGeneration
+
+        cancelSearchCallbacks()
+        googleFallbackUsed = false
+
+        resultGeneration = generation
+        resultPages = emptyList()
+        resultPageIndex = 0
+        expectedPageUrl = ""
+
+        songs.clear()
+        currentIndex = -1
+        currentAudioUrl = ""
+        currentSong = null
+        resultsContainer.removeAllViews()
+
+        titleText.text = text
+        artistText.text = "در حال جستجو..."
+        status.text = "در حال جستجوی منابع موسیقی..."
+        seekBar.progress = 0
+        currentTimeText.text = "00:00"
+        durationText.text = "00:00"
+        vinyl.clearCover()
+        vinyl.stopRotation()
+        clearLyrics()
+
+        searchFuture = ParallelSearchEngine.searchDirect(
+            text,
+            generation
+        ) { callbackGeneration, candidates ->
+            runOnUiThread {
+                if (
+                    destroyed ||
+                    callbackGeneration != searchGeneration
+                ) return@runOnUiThread
+
+                resultPages = candidates
+                    .map { it.url }
+                    .filter { ServerConfig.isAllowedPageUrl(it) }
+                    .distinctBy { it.substringBefore("#").trimEnd('/').lowercase() }
+                    .take(60)
+
+                resultPageIndex = 0
+
+                if (resultPages.isEmpty()) {
+                    status.text = "منابع مستقیم نتیجه‌ای ندادند؛ در حال جستجوی جایگزین..."
+                    loadGoogleFallback(text, generation)
+                } else {
+                    status.text = "${resultPages.size} صفحه پیدا شد؛ در حال استخراج آهنگ..."
+                    processNextResultPage()
+                }
+            }
+        }
+    }
+
+    private fun loadGoogleFallback(text: String, generation: Int) {
+        if (destroyed || generation != searchGeneration || googleFallbackUsed) return
+        googleFallbackUsed = true
+        resultGeneration = generation
+        resultPages = emptyList()
+        resultPageIndex = 0
+
+        val searchQuery = SearchEngine.buildGoogleQuery(text)
+        val encoded = try {
+            URLEncoder.encode(searchQuery, "UTF-8")
+        } catch (_: Exception) {
+            return
+        }
+
+        try {
+            web.stopLoading()
+            web.loadUrl(
+                "https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1"
+            )
+        } catch (_: Exception) {
+            status.text = "جستجوی جایگزین در دسترس نیست"
+        }
+    }
+
+'''
+          text = text[:start] + new_method + text[end:]
+
+          text = text.replace(
+              "    private fun cancelSearchCallbacks() {\n\n        searchTimeout?.let {",
+              "    private fun cancelSearchCallbacks() {\n\n        try {\n            searchFuture?.cancel(true)\n        } catch (_: Exception) {\n        }\n        searchFuture = null\n\n        searchTimeout?.let {"
+          )
+
+          marker = '''    private fun finishSearch() {
+
+        if (destroyed) return
+
+        cancelSearchCallbacks()
+
+        status.text =
+            if (songs.isEmpty()) {
+                "آهنگ قابل پخش پیدا نشد"
+            } else {
+                "${songs.size} نتیجه پیدا شد"
+            }
+'''
+          replacement = '''    private fun finishSearch() {
+
+        if (destroyed) return
+
+        cancelSearchCallbacks()
+
+        if (
+            songs.isEmpty() &&
+            !googleFallbackUsed &&
+            resultGeneration == searchGeneration
+        ) {
+            status.text = "در منابع مستقیم آهنگ قابل پخش پیدا نشد؛ در حال جستجوی Google..."
+            loadGoogleFallback(query.text.toString(), searchGeneration)
+            return
+        }
+
+        status.text =
+            if (songs.isEmpty()) {
+                "آهنگ قابل پخش پیدا نشد"
+            } else {
+                "${songs.size} نتیجه پیدا شد"
+            }
+'''
+          if marker not in text:
+              raise SystemExit("finishSearch marker not found")
+          text = text.replace(marker, replacement, 1)
+
+          path.write_text(text, encoding="utf-8")
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+          cache-read-only: false
+
+      - name: Verify tests, lint and APK
+        run: |
+          gradle --no-daemon --stacktrace test
+          gradle --no-daemon --stacktrace assembleDebug
+          gradle --no-daemon --stacktrace lint
+
+      - name: Upload verified APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: music-finder-search-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Commit patched search integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
+          git diff --cached --check
+          git commit -m "Integrate native-first search with Google fallback"
+          git push origin HEAD:search-native-integration
