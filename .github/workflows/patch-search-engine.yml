@@ -1,4 +1,3 @@
-# Native-first search integration workflow
 name: Patch Search Engine
 
 on:
@@ -17,34 +16,153 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Integrate native-first search
+      - name: Fix search pipeline
         shell: python
         run: |
           from pathlib import Path
           p = Path('app/src/main/java/com/kafshar/musicfinder/MainActivity.kt')
           s = p.read_text(encoding='utf-8')
-          if 'private var searchFuture: Future<*>? = null' not in s:
-              needle = '    private var downloadFuture: Future<*>? = null'
-              s = s.replace(needle, needle + '\n\n    private var searchFuture: Future<*>? = null', 1)
-          if 'private var googleFallbackUsed = false' not in s:
-              needle = '    private var searchGeneration = 0'
-              s = s.replace(needle, needle + '\n\n    private var googleFallbackUsed = false', 1)
+
+          if 'private var nativeFallbackUsed = false' not in s:
+              needle = '    private var googleFallbackUsed = false'
+              s = s.replace(needle, needle + '\n\n    private var nativeFallbackUsed = false', 1)
+
           start = s.index('    private fun searchMusic() {')
-          end = s.index('    private fun cancelSearchCallbacks() {', start)
-          method = "    private fun searchMusic() {\n\n        if (destroyed) return\n        val text = query.text.toString().trim()\n        if (text.isBlank()) {\n            Toast.makeText(this, \"نام آهنگ یا خواننده را وارد کنید\", Toast.LENGTH_SHORT).show()\n            return\n        }\n        searchGeneration++\n        val generation = searchGeneration\n        cancelSearchCallbacks()\n        googleFallbackUsed = false\n        resultGeneration = generation\n        resultPages = emptyList()\n        resultPageIndex = 0\n        expectedPageUrl = \"\"\n        songs.clear()\n        currentIndex = -1\n        currentAudioUrl = \"\"\n        currentSong = null\n        resultsContainer.removeAllViews()\n        titleText.text = text\n        artistText.text = \"در حال جستجو...\"\n        status.text = \"در حال جستجوی منابع موسیقی...\"\n        seekBar.progress = 0\n        currentTimeText.text = \"00:00\"\n        durationText.text = \"00:00\"\n        vinyl.clearCover()\n        vinyl.stopRotation()\n        clearLyrics()\n        searchFuture = ParallelSearchEngine.searchDirect(text, generation) { callbackGeneration, candidates ->\n            runOnUiThread {\n                if (destroyed || callbackGeneration != searchGeneration) return@runOnUiThread\n                resultPages = candidates.map { it.url }\n                    .filter { ServerConfig.isAllowedPageUrl(it) }\n                    .distinctBy { it.substringBefore(\"#\").trimEnd('/').lowercase() }\n                    .take(60)\n                resultPageIndex = 0\n                if (resultPages.isEmpty()) {\n                    status.text = \"منابع مستقیم نتیجه‌ای ندادند؛ در حال جستجوی جایگزین...\"\n                    loadGoogleFallback(text, generation)\n                } else {\n                    status.text = \"${resultPages.size} صفحه پیدا شد؛ در حال استخراج آهنگ...\"\n                    processNextResultPage()\n                }\n            }\n        }\n    }\n\n    private fun loadGoogleFallback(text: String, generation: Int) {\n        if (destroyed || generation != searchGeneration || googleFallbackUsed) return\n        googleFallbackUsed = true\n        resultGeneration = generation\n        resultPages = emptyList()\n        resultPageIndex = 0\n        val encoded = try { URLEncoder.encode(SearchEngine.buildGoogleQuery(text), \"UTF-8\") } catch (_: Exception) {\n            status.text = \"خطا در آماده‌سازی جستجو\"\n            return\n        }\n        try {\n            web.stopLoading()\n            web.loadUrl(\"https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1\")\n        } catch (_: Exception) {\n            status.text = \"جستجوی جایگزین در دسترس نیست\"\n        }\n    }\n\n"
+          end = s.index('    private fun loadGoogleFallback(', start)
+          method = '''    private fun searchMusic() {
+
+        if (destroyed) return
+        val text = query.text.toString().trim()
+        if (text.isBlank()) {
+            Toast.makeText(this, "نام آهنگ یا خواننده را وارد کنید", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        searchGeneration++
+        val generation = searchGeneration
+        cancelSearchCallbacks()
+        googleFallbackUsed = false
+        nativeFallbackUsed = false
+        resultGeneration = generation
+        resultPages = emptyList()
+        resultPageIndex = 0
+        expectedPageUrl = ""
+        songs.clear()
+        currentIndex = -1
+        currentAudioUrl = ""
+        currentSong = null
+        resultsContainer.removeAllViews()
+        titleText.text = text
+        artistText.text = "در حال جستجو..."
+        status.text = "در حال جستجوی Google..."
+        seekBar.progress = 0
+        currentTimeText.text = "00:00"
+        durationText.text = "00:00"
+        vinyl.clearCover()
+        vinyl.stopRotation()
+        clearLyrics()
+
+        loadGoogleFallback(text, generation)
+    }
+
+'''
           s = s[:start] + method + s[end:]
-          if 'searchFuture?.cancel(true)' not in s:
-              needle = '    private fun cancelSearchCallbacks() {\n\n        searchTimeout?.let {'
-              if needle in s:
-                  s = s.replace(needle, '    private fun cancelSearchCallbacks() {\n\n        try { searchFuture?.cancel(true) } catch (_: Exception) {}\n        searchFuture = null\n\n        searchTimeout?.let {', 1)
-              else:
-                  needle = '    private fun cancelSearchCallbacks() {\n\n        searchTimeoutRunnable?.let {'
-                  if needle in s:
-                      s = s.replace(needle, '    private fun cancelSearchCallbacks() {\n\n        try { searchFuture?.cancel(true) } catch (_: Exception) {}\n        searchFuture = null\n\n        searchTimeoutRunnable?.let {', 1)
-          marker = '    private fun finishSearch() {\n\n        if (destroyed) return\n\n        cancelSearchCallbacks()\n'
-          if marker in s and 'در منابع مستقیم آهنگ قابل پخش پیدا نشد' not in s:
-              insert = '\n        if (songs.isEmpty() && !googleFallbackUsed && resultGeneration == searchGeneration) {\n            status.text = "در منابع مستقیم آهنگ قابل پخش پیدا نشد؛ در حال جستجوی Google..."\n            loadGoogleFallback(query.text.toString(), searchGeneration)\n            return\n        }\n'
-              s = s.replace(marker, marker + insert, 1)
+
+          start = s.index('    private fun loadGoogleFallback(')
+          end = s.index('    private fun cancelSearchCallbacks()', start)
+          fallback = '''    private fun loadGoogleFallback(text: String, generation: Int) {
+        if (destroyed || generation != searchGeneration || googleFallbackUsed) return
+        googleFallbackUsed = true
+        resultGeneration = generation
+        resultPages = emptyList()
+        resultPageIndex = 0
+        val encoded = try {
+            URLEncoder.encode(SearchEngine.buildGoogleQuery(text), "UTF-8")
+        } catch (_: Exception) {
+            status.text = "خطا در آماده‌سازی جستجو"
+            startNativeFallback(text, generation)
+            return
+        }
+        try {
+            web.stopLoading()
+            web.loadUrl("https://www.google.com/search?q=$encoded&num=50&hl=fa&gbv=1")
+        } catch (_: Exception) {
+            startNativeFallback(text, generation)
+        }
+    }
+
+    private fun startNativeFallback(text: String, generation: Int) {
+        if (destroyed || generation != searchGeneration || nativeFallbackUsed) return
+        nativeFallbackUsed = true
+        status.text = "Google نتیجه‌ای نداد؛ در حال جستجوی مستقیم منابع..."
+        searchFuture?.cancel(true)
+        searchFuture = ParallelSearchEngine.searchDirect(text, generation) { callbackGeneration, candidates ->
+            runOnUiThread {
+                if (destroyed || callbackGeneration != searchGeneration) return@runOnUiThread
+                resultPages = candidates.map { it.url }
+                    .filter { ServerConfig.isAllowedPageUrl(it) }
+                    .distinctBy { it.substringBefore("#").trimEnd('/').lowercase() }
+                    .take(60)
+                resultPageIndex = 0
+                if (resultPages.isEmpty()) {
+                    status.text = "هیچ منبعی برای این آهنگ پیدا نشد"
+                    finishSearch()
+                } else {
+                    status.text = "${resultPages.size} صفحه پیدا شد؛ در حال استخراج آهنگ..."
+                    processNextResultPage()
+                }
+            }
+        }
+    }
+
+'''
+          s = s[:start] + fallback + s[end:]
+
+          # Google can return an empty set without throwing. Try native search then.
+          old = '''                if (resultPages.isEmpty()) {
+                    finishSearch()
+                } else {
+                    status.text =
+                        "نتایج پیدا شد؛ در حال بررسی..."
+                    processNextResultPage()
+                }'''
+          new = '''                if (resultPages.isEmpty()) {
+                    startNativeFallback(query.text.toString(), searchGeneration)
+                } else {
+                    status.text =
+                        "نتایج پیدا شد؛ در حال بررسی..."
+                    processNextResultPage()
+                }'''
+          if old in s:
+              s = s.replace(old, new, 1)
+
+          # After Google pages are exhausted with no playable media, use native search once.
+          marker = '''    private fun finishSearch() {
+
+        if (destroyed) return
+
+        cancelSearchCallbacks()
+
+        if (songs.isEmpty() && !googleFallbackUsed && resultGeneration == searchGeneration) {
+            status.text = "در منابع مستقیم آهنگ قابل پخش پیدا نشد؛ در حال جستجوی Google..."
+            loadGoogleFallback(query.text.toString(), searchGeneration)
+            return
+        }
+'''
+          replacement = '''    private fun finishSearch() {
+
+        if (destroyed) return
+
+        cancelSearchCallbacks()
+
+        if (songs.isEmpty() && googleFallbackUsed && !nativeFallbackUsed && resultGeneration == searchGeneration) {
+            startNativeFallback(query.text.toString(), searchGeneration)
+            return
+        }
+'''
+          if marker in s:
+              s = s.replace(marker, replacement, 1)
+
           p.write_text(s, encoding='utf-8')
 
       - name: Set up JDK 17
@@ -58,7 +176,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Verify tests, APK and lint
+      - name: Verify source and build
         run: |
           gradle --no-daemon --stacktrace test
           gradle --no-daemon --stacktrace assembleDebug
@@ -72,7 +190,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Commit patch
+      - name: Commit source fix
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
@@ -82,6 +200,6 @@ jobs:
           if git diff --cached --quiet; then
             echo 'No source changes'
           else
-            git commit -m '[auto-search] Integrate native-first search'
+            git commit -m '[auto-search] Google-first search with native fallback'
             git push
           fi
