@@ -13,16 +13,23 @@ class SearchEditText @JvmOverloads constructor(
     defStyleAttr: Int = android.R.attr.editTextStyle
 ) : AppCompatEditText(context, attrs, defStyleAttr) {
 
-    override fun onEditorAction(actionCode: Int, event: KeyEvent?): Boolean {
-        if (
-            actionCode == EditorInfo.IME_ACTION_SEARCH ||
-            actionCode == EditorInfo.IME_ACTION_DONE ||
-            (event?.keyCode == KeyEvent.KEYCODE_ENTER)
-        ) {
-            val imm = getContext().getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            imm?.hideSoftInputFromWindow(windowToken, 0)
-            clearFocus()
+    private fun hideKeyboard() {
+        val imm = getContext().getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(windowToken, 0)
+        clearFocus()
+    }
+
+    override fun onEditorAction(actionCode: Int) {
+        if (actionCode == EditorInfo.IME_ACTION_SEARCH || actionCode == EditorInfo.IME_ACTION_DONE) {
+            hideKeyboard()
         }
-        return super.onEditorAction(actionCode, event)
+        super.onEditorAction(actionCode)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_ENTER) {
+            hideKeyboard()
+        }
+        return super.onKeyUp(keyCode, event)
     }
 }
