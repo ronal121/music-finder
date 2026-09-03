@@ -31,8 +31,7 @@ object ServerConfig {
         MusicServer("irmp3.ir", 73), MusicServer("next1.ir", 72), MusicServer("mytehranmusic.com", 71),
         MusicServer("mybia2music.com", 70), MusicServer("musics-fa.com", 69), MusicServer("pro.iraniandj.ir", 68),
         MusicServer("worldofmusic.ir", 67), MusicServer("iranmusic.ir", 66), MusicServer("sahand-music.ir", 65),
-        MusicServer("nakaman-music.ir", 64),
-        MusicServer("mokhtalefmusic.com", 63), MusicServer("joyamusic.ir", 62),
+        MusicServer("nakaman-music.ir", 64), MusicServer("mokhtalefmusic.com", 63), MusicServer("joyamusic.ir", 62),
         MusicServer("gisomusic.com", 61), MusicServer("melomusic.ir", 60)
     )
 
@@ -86,19 +85,22 @@ object ServerConfig {
         ).any { l.contains(it) }
     }
 
-    /** Build a broad Google fallback query; do not make the top-12 list a hard bottleneck. */
+    /**
+     * Keep Google discovery broad. The app filters the returned links against
+     * MUSIC_SITES in extractGoogleResults(). A huge 40-domain OR expression
+     * causes Google to return poor/empty results for many Persian queries.
+     */
     fun searchQuery(song: String): String {
         val corrected = SearchEngine.correctedQuery(song).trim()
         if (corrected.isBlank()) return "music"
 
         val clean = SearchEngine.withoutSearchNoise(corrected)
-        val phrase = if (clean.contains(' ')) "\"$clean\"" else clean
-        val escaped = clean.replace("\"", " ").replace(Regex("\\s+"), " ").trim()
-        val siteFilter = MUSIC_SITES
-            .take(40)
-            .joinToString(" OR ") { "site:$it" }
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (clean.isBlank()) return "music"
 
-        return "($phrase OR $escaped OR \"$escaped دانلود\" OR \"$escaped آهنگ\") ($siteFilter)"
+        val phrase = "\"${clean.replace("\"", " ").trim()}\""
+        return "$phrase آهنگ دانلود"
     }
 
     fun siteName(url: String): String {
