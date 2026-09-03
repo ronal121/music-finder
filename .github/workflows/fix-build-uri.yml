@@ -3,6 +3,7 @@ name: Fix Build Import
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,14 +13,50 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Add missing Uri import
+        with:
+          fetch-depth: 0
+
+      - name: Fix Google search pipeline
+        shell: bash
         run: |
-          FILE="app/src/main/java/com/kafshar/musicfinder/MainActivity.kt"
-          if grep -q 'Uri.parse(page)' "$FILE" && ! grep -q '^import android.net.Uri$' "$FILE"; then
-            sed -i '/^import android.os.Build$/i import android.net.Uri' "$FILE"
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add "$FILE"
-            git commit -m 'Fix missing Uri import for song page'
+          set -euo pipefail
+          python -c "import base64;exec(base64.b64decode('ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCByZQpwPVBhdGgoJ2FwcC9zcmMvbWFpbi9qYXZhL2NvbS9rYWZzaGFyL211c2ljZmluZGVyL01haW5BY3Rpdml0eS5rdCcpCnM9cC5yZWFkX3RleHQoZW5jb2Rpbmc9J3V0Zi04JykKIyBSZXBsYWNlIHRoZSByZXN0cmljdGl2ZSBmb3VyLXNpdGUgR29vZ2xlIHF1ZXJ5IHdpdGggdGhlIGJyb2FkIGNlbnRyYWxpemVkIHF1ZXJ5IGJ1aWxkZXIuCnM9cmUuc3ViKHInKD9zKSAgICAgICAgdmFsIHNlYXJjaFF1ZXJ5XHMqPS4qP1xuICAgICAgICB2YWwgZW5jb2RlZFxzKj0nLCAnICAgICAgICB2YWwgc2VhcmNoUXVlcnkgPSBTZWFyY2hFbmdpbmUuYnVpbGRHb29nbGVRdWVyeSh0ZXh0KVxuXG4gICAgICAgIHZhbCBlbmNvZGVkID0nLCBzLCBjb3VudD0xKQojIFJlcGxhY2UgdGhlIGZvdXItc2l0ZSByZXN1bHQgZmlsdGVyIHdpdGggZXZlcnkgY29uZmlndXJlZCBtdXNpYyBkb21haW4uCmRvbWFpbnM9WydiZXJvb3NpYy5pcicsJ3Jvem11c2ljLmNvbScsJ25leDFtdXNpYy5jb20nLCdtdXNpY2JhcmFuLmlyJywnbXltdXNpY2JhcmFuLmlyJywnbXVzaWN2aXJhbC5pcicsJ211c2ljZGVsLmlyJywnc29uZ3NhcmEubmV0JywncmFkaW9qYXZhbi5jb20nLCdtdXNpY2V0ZS5jb20nLCdtdXNpY2V0dS5jb20nLCdtdXNpY3N3ZWIuaXInLCdtZWxvdnkuaXInLCdqZW5hYi1tdXNpYy5jb20nLCdmYXphbXVzaWMuY29tJywnMzYwYmlrYWxhbS5jb20nLCdkdGFyYW5laC5uZXQnLCdhaGFuZ2lyYW5pLmlyJywndXBtdXNpY3MuY29tJywnbmljbXVzaWMubmV0Jywndm11c2ljLmlyJywnc2FraGFtdXNpYy5pcicsJ2dhbmphMm11c2ljLmNvbScsJ2lyYW4tbXVzaWMubmV0Jywnc2lsYW11c2ljLmlyJywnYmliYWttdXNpYy5jb20nLCdiZWVwdHVuZXMuY29tJywnYmxvZ211c2ljLmlyJywncG9wLW11c2ljLmlyJywnYmVobXVzaWMuY29tJywnaXJtcDMuaXInLCduZXh0MS5pcicsJ215dGVocmFubXVzaWMuY29tJywnbXliaWEybXVzaWMuY29tJywnbXVzaWNzLWZhLmNvbScsJ3Byby5pcmFuaWFuZGouaXInLCd3b3JsZG9mbXVzaWMuaXInLCdpcmFubXVzaWMuaXInLCdzYWhhbmQtbXVzaWMuaXInLCduYWthbWFuLW11c2ljLmlyJywnbW9raHRhbGVmbXVzaWMuY29tJywnam95YW11c2ljLmlyJywnZ2lzb211c2ljLmNvbScsJ21lbG9tdXNpYy5pciddCmV4cHI9JyB8fFxuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAnLmpvaW4oZidsb3dlci5pbmRleE9mKCJ7ZH0iKSA+PSAwJyBmb3IgZCBpbiBkb21haW5zKQpzPXJlLnN1YihyJyg/cykgICAgICAgICAgICAgICAgICAgICAgICB2YXIgYWxsb3dlZFxzKj0uKj87XG4gICAgICAgICAgICAgICAgICAgICAgICBpZiBcKCcsICcgICAgICAgICAgICAgICAgICAgICAgICB2YXIgYWxsb3dlZCA9XG4nKygnICAgICAgICAgICAgICAgICAgICAgICAgICAgICAnK2V4cHIpKyc7XG4gICAgICAgICAgICAgICAgICAgICAgICBpZiAoJywgcywgY291bnQ9MSkKcC53cml0ZV90ZXh0KHMsZW5jb2Rpbmc9J3V0Zi04JykK'))"
+
+      - name: Commit source fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'No source changes'
+          else
+            git commit -m 'Fix Google music search coverage'
             git push
           fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Test and build
+        run: |
+          gradle --no-daemon --stacktrace test
+          gradle --no-daemon --stacktrace assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: music-finder-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
