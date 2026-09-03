@@ -1,9 +1,10 @@
 package com.kafshar.musicfinder
 
-/** Offline query intelligence used by both Google and direct site search. */
+/** Offline query intelligence shared by native and WebView search paths. */
 object SearchEngine {
     private val whitespace = Regex("\\s+")
-    private val punctuation = Regex("[^\\p{L}\\p{N}\\s-]")
+    private val punctuation = Regex("[^\\p{L}\\p{N}\\s]")
+    private val searchNoise = setOf("آهنگ", "دانلود", "mp3", "music", "song", "download")
 
     private val persianToCanonical = mapOf(
         'آ' to 'ا', 'أ' to 'ا', 'إ' to 'ا', 'ٱ' to 'ا', 'ة' to 'ه',
@@ -39,9 +40,7 @@ object SearchEngine {
     fun normalizeQuery(input: String): String = input
         .mapNotNull { ch -> persianToCanonical[ch] ?: digitMap[ch] ?: ch }
         .joinToString("")
-        .replace('\u200c', ' ')
-        .replace('\u200f', ' ')
-        .replace('\u200e', ' ')
+        .replace(Regex("[\\u200c\\u200d\\u200e\\u200f\\u0640]"), " ")
         .replace(punctuation, " ")
         .replace(whitespace, " ")
         .trim()
@@ -76,13 +75,29 @@ object SearchEngine {
         return result.joinToString(" ")
     }
 
+    /** Remove words users commonly add when looking for an actual song. */
+    fun withoutSearchNoise(input: String): String =
+        normalizeQuery(input)
+            .split(' ')
+            .filter { it.isNotBlank() && it !in searchNoise }
+            .joinToString(" ")
+
     private fun bestCorrection(word: String): String {
         commonTypos[word]?.let { return it }
         if (word.length < 4) return word
+
         val best = commonTypos.entries
-            .filter { it.key.length >= 4 && kotlin.math.abs(it.key.length - word.length) <= 2 }
+            .filter {
+                it.key.length >= 4 &&
+                    kotlin.math.abs(it.key.length - word.length) <= 2 &&
+                    !it.key.contains(' ')
+            }
             .maxByOrNull { levenshteinSimilarity(word, it.key) }
-        return if (best != null && levenshteinSimilarity(word, best.key) >= 86) best.value else word
+
+        return if (
+            best != null &&
+            levenshteinSimilarity(word, best.key) >= 86
+        ) best.value else word
     }
 
     fun suggestions(input: String): List<String> {
@@ -90,40 +105,61 @@ object SearchEngine {
         if (original.isBlank()) return emptyList()
         val normalized = normalizeQuery(original)
         val corrected = correctedQuery(original)
+        val clean = withoutSearchNoise(corrected)
+
         return linkedSetOf(
             corrected,
+            clean,
             original,
-            "$corrected song",
-            "$corrected music",
-            "$corrected آهنگ"
-        ).filter { it.isNotBlank() && normalizeQuery(it) != normalized }.take(5)
+            "$clean song",
+            "$clean آهنگ"
+        ).filter {
+            it.isNotBlank() && normalizeQuery(it) != normalized
+        }.take(5)
     }
 
     /** Multiple independent search variants; callers should deduplicate results. */
     fun buildQueries(input: String): List<String> {
         val original = displayQuery(input)
         if (original.isBlank()) return emptyList()
-        val normalized = normalizeQuery(original)
+
         val corrected = correctedQuery(original)
-        val words = corrected.split(' ').filter { it.isNotBlank() }
+        val clean = withoutSearchNoise(corrected)
+        val normalized = normalizeQuery(original)
+        val words = clean.split(' ').filter { it.isNotBlank() }
         val variants = linkedSetOf<String>()
+
         variants += original
         variants += corrected
+        if (clean.isNotBlank()) variants += clean
         if (normalized != corrected) variants += normalized
         if (words.size > 1) variants += words.asReversed().joinToString(" ")
-        variants += "$corrected song"
-        return variants.filter { it.isNotBlank() }.take(6)
+        if (clean.isNotBlank()) variants += "$clean song"
+
+        return variants
+            .map { it.trim().replace(whitespace, " ") }
+            .filter { it.isNotBlank() }
+            .take(8)
     }
 
-    fun buildGoogleQuery(input: String): String = ServerConfig.searchQuery(correctedQuery(input))
+    fun buildGoogleQuery(input: String): String =
+        ServerConfig.searchQuery(correctedQuery(input))
 
     fun parseArtistTitle(input: String): Pair<String?, String?> {
         val clean = displayQuery(input)
         if (clean.isBlank()) return null to null
-        val parts = clean.split(" - ", " — ", " – ")
+
+        val parts = clean.split(
+            Regex("\\s*(?:-|–|—|:)\\s*"),
+            limit = 2
+        )
+
         return if (parts.size >= 2) {
-            parts[0].trim().ifBlank { null } to parts.drop(1).joinToString(" - ").trim().ifBlank { null }
-        } else null to clean
+            parts[0].trim().ifBlank { null } to
+                parts[1].trim().ifBlank { null }
+        } else {
+            null to clean
+        }
     }
 
     fun similarity(a: String, b: String): Int {
@@ -139,25 +175,40 @@ object SearchEngine {
 
         val exact = leftWords.count { it in rightWords }
         val exactCoverage = exact.toDouble() / maxOf(leftWords.size, rightWords.size)
-        val fuzzy = leftWords.mapNotNull { lw -> rightWords.maxOfOrNull { rw -> levenshteinSimilarity(lw, rw) } }
+        val fuzzy = leftWords
+            .mapNotNull { lw ->
+                rightWords.maxOfOrNull { rw -> levenshteinSimilarity(lw, rw) }
+            }
             .filter { it >= 65 }
         val fuzzyCoverage = if (fuzzy.isEmpty()) 0 else fuzzy.average()
-        return maxOf((exactCoverage * 100).toInt(), fuzzyCoverage.toInt()).coerceIn(0, 100)
+
+        return maxOf(
+            (exactCoverage * 100).toInt(),
+            fuzzyCoverage.toInt()
+        ).coerceIn(0, 100)
     }
 
     private fun levenshteinSimilarity(a: String, b: String): Int {
         if (a == b) return 100
         if (a.isEmpty() || b.isEmpty()) return 0
+
         var row = IntArray(b.length + 1) { it }
         for (i in a.indices) {
             val next = IntArray(b.length + 1)
             next[0] = i + 1
             for (j in b.indices) {
-                next[j + 1] = minOf(next[j] + 1, row[j + 1] + 1, row[j] + if (a[i] == b[j]) 0 else 1)
+                next[j + 1] = minOf(
+                    next[j] + 1,
+                    row[j + 1] + 1,
+                    row[j] + if (a[i] == b[j]) 0 else 1
+                )
             }
             row = next
         }
+
         val distance = row[b.length]
-        return ((1.0 - distance.toDouble() / maxOf(a.length, b.length)) * 100).toInt().coerceIn(0, 100)
+        return (
+            (1.0 - distance.toDouble() / maxOf(a.length, b.length)) * 100
+        ).toInt().coerceIn(0, 100)
     }
 }
