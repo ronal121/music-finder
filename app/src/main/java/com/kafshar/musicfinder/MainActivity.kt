@@ -92,6 +92,8 @@ class MainActivity : Activity() {
 
     private var downloadFuture: Future<*>? = null
 
+    private var searchFuture: Future<*>? = null
+
     private var currentIndex = -1
     private var currentAudioUrl = ""
     private var currentSong: SongResult? = null
@@ -101,6 +103,8 @@ class MainActivity : Activity() {
     private var receiverRegistered = false
 
     private var searchGeneration = 0
+
+    private var googleFallbackUsed = false
 
     private var resultPages: List<String> = emptyList()
     private var resultPageIndex = 0
@@ -836,130 +840,75 @@ class MainActivity : Activity() {
 
     private fun searchMusic() {
 
-        val text =
-            query.text
-                .toString()
-                .trim()
-
+        if (destroyed) return
+        val text = query.text.toString().trim()
         if (text.isBlank()) {
-
-            Toast.makeText(
-                this,
-                "نام آهنگ یا خواننده را وارد کنید",
-                Toast.LENGTH_SHORT
-            ).show()
-
+            Toast.makeText(this, "نام آهنگ یا خواننده را وارد کنید", Toast.LENGTH_SHORT).show()
             return
         }
-
         searchGeneration++
-
+        val generation = searchGeneration
         cancelSearchCallbacks()
-
-        resultGeneration =
-            searchGeneration
-
-        resultPages =
-            emptyList()
-
+        googleFallbackUsed = false
+        resultGeneration = generation
+        resultPages = emptyList()
         resultPageIndex = 0
-
         expectedPageUrl = ""
-
         songs.clear()
-
         currentIndex = -1
         currentAudioUrl = ""
         currentSong = null
-
         resultsContainer.removeAllViews()
-
         titleText.text = text
-        artistText.text =
-            "در حال جستجو..."
-
-        status.text =
-            "در حال جستجوی سایت‌ها..."
-
+        artistText.text = "در حال جستجو..."
+        status.text = "در حال جستجوی منابع موسیقی..."
         seekBar.progress = 0
-
         currentTimeText.text = "00:00"
         durationText.text = "00:00"
-
         vinyl.clearCover()
         vinyl.stopRotation()
-
         clearLyrics()
-
-        val searchQuery =
-            ServerConfig.searchQuery(text)
-
-        val encoded =
-            try {
-                URLEncoder.encode(
-                    searchQuery,
-                    "UTF-8"
-                )
-            } catch (_: Exception) {
-                return
-            }
-
-        val generation =
-            searchGeneration
-
-        try {
-
-            web.stopLoading()
-
-            web.loadUrl(
-                "https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1"
-            )
-
-        } catch (_: Exception) {
-
-            status.text =
-                "خطا در شروع جستجو"
-
-            return
-        }
-
-        val timeout =
-            Runnable {
-
-                if (
-                    !destroyed &&
-                    generation == searchGeneration
-                ) {
-
-                    if (songs.isEmpty()) {
-                        status.text =
-                            "جستجو زمان‌بر شد؛ در حال ادامه..."
-                    }
-
-                    if (
-                        resultPages.isNotEmpty() &&
-                        resultPageIndex <
-                        resultPages.size
-                    ) {
-                        processNextResultPage()
-                    } else if (
-                        songs.isEmpty()
-                    ) {
-                        status.text =
-                            "نتیجه‌ای پیدا نشد"
-                    }
+        searchFuture = ParallelSearchEngine.searchDirect(text, generation) { callbackGeneration, candidates ->
+            runOnUiThread {
+                if (destroyed || callbackGeneration != searchGeneration) return@runOnUiThread
+                resultPages = candidates.map { it.url }
+                    .filter { ServerConfig.isAllowedPageUrl(it) }
+                    .distinctBy { it.substringBefore("#").trimEnd('/').lowercase() }
+                    .take(60)
+                resultPageIndex = 0
+                if (resultPages.isEmpty()) {
+                    status.text = "منابع مستقیم نتیجه‌ای ندادند؛ در حال جستجوی جایگزین..."
+                    loadGoogleFallback(text, generation)
+                } else {
+                    status.text = "${resultPages.size} صفحه پیدا شد؛ در حال استخراج آهنگ..."
+                    processNextResultPage()
                 }
             }
+        }
+    }
 
-        searchTimeout = timeout
-
-        handler.postDelayed(
-            timeout,
-            15000L
-        )
+    private fun loadGoogleFallback(text: String, generation: Int) {
+        if (destroyed || generation != searchGeneration || googleFallbackUsed) return
+        googleFallbackUsed = true
+        resultGeneration = generation
+        resultPages = emptyList()
+        resultPageIndex = 0
+        val encoded = try { URLEncoder.encode(SearchEngine.buildGoogleQuery(text), "UTF-8") } catch (_: Exception) {
+            status.text = "خطا در آماده‌سازی جستجو"
+            return
+        }
+        try {
+            web.stopLoading()
+            web.loadUrl("https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1")
+        } catch (_: Exception) {
+            status.text = "جستجوی جایگزین در دسترس نیست"
+        }
     }
 
     private fun cancelSearchCallbacks() {
+
+        try { searchFuture?.cancel(true) } catch (_: Exception) {}
+        searchFuture = null
 
         searchTimeout?.let {
             handler.removeCallbacks(it)
@@ -1360,6 +1309,12 @@ class MainActivity : Activity() {
         if (destroyed) return
 
         cancelSearchCallbacks()
+
+        if (songs.isEmpty() && !googleFallbackUsed && resultGeneration == searchGeneration) {
+            status.text = "در منابع مستقیم آهنگ قابل پخش پیدا نشد؛ در حال جستجوی Google..."
+            loadGoogleFallback(query.text.toString(), searchGeneration)
+            return
+        }
 
         status.text =
             if (songs.isEmpty()) {
