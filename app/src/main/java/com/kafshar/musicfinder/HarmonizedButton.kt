@@ -15,6 +15,12 @@ class HarmonizedButton @JvmOverloads constructor(
     init {
         backgroundTintList = ColorStateList.valueOf(accent)
         setTextColor(0xFFF3F1F7.toInt())
+
+        if (id == R.id.clearSearch) {
+            setOnClickListener {
+                rootView.findViewById<android.widget.EditText>(R.id.query)?.setText("")
+            }
+        }
     }
 
     override fun setBackgroundTintList(tint: ColorStateList?) {
