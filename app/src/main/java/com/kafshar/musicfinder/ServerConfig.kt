@@ -31,7 +31,9 @@ object ServerConfig {
         MusicServer("irmp3.ir", 73), MusicServer("next1.ir", 72), MusicServer("mytehranmusic.com", 71),
         MusicServer("mybia2music.com", 70), MusicServer("musics-fa.com", 69), MusicServer("pro.iraniandj.ir", 68),
         MusicServer("worldofmusic.ir", 67), MusicServer("iranmusic.ir", 66), MusicServer("sahand-music.ir", 65),
-        MusicServer("nakaman-music.ir", 64)
+        MusicServer("nakaman-music.ir", 64),
+        MusicServer("mokhtalefmusic.com", 63), MusicServer("joyamusic.ir", 62),
+        MusicServer("gisomusic.com", 61), MusicServer("melomusic.ir", 60)
     )
 
     val MUSIC_HOSTS: Set<String>
@@ -48,7 +50,7 @@ object ServerConfig {
     val PRIMARY_SEARCH_SITES: List<String>
         get() = SERVERS.filter { it.enabled && it.supportsSearch }
             .sortedByDescending { it.priority }
-            .take(12)
+            .take(16)
             .map { it.domain }
 
     fun serverFor(host: String?): MusicServer? {
@@ -84,25 +86,19 @@ object ServerConfig {
         ).any { l.contains(it) }
     }
 
-    /**
-     * Build a Google query that strongly prefers the configured music sites.
-     * The WebView parser only accepts those domains, so adding site filters
-     * here prevents Google from spending its result slots on unrelated pages.
-     */
+    /** Build a broad Google fallback query; do not make the top-12 list a hard bottleneck. */
     fun searchQuery(song: String): String {
-        val q = SearchEngine.correctedQuery(song)
-            .trim()
-            .replace(Regex("\\s+"), " ")
+        val corrected = SearchEngine.correctedQuery(song).trim()
+        if (corrected.isBlank()) return "music"
 
-        if (q.isBlank()) return "music"
-
-        val escaped = q.replace("\"", " ").replace(Regex("\\s+"), " ").trim()
-        val phrase = if (escaped.contains(' ')) "\"$escaped\"" else escaped
-
-        val siteFilter = PRIMARY_SEARCH_SITES
+        val clean = SearchEngine.withoutSearchNoise(corrected)
+        val phrase = if (clean.contains(' ')) "\"$clean\"" else clean
+        val escaped = clean.replace("\"", " ").replace(Regex("\\s+"), " ").trim()
+        val siteFilter = MUSIC_SITES
+            .take(40)
             .joinToString(" OR ") { "site:$it" }
 
-        return "($phrase OR $escaped OR \"$escaped آهنگ\") music ($siteFilter)"
+        return "($phrase OR $escaped OR \"$escaped دانلود\" OR \"$escaped آهنگ\") ($siteFilter)"
     }
 
     fun siteName(url: String): String {
