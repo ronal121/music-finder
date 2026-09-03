@@ -13,20 +13,39 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Replace broken WebView-first search with parallel search
+      - name: Integrate native-first search with Google fallback
         shell: python
         run: |
           from pathlib import Path
-          import re
 
           p = Path('app/src/main/java/com/kafshar/musicfinder/MainActivity.kt')
           s = p.read_text(encoding='utf-8')
 
-          new_search = r'''    private fun searchMusic() {
+          if 'private var searchFuture: Future<*>? = null' not in s:
+              s = s.replace(
+                  '    private var downloadFuture: Future<*>? = null',
+                  '    private var downloadFuture: Future<*>? = null\n\n    private var searchFuture: Future<*>? = null',
+                  1
+              )
+
+          if 'private var googleFallbackUsed = false' not in s:
+              s = s.replace(
+                  '    private var searchGeneration = 0',
+                  '    private var searchGeneration = 0\n\n    private var googleFallbackUsed = false',
+                  1
+              )
+
+          start = s.index('    private fun searchMusic() {')
+          end = s.index('    private fun cancelSearchCallbacks() {', start)
+
+          method = r'''    private fun searchMusic() {
+
+        if (destroyed) return
 
         val text = query.text.toString().trim()
-
         if (text.isBlank()) {
             Toast.makeText(
                 this,
@@ -38,8 +57,9 @@ jobs:
 
         searchGeneration++
         val generation = searchGeneration
-
         cancelSearchCallbacks()
+        googleFallbackUsed = false
+
         resultGeneration = generation
         resultPages = emptyList()
         resultPageIndex = 0
@@ -53,7 +73,7 @@ jobs:
 
         titleText.text = text
         artistText.text = "در حال جستجو..."
-        status.text = "در حال جستجوی سایت‌ها..."
+        status.text = "در حال جستجوی منابع موسیقی..."
         seekBar.progress = 0
         currentTimeText.text = "00:00"
         durationText.text = "00:00"
@@ -61,65 +81,113 @@ jobs:
         vinyl.stopRotation()
         clearLyrics()
 
-        try {
-            web.stopLoading()
-        } catch (_: Exception) {
-        }
-
-        ParallelSearchEngine.search(text, generation) { callbackGeneration, candidates ->
+        searchFuture = ParallelSearchEngine.searchDirect(text, generation) { callbackGeneration, candidates ->
             runOnUiThread {
                 if (destroyed || callbackGeneration != searchGeneration) return@runOnUiThread
 
-                val pages = candidates
-                    .asSequence()
-                    .filter { ServerConfig.serverForUrl(it.url) != null }
-                    .distinctBy { it.url.substringBefore('#').trimEnd('/').lowercase() }
-                    .take(20)
-                    .map { "${it.url}|||${it.title}" }
-                    .toList()
-
-                resultGeneration = callbackGeneration
-                resultPages = pages
+                resultPages = candidates
+                    .map { it.url }
+                    .filter { ServerConfig.isAllowedPageUrl(it) }
+                    .distinctBy { it.substringBefore('#').trimEnd('/').lowercase() }
+                    .take(60)
                 resultPageIndex = 0
 
-                if (pages.isEmpty()) {
-                    status.text = "نتیجه‌ای از سایت‌های موسیقی پیدا نشد"
-                    finishSearch()
-                    return@runOnUiThread
+                if (resultPages.isEmpty()) {
+                    status.text = "منابع مستقیم نتیجه‌ای ندادند؛ در حال جستجوی جایگزین..."
+                    loadGoogleFallback(text, generation)
+                } else {
+                    status.text = "${resultPages.size} صفحه پیدا شد؛ در حال استخراج آهنگ..."
+                    processNextResultPage()
                 }
-
-                status.text = "${pages.size} صفحه پیدا شد؛ در حال بررسی لینک آهنگ..."
-                processNextResultPage()
             }
         }
+    }
 
-        val timeout = Runnable {
-            if (!destroyed && generation == searchGeneration && songs.isEmpty()) {
-                status.text = "جستجو زمان‌بر شد؛ نتیجه‌های موجود در حال بررسی هستند..."
-            }
+    private fun loadGoogleFallback(text: String, generation: Int) {
+        if (destroyed || generation != searchGeneration || googleFallbackUsed) return
+        googleFallbackUsed = true
+        resultGeneration = generation
+        resultPages = emptyList()
+        resultPageIndex = 0
+
+        val encoded = try {
+            URLEncoder.encode(SearchEngine.buildGoogleQuery(text), "UTF-8")
+        } catch (_: Exception) {
+            status.text = "خطا در آماده‌سازی جستجو"
+            return
         }
-        searchTimeout = timeout
-        handler.postDelayed(timeout, 15000L)
+
+        try {
+            web.stopLoading()
+            web.loadUrl("https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1")
+        } catch (_: Exception) {
+            status.text = "جستجوی جایگزین در دسترس نیست"
+        }
     }
 
 '''
+          s = s[:start] + method + s[end:]
 
-          pattern = r'    private fun searchMusic\(\) \{.*?\n    private fun cancelSearchCallbacks\(\)'
-          s2, n = re.subn(pattern, new_search + '    private fun cancelSearchCallbacks()', s, count=1, flags=re.S)
-          if n != 1:
-              raise SystemExit('searchMusic block not found')
+          if 'searchFuture?.cancel(true)' not in s:
+              if 'searchTimeout?.let {' in s:
+                  s = s.replace(
+                      '    private fun cancelSearchCallbacks() {\n\n        searchTimeout?.let {',
+                      '    private fun cancelSearchCallbacks() {\n\n        try { searchFuture?.cancel(true) } catch (_: Exception) {}\n        searchFuture = null\n\n        searchTimeout?.let {',
+                      1
+                  )
+              else:
+                  s = s.replace(
+                      '    private fun cancelSearchCallbacks() {\n\n        searchTimeoutRunnable?.let {',
+                      '    private fun cancelSearchCallbacks() {\n\n        try { searchFuture?.cancel(true) } catch (_: Exception) {}\n        searchFuture = null\n\n        searchTimeoutRunnable?.let {',
+                      1
+                  )
 
-          p.write_text(s2, encoding='utf-8')
-          print('Search pipeline patched successfully')
+          marker = '''    private fun finishSearch() {
+
+        if (destroyed) return
+
+        cancelSearchCallbacks()
+'''
+          if marker in s and 'در منابع مستقیم آهنگ قابل پخش پیدا نشد' not in s:
+              s = s.replace(
+                  marker,
+                  marker + '''
+        if (songs.isEmpty() && !googleFallbackUsed && resultGeneration == searchGeneration) {
+            status.text = "در منابع مستقیم آهنگ قابل پخش پیدا نشد؛ در حال جستجوی Google..."
+            loadGoogleFallback(query.text.toString(), searchGeneration)
+            return
+        }
+''',
+                  1
+              )
+
+          p.write_text(s, encoding='utf-8')
+          print('Native-first search integration applied')
+
+      - name: Verify tests, APK and lint
+        run: |
+          gradle --no-daemon --stacktrace test
+          gradle --no-daemon --stacktrace assembleDebug
+          gradle --no-daemon --stacktrace lint
+
+      - name: Upload verified APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: music-finder-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Commit patch
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
+          git diff --cached --check
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "Fix search pipeline to use parallel site search"
+            git commit -m "[auto-search] Integrate native-first search"
             git push
           fi
