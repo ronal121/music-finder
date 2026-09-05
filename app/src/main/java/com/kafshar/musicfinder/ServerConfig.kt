@@ -17,43 +17,28 @@ object ServerConfig {
     const val GOOGLE_HOST = "google.com"
     private val youtubeDomains = setOf("youtube.com", "m.youtube.com", "youtu.be")
 
-    /*
-     * Kept for backward compatibility with the existing player/parser code.
-     * Search discovery no longer depends on this list: Google is the discovery
-     * engine and can return any relevant music website.
-     */
+    // Search discovery is Google-only. These legacy properties remain empty
+    // only so older code can compile; no music domain is used for discovery.
     val SERVERS: List<MusicServer> = emptyList()
-
-    val MUSIC_HOSTS: Set<String>
-        get() = emptySet()
-
-    val MUSIC_SITES: List<String>
-        get() = emptyList()
-
-    val PRIMARY_SEARCH_SITES: List<String>
-        get() = emptyList()
+    val MUSIC_HOSTS: Set<String> get() = emptySet()
+    val MUSIC_SITES: List<String> get() = emptyList()
+    val PRIMARY_SEARCH_SITES: List<String> get() = emptyList()
 
     fun serverFor(host: String?): MusicServer? = null
-    fun serverForUrl(url: String?): MusicServer? = extractHttpHost(url)?.let(::serverFor)
+    fun serverForUrl(url: String?): MusicServer? = null
     fun isMusicHost(host: String?): Boolean = false
-    fun isGoogleHost(host: String?): Boolean = hostMatchesDomain(normalizeHost(host).orEmpty(), GOOGLE_HOST)
-    fun isYouTubeUrl(url: String?): Boolean = extractHttpHost(url)?.let(::isYouTubeHost) == true
-    fun isYouTubeHost(host: String?): Boolean = youtubeDomains.any { hostMatchesDomain(normalizeHost(host).orEmpty(), it) }
+    fun isGoogleHost(host: String?): Boolean =
+        hostMatchesDomain(normalizeHost(host).orEmpty(), GOOGLE_HOST)
+    fun isYouTubeUrl(url: String?): Boolean =
+        extractHttpHost(url)?.let(::isYouTubeHost) == true
+    fun isYouTubeHost(host: String?): Boolean =
+        youtubeDomains.any { hostMatchesDomain(normalizeHost(host).orEmpty(), it) }
 
-    /**
-     * Google result pages are allowed regardless of their domain. YouTube is
-     * still excluded from page extraction because it does not expose a normal
-     * downloadable media URL to the app.
-     */
-    fun isAllowedPageUrl(url: String): Boolean {
-        val host = extractHttpHost(url) ?: return false
-        return !isGoogleHost(host) && !isYouTubeHost(host)
-    }
+    // A search result can be any normal web page, including Google/YouTube.
+    // Filtering of sources happens at the media-extraction stage instead.
+    fun isAllowedPageUrl(url: String): Boolean = extractHttpHost(url) != null
 
-    /**
-     * Media discovery is generic. A source is accepted when it is an ordinary
-     * HTTP(S) URL that looks like an audio/media resource; YouTube remains off.
-     */
+    // Media must be an HTTP(S) resource and must not be a YouTube watch URL.
     fun isAllowedMediaUrl(url: String, pageUrl: String? = null): Boolean {
         val host = extractHttpHost(url) ?: return false
         if (isYouTubeHost(host)) return false
@@ -68,7 +53,7 @@ object ServerConfig {
         ).any { l.contains(it) }
     }
 
-    /** Pass the user's query to Google without forcing a site or exact phrase. */
+    // Do not force quotes, site names, or "آهنگ دانلود" into the user's query.
     fun searchQuery(song: String): String =
         SearchEngine.correctedQuery(song).trim().ifBlank { "music" }
 
@@ -84,7 +69,9 @@ object ServerConfig {
         return h == d || h.endsWith(".$d")
     }
 
-    private fun normalizeHost(host: String?): String? = host?.trim()?.lowercase()?.removePrefix("www.")?.trimEnd('.')?.takeIf { it.isNotBlank() }
+    private fun normalizeHost(host: String?): String? =
+        host?.trim()?.lowercase()?.removePrefix("www.")?.trimEnd('.')
+            ?.takeIf { it.isNotBlank() }
 
     private fun extractHttpHost(url: String?): String? {
         if (url.isNullOrBlank()) return null
@@ -92,7 +79,8 @@ object ServerConfig {
         val scheme = uri.scheme?.lowercase() ?: return null
         if (scheme != "http" && scheme != "https") return null
         if (uri.userInfo != null || uri.rawAuthority.isNullOrBlank()) return null
-        val host = uri.host?.takeIf { it.isNotBlank() } ?: fallbackHost(uri.rawAuthority) ?: return null
+        val host = uri.host?.takeIf { it.isNotBlank() }
+            ?: fallbackHost(uri.rawAuthority) ?: return null
         return normalizeHost(host)
     }
 
