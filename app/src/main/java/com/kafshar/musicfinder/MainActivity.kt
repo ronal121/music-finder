@@ -898,7 +898,7 @@ class MainActivity : Activity() {
                 }
                 function youtube(u){
                   try{
-                    var h=new URL(u).hostname.toLowerCase().replace(/^www\\./,'');
+                    var h=new URL(u).hostname.toLowerCase().replace(/^www\./,'');
                     return h==='youtube.com' || h.endsWith('.youtube.com') || h==='youtu.be';
                   }catch(e){ return false; }
                 }
@@ -911,9 +911,9 @@ class MainActivity : Activity() {
                     var h=new URL(u).hostname.toLowerCase();
                     if(h.indexOf('google.')>=0 || h==='webcache.googleusercontent.com') continue;
                   }catch(e){ continue; }
-                  var t=(a.innerText||a.textContent||'').replace(/[\\r\\n\\t]+/g,' ').replace(/\\s+/g,' ').trim();
+                  var t=(a.innerText||a.textContent||'').replace(/[\r\n\t]+/g,' ').replace(/\s+/g,' ').trim();
                   if(!t && a.querySelector('h3')) t=a.querySelector('h3').innerText||'';
-                  var key=u.split('#')[0].replace(/\\/$/,'').toLowerCase();
+                  var key=u.split('#')[0].replace(/\/$/,'').toLowerCase();
                   var dup=false;
                   for(var j=0;j<found.length;j++){ if(found[j].split('|||')[0].toLowerCase()===key){dup=true;break;} }
                   if(dup) continue;
@@ -956,13 +956,13 @@ class MainActivity : Activity() {
                 });
                 document.querySelectorAll('script,script[type="application/ld+json"]').forEach(function(el){
                   var text=el.textContent||'';
-                  var matches=text.match(/https?:\\/\\/[^\\s\\"'<>\\\\]+/g)||[];
+                  var matches=text.match(/https?:\/\/[^\s\"'<>\\]+/g)||[];
                   matches.forEach(add);
                 });
                 var html=document.documentElement.outerHTML||'';
-                var urls=html.match(/https?:\\/\\/[^\\s\\"'<>\\\\]+/g)||[];
+                var urls=html.match(/https?:\/\/[^\s\"'<>\\]+/g)||[];
                 urls.forEach(function(v){
-                  if(/(?:\\.mp3|\\.m4a|\\.aac|\\.ogg|\\.opus|\\.wav|\\.flac|\\.webm|download|\\/dl\\/|\\/api\\/audio|media|stream)/i.test(v)) add(v);
+                  if(/(?:\.mp3|\.m4a|\.aac|\.ogg|\.opus|\.wav|\.flac|\.webm|download|\/dl\/|\/api\/audio|media|stream)/i.test(v)) add(v);
                 });
                 MusicFinder.page(encodeURIComponent(title)+'###'+encodeURIComponent(artist)+'###'+encodeURIComponent(cover)+'###'+encodeURIComponent(aud.join('|||')));
               }catch(e){ MusicFinder.page('######'); }
