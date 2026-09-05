@@ -27,6 +27,19 @@ jobs:
             echo "Google-first search migration already applied"
           fi
 
+      - name: Normalize JavaScript regex escaping
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path("app/src/main/java/com/kafshar/musicfinder/MainActivity.kt")
+          s = p.read_text(encoding="utf-8")
+          start = s.index("    private fun extractGoogleResults() {")
+          end = s.index("    private fun validateAndAddAudioCandidates(", start)
+          block = s[start:end]
+          block = block.replace("\\\\", "\\")
+          s = s[:start] + block + s[end:]
+          p.write_text(s, encoding="utf-8")
+
       - name: Commit generated search migration
         shell: bash
         run: |
