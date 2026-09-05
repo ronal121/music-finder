@@ -17,63 +17,46 @@ object ServerConfig {
     const val GOOGLE_HOST = "google.com"
     private val youtubeDomains = setOf("youtube.com", "m.youtube.com", "youtu.be")
 
-    val SERVERS: List<MusicServer> = listOf(
-        MusicServer("beroosic.ir", 110), MusicServer("rozmusic.com", 100), MusicServer("nex1music.com", 99),
-        MusicServer("musicbaran.ir", 98), MusicServer("mymusicbaran.ir", 98), MusicServer("musicviral.ir", 97),
-        MusicServer("musicdel.ir", 96), MusicServer("songsara.net", 95), MusicServer("radiojavan.com", 94),
-        MusicServer("musicete.com", 93), MusicServer("musicetu.com", 93), MusicServer("musicsweb.ir", 92),
-        MusicServer("melovy.ir", 91), MusicServer("jenab-music.com", 90), MusicServer("fazamusic.com", 89),
-        MusicServer("360bikalam.com", 88), MusicServer("dtaraneh.net", 87), MusicServer("ahangirani.ir", 86),
-        MusicServer("upmusics.com", 85), MusicServer("nicmusic.net", 84), MusicServer("vmusic.ir", 83),
-        MusicServer("sakhamusic.ir", 82), MusicServer("ganja2music.com", 81), MusicServer("iran-music.net", 80),
-        MusicServer("silamusic.ir", 79), MusicServer("bibakmusic.com", 78), MusicServer("beeptunes.com", 77),
-        MusicServer("blogmusic.ir", 76), MusicServer("pop-music.ir", 75), MusicServer("behmusic.com", 74),
-        MusicServer("irmp3.ir", 73), MusicServer("next1.ir", 72), MusicServer("mytehranmusic.com", 71),
-        MusicServer("mybia2music.com", 70), MusicServer("musics-fa.com", 69), MusicServer("pro.iraniandj.ir", 68),
-        MusicServer("worldofmusic.ir", 67), MusicServer("iranmusic.ir", 66), MusicServer("sahand-music.ir", 65),
-        MusicServer("nakaman-music.ir", 64), MusicServer("mokhtalefmusic.com", 63), MusicServer("joyamusic.ir", 62),
-        MusicServer("gisomusic.com", 61), MusicServer("melomusic.ir", 60)
-    )
+    /*
+     * Kept for backward compatibility with the existing player/parser code.
+     * Search discovery no longer depends on this list: Google is the discovery
+     * engine and can return any relevant music website.
+     */
+    val SERVERS: List<MusicServer> = emptyList()
 
     val MUSIC_HOSTS: Set<String>
-        get() = SERVERS.filter { it.enabled }
-            .flatMap { listOf(it.domain) + it.mediaHosts }
-            .mapNotNull(::normalizeHost)
-            .toSet()
+        get() = emptySet()
 
     val MUSIC_SITES: List<String>
-        get() = SERVERS.filter { it.enabled && it.supportsSearch }
-            .sortedByDescending { it.priority }
-            .map { it.domain }
+        get() = emptyList()
 
     val PRIMARY_SEARCH_SITES: List<String>
-        get() = SERVERS.filter { it.enabled && it.supportsSearch }
-            .sortedByDescending { it.priority }
-            .take(16)
-            .map { it.domain }
+        get() = emptyList()
 
-    fun serverFor(host: String?): MusicServer? {
-        val h = normalizeHost(host) ?: return null
-        return SERVERS.firstOrNull { s ->
-            hostMatchesDomain(h, s.domain) || s.mediaHosts.any { hostMatchesDomain(h, it) }
-        }
-    }
-
+    fun serverFor(host: String?): MusicServer? = null
     fun serverForUrl(url: String?): MusicServer? = extractHttpHost(url)?.let(::serverFor)
-    fun isMusicHost(host: String?): Boolean = serverFor(host)?.supportsStreaming == true
+    fun isMusicHost(host: String?): Boolean = false
     fun isGoogleHost(host: String?): Boolean = hostMatchesDomain(normalizeHost(host).orEmpty(), GOOGLE_HOST)
     fun isYouTubeUrl(url: String?): Boolean = extractHttpHost(url)?.let(::isYouTubeHost) == true
     fun isYouTubeHost(host: String?): Boolean = youtubeDomains.any { hostMatchesDomain(normalizeHost(host).orEmpty(), it) }
 
+    /**
+     * Google result pages are allowed regardless of their domain. YouTube is
+     * still excluded from page extraction because it does not expose a normal
+     * downloadable media URL to the app.
+     */
     fun isAllowedPageUrl(url: String): Boolean {
         val host = extractHttpHost(url) ?: return false
-        return isGoogleHost(host) || isYouTubeHost(host) || serverFor(host) != null
+        return !isGoogleHost(host) && !isYouTubeHost(host)
     }
 
+    /**
+     * Media discovery is generic. A source is accepted when it is an ordinary
+     * HTTP(S) URL that looks like an audio/media resource; YouTube remains off.
+     */
     fun isAllowedMediaUrl(url: String, pageUrl: String? = null): Boolean {
         val host = extractHttpHost(url) ?: return false
         if (isYouTubeHost(host)) return false
-        if (serverFor(host)?.supportsStreaming == true) return true
         return looksLikeAudioUrl(url)
     }
 
@@ -85,23 +68,9 @@ object ServerConfig {
         ).any { l.contains(it) }
     }
 
-    /**
-     * Keep Google discovery broad. The app filters the returned links against
-     * MUSIC_SITES in extractGoogleResults(). A huge 40-domain OR expression
-     * causes Google to return poor/empty results for many Persian queries.
-     */
-    fun searchQuery(song: String): String {
-        val corrected = SearchEngine.correctedQuery(song).trim()
-        if (corrected.isBlank()) return "music"
-
-        val clean = SearchEngine.withoutSearchNoise(corrected)
-            .replace(Regex("\\s+"), " ")
-            .trim()
-        if (clean.isBlank()) return "music"
-
-        val phrase = "\"${clean.replace("\"", " ").trim()}\""
-        return "$phrase آهنگ دانلود"
-    }
+    /** Pass the user's query to Google without forcing a site or exact phrase. */
+    fun searchQuery(song: String): String =
+        SearchEngine.correctedQuery(song).trim().ifBlank { "music" }
 
     fun siteName(url: String): String {
         val host = extractHttpHost(url) ?: return "Music"
