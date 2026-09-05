@@ -38,11 +38,18 @@ object ServerConfig {
     // media validation, not by a whitelist of music domains.
     fun isAllowedPageUrl(url: String): Boolean = extractHttpHost(url) != null
 
-    // When pageUrl is supplied, this is a candidate URL discovered inside a
-    // page. It may have no file extension; probeMediaUrl() verifies Content-Type.
+    // Candidate URLs discovered inside a page may have no file extension.
+    // Obvious HTML/document URLs are rejected early; ambiguous URLs are passed
+    // to probeMediaUrl(), which verifies the actual Content-Type before use.
     fun isAllowedMediaUrl(url: String, pageUrl: String? = null): Boolean {
         val host = extractHttpHost(url) ?: return false
         if (isYouTubeHost(host)) return false
+        val lower = url.lowercase()
+        val obviousNonMedia = listOf(
+            ".html", ".htm", ".php", ".asp", ".aspx", ".jsp", ".json", ".xml",
+            ".txt", ".css", ".js", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"
+        ).any { lower.substringBefore('?').substringBefore('#').endsWith(it) }
+        if (obviousNonMedia) return false
         return pageUrl != null || looksLikeAudioUrl(url)
     }
 
