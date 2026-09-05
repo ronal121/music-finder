@@ -17,8 +17,8 @@ object ServerConfig {
     const val GOOGLE_HOST = "google.com"
     private val youtubeDomains = setOf("youtube.com", "m.youtube.com", "youtu.be")
 
-    // Search discovery is Google-only. These legacy properties remain empty
-    // only so older code can compile; no music domain is used for discovery.
+    // Discovery is intentionally not limited to a hard-coded music-site list.
+    // These legacy properties stay empty for source compatibility only.
     val SERVERS: List<MusicServer> = emptyList()
     val MUSIC_HOSTS: Set<String> get() = emptySet()
     val MUSIC_SITES: List<String> get() = emptyList()
@@ -34,26 +34,27 @@ object ServerConfig {
     fun isYouTubeHost(host: String?): Boolean =
         youtubeDomains.any { hostMatchesDomain(normalizeHost(host).orEmpty(), it) }
 
-    // A search result can be any normal web page, including Google/YouTube.
-    // Filtering of sources happens at the media-extraction stage instead.
+    // Any normal HTTP(S) page may be inspected. Source filtering is done by
+    // media validation, not by a whitelist of music domains.
     fun isAllowedPageUrl(url: String): Boolean = extractHttpHost(url) != null
 
-    // Media must be an HTTP(S) resource and must not be a YouTube watch URL.
+    // When pageUrl is supplied, this is a candidate URL discovered inside a
+    // page. It may have no file extension; probeMediaUrl() verifies Content-Type.
     fun isAllowedMediaUrl(url: String, pageUrl: String? = null): Boolean {
         val host = extractHttpHost(url) ?: return false
         if (isYouTubeHost(host)) return false
-        return looksLikeAudioUrl(url)
+        return pageUrl != null || looksLikeAudioUrl(url)
     }
 
     fun looksLikeAudioUrl(url: String): Boolean {
         val l = url.lowercase()
         return listOf(
             ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm",
-            "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile", ".mp4"
+            "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile", ".mp4",
+            "/stream", "/audio/", "/media/"
         ).any { l.contains(it) }
     }
 
-    // Do not force quotes, site names, or "آهنگ دانلود" into the user's query.
     fun searchQuery(song: String): String =
         SearchEngine.correctedQuery(song).trim().ifBlank { "music" }
 
