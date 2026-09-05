@@ -956,11 +956,11 @@ class MainActivity : Activity() {
                 });
                 document.querySelectorAll('script,script[type="application/ld+json"]').forEach(function(el){
                   var text=el.textContent||'';
-                  var matches=text.match(/https?:\/\/[^\s\"'<>\\]+/g)||[];
+                  var matches=text.match(/https?:\/\/[^\s\"'<>\]+/g)||[];
                   matches.forEach(add);
                 });
                 var html=document.documentElement.outerHTML||'';
-                var urls=html.match(/https?:\/\/[^\s\"'<>\\]+/g)||[];
+                var urls=html.match(/https?:\/\/[^\s\"'<>\]+/g)||[];
                 urls.forEach(function(v){
                   if(/(?:\.mp3|\.m4a|\.aac|\.ogg|\.opus|\.wav|\.flac|\.webm|download|\/dl\/|\/api\/audio|media|stream)/i.test(v)) add(v);
                 });
