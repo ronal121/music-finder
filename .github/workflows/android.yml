@@ -21,18 +21,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 tools/migrate_search.py
+          if grep -q 'ParallelSearchEngine.searchDirect' app/src/main/java/com/kafshar/musicfinder/MainActivity.kt; then
+            python3 tools/migrate_search.py
+          else
+            echo "Google-first search migration already applied"
+          fi
 
       - name: Commit generated search migration
         shell: bash
         run: |
           if git diff --quiet; then
-            echo "Search migration already applied"
+            echo "No generated search changes"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt tools/migrate_search.py
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
           git commit -m "Rework search around Google discovery"
           git push
 
