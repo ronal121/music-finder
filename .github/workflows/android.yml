@@ -17,65 +17,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Migrate search to Google-only discovery
-        shell: python
+      - name: Apply Google-first search migration
+        shell: bash
         run: |
-          from pathlib import Path
+          set -euo pipefail
+          python3 tools/migrate_search.py
 
-          p = Path("app/src/main/java/com/kafshar/musicfinder/MainActivity.kt")
-          s = p.read_text(encoding="utf-8")
-
-          old = '''        searchFuture = ParallelSearchEngine.searchDirect(text, generation) { callbackGeneration, candidates ->
-            runOnUiThread {
-                if (destroyed || callbackGeneration != searchGeneration) return@runOnUiThread
-                resultPages = candidates.map { it.url }
-                    .filter { ServerConfig.isAllowedPageUrl(it) }
-                    .distinctBy { it.substringBefore("#").trimEnd('/').lowercase() }
-                    .take(60)
-                resultPageIndex = 0
-                if (resultPages.isEmpty()) {
-                    status.text = "منابع مستقیم نتیجه‌ای ندادند؛ در حال جستجوی جایگزین..."
-                    loadGoogleFallback(text, generation)
-                } else {
-                    status.text = "${resultPages.size} صفحه پیدا شد؛ در حال استخراج آهنگ..."
-                    processNextResultPage()
-                }
-            }
-        }
-'''
-          new = '''        // Google is the only discovery engine. No hard-coded music-site search is used.
-        loadGoogleFallback(text, generation)
-'''
-          if old in s:
-              s = s.replace(old, new, 1)
-
-          start = s.index('        val hosts =\n            ServerConfig.MUSIC_SITES')
-          end = s.index('        val script = """', start)
-          s = s[:start] + s[end:]
-
-          js_old = '''                var hosts=[], found=[];
-'''
-          # The generated source may still contain the old hosts declaration.
-          if js_old in s:
-              s = s.replace(js_old, '                var found=[];\n', 1)
-
-          import re
-          s = re.sub(
-              r'''\n                function allowed\(u\)\{.*?\n                \}\n\n                function real\(h\)\{''',
-              '''\n                function real(h){''',
-              s,
-              count=1,
-              flags=re.S,
-          )
-          s = s.replace('                  if(!allowed(u))\n                    continue;\n\n', '', 1)
-
-          marker = '// GOOGLE_ONLY_DISCOVERY_V2'
-          if marker not in s:
-              s = s.replace('class MainActivity : Activity() {', 'class MainActivity : Activity() {\n\n    ' + marker, 1)
-
-          p.write_text(s, encoding="utf-8")
-
-      - name: Commit search migration
+      - name: Commit generated search migration
         shell: bash
         run: |
           if git diff --quiet; then
@@ -84,8 +32,8 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
-          git commit -m "Make Google the only search discovery engine"
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt tools/migrate_search.py
+          git commit -m "Rework search around Google discovery"
           git push
 
       - name: Set up JDK 17
