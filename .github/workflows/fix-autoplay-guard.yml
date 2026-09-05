@@ -17,104 +17,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply search and autoplay fixes
+      - name: Apply autoplay guard only
         shell: python
         run: |
           from pathlib import Path
-          import re
 
           p = Path('app/src/main/java/com/kafshar/musicfinder/MainActivity.kt')
           s = p.read_text(encoding='utf-8')
 
-          s = s.replace(
-              'if (destroyed || !autoPlaySearch.not()) return',
-              'if (destroyed || autoPlaySearch) return'
-          )
-
-          new_search = r'''    private fun searchMusic() {
-
-        val text = query.text.toString().trim()
-
-        if (text.isBlank()) {
-            Toast.makeText(this, "نام آهنگ یا خواننده را وارد کنید", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        searchGeneration++
-        val generation = searchGeneration
-
-        cancelSearchCallbacks()
-        resultGeneration = generation
-        resultPages = emptyList()
-        resultPageIndex = 0
-        expectedPageUrl = ""
-
-        songs.clear()
-        currentIndex = -1
-        currentAudioUrl = ""
-        currentSong = null
-        resultsContainer.removeAllViews()
-
-        titleText.text = text
-        artistText.text = "در حال جستجو..."
-        status.text = "در حال جستجوی سایت‌های موسیقی..."
-        seekBar.progress = 0
-        currentTimeText.text = "00:00"
-        durationText.text = "00:00"
-        vinyl.clearCover()
-        vinyl.stopRotation()
-        clearLyrics()
-
-        try {
-            web.stopLoading()
-        } catch (_: Exception) {
-        }
-
-        ParallelSearchEngine.search(text, generation) { callbackGeneration, candidates ->
-            runOnUiThread {
-                if (destroyed || callbackGeneration != searchGeneration) return@runOnUiThread
-
-                val pages = candidates
-                    .asSequence()
-                    .filter { ServerConfig.serverForUrl(it.url) != null }
-                    .distinctBy { it.url.substringBefore('#').trimEnd('/').lowercase() }
-                    .take(20)
-                    .map { "${it.url}|||${it.title}" }
-                    .toList()
-
-                resultGeneration = callbackGeneration
-                resultPages = pages
-                resultPageIndex = 0
-
-                if (pages.isEmpty()) {
-                    status.text = "نتیجه‌ای از سایت‌های موسیقی پیدا نشد"
-                    finishSearch()
-                    return@runOnUiThread
-                }
-
-                status.text = "${pages.size} صفحه پیدا شد؛ در حال بررسی لینک آهنگ..."
-                processNextResultPage()
-            }
-        }
-
-        val timeout = Runnable {
-            if (!destroyed && generation == searchGeneration && songs.isEmpty()) {
-                status.text = "جستجو زمان‌بر شد؛ نتیجه‌های موجود در حال بررسی هستند..."
-            }
-        }
-        searchTimeout = timeout
-        handler.postDelayed(timeout, 15000L)
-    }
-
-'''
-
-          pattern = r'    private fun searchMusic\(\) \{.*?\n    private fun cancelSearchCallbacks\(\)'
-          s2, n = re.subn(pattern, new_search + '    private fun cancelSearchCallbacks()', s, count=1, flags=re.S)
-          if n != 1:
-              raise SystemExit('searchMusic block not found')
-
-          p.write_text(s2, encoding='utf-8')
-          print('Search pipeline patched successfully')
+          old = 'if (destroyed || !autoPlaySearch.not()) return'
+          new = 'if (destroyed || autoPlaySearch) return'
+          if old in s:
+              s = s.replace(old, new)
+              p.write_text(s, encoding='utf-8')
+              print('Autoplay guard patched successfully')
+          else:
+              print('Autoplay guard already correct; leaving Google-first search pipeline untouched')
 
       - name: Commit
         run: |
@@ -124,6 +42,6 @@ jobs:
           if git diff --cached --quiet; then
             echo 'No changes to commit'
           else
-            git commit -m '[autofix] Fix music search pipeline'
+            git commit -m '[autofix] Fix autoplay guard'
             git push
           fi
