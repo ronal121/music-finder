@@ -1,6 +1,5 @@
 package com.kafshar.musicfinder
 
-import android.net.Uri
 import java.net.URI
 
 data class ParsedMusicPage(val title: String, val artist: String, val cover: String, val audioCandidates: List<String>)
@@ -19,7 +18,10 @@ object MusicPageParser {
 
         val tag = Regex("<(?:audio|video|source|a)\\b[^>]*>", RegexOption.IGNORE_CASE)
         for (m in tag.findAll(html)) collectAttributes(m.value, pageUrl, candidates)
-        for (m in Regex("<script\\b[^>]*>(.*?)</script>", RegexOption.IGNORE_CASE or RegexOption.DOT_MATCHES_ALL).findAll(html)) {
+        for (m in Regex(
+            "<script\\b[^>]*>(.*?)</script>",
+            RegexOption.IGNORE_CASE + RegexOption.DOT_MATCHES_ALL
+        ).findAll(html)) {
             for (u in urlPattern.findAll(unescape(m.groupValues[1]))) {
                 val candidate = normalizeUrl(u.value, pageUrl)
                 if (candidate != null && mediaPattern.containsMatchIn(candidate)) candidates += candidate
@@ -51,7 +53,11 @@ object MusicPageParser {
         return r.find(html)?.groupValues?.getOrNull(1).orEmpty()
     }
 
-    private fun firstTagText(html: String, tag: String): String = Regex("<$tag\\b[^>]*>(.*?)</$tag>", RegexOption.IGNORE_CASE or RegexOption.DOT_MATCHES_ALL).find(html)?.groupValues?.getOrNull(1)?.let { stripHtml(it) }.orEmpty()
+    private fun firstTagText(html: String, tag: String): String = Regex(
+        "<$tag\\b[^>]*>(.*?)</$tag>",
+        RegexOption.IGNORE_CASE + RegexOption.DOT_MATCHES_ALL
+    ).find(html)?.groupValues?.getOrNull(1)?.let { stripHtml(it) }.orEmpty()
+
     private fun stripHtml(value: String): String = value.replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim()
     private fun unescape(value: String): String = value.replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'")
 }
