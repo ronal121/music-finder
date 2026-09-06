@@ -26,7 +26,10 @@ object GoogleResultParser {
     fun parseAnchors(html: String, limit: Int = 30): List<Result> {
         if (html.isBlank()) return emptyList()
         val results = LinkedHashMap<String, Result>()
-        val anchor = Regex("<a\\b[^>]*href\\s*=\\s*[\\\"']([^\\\"']+)[\\\"'][^>]*>(.*?)</a>", RegexOption.IGNORE_CASE or RegexOption.DOT_MATCHES_ALL)
+        val anchor = Regex(
+            "<a\\b[^>]*href\\s*=\\s*[\\\"']([^\\\"']+)[\\\"'][^>]*>(.*?)</a>",
+            RegexOption.IGNORE_CASE + RegexOption.DOT_MATCHES_ALL
+        )
         for (m in anchor.findAll(html)) {
             if (results.size >= limit) break
             val url = normalizeUrl(unescapeHtml(m.groupValues[1])) ?: continue
