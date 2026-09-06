@@ -55,6 +55,8 @@ data class SongResult(
 
 class MainActivity : Activity() {
 
+    // SEARCH_RUNTIME_PARSER_WIRED
+
     private lateinit var web: WebView
     private lateinit var query: EditText
     private lateinit var status: TextView
@@ -560,6 +562,61 @@ class MainActivity : Activity() {
         }
 
         @JavascriptInterface
+        fun googleHtml(raw: String?) {
+            runOnUiThread {
+                if (destroyed || resultGeneration != searchGeneration) return@runOnUiThread
+                val html = try { URLDecoder.decode(raw.orEmpty(), "UTF-8") } catch (_: Exception) { "" }
+                val parsed = GoogleResultParser.parseAnchors(html, 30)
+                resultGeneration = searchGeneration
+                resultPageIndex = 0
+
+                parsed.filter { it.isYouTube }.forEach {
+                    addYouTubeView(it.url, it.title.ifBlank { "YouTube" })
+                }
+
+                resultPages = parsed.filterNot { it.isYouTube }
+                    .map { "${it.url}|||${it.title}" }
+
+                if (resultPages.isEmpty()) {
+                    status.text = "Google نتیجه قابل پردازشی برنگرداند"
+                    finishSearch()
+                } else {
+                    status.text = "${resultPages.size} نتیجه پیدا شد؛ در حال بررسی..."
+                    processNextResultPage()
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun pageHtml(raw: String?) {
+            runOnUiThread {
+                if (destroyed || resultGeneration != searchGeneration) return@runOnUiThread
+                val html = try { URLDecoder.decode(raw.orEmpty(), "UTF-8") } catch (_: Exception) { "" }
+                if (html.isBlank()) { finishCurrentResultPage(); return@runOnUiThread }
+
+                val parsed = MusicPageParser.parse(html, expectedPageUrl)
+                val candidates = parsed.audioCandidates
+                if (candidates.isEmpty()) {
+                    // Give JS-generated players a second pass before abandoning the page.
+                    handler.postDelayed({
+                        if (!destroyed && resultGeneration == searchGeneration) {
+                            extractMusicPage(expectedPageUrl)
+                        }
+                    }, 900L)
+                    return@runOnUiThread
+                }
+
+                validateAndAddAudioCandidates(
+                    parsed.title.ifBlank { "Music" },
+                    parsed.artist.ifBlank { "Unknown Artist" },
+                    parsed.cover,
+                    candidates,
+                    expectedPageUrl
+                )
+            }
+        }
+
+        @JavascriptInterface
         fun page(raw: String?) {
 
             runOnUiThread {
@@ -699,7 +756,11 @@ class MainActivity : Activity() {
                         )
                     ) {
 
-                        extractMusicPage(url)
+                        handler.postDelayed({
+                            if (!destroyed && resultGeneration == searchGeneration && expectedPageUrl == url) {
+                                extractMusicPage(url)
+                            }
+                        }, 650L)
                     }
                 }
 
@@ -879,96 +940,33 @@ class MainActivity : Activity() {
     }
 
     private fun extractGoogleResults() {
-
         if (destroyed || searchGeneration <= 0) return
-
         val script = """
             (function(){
-              try{
-                var found=[];
-                function real(h){
-                  try{
-                    var x=new URL(h, location.href);
-                    if(x.hostname.toLowerCase().indexOf('google.')>=0){
-                      var q=x.searchParams.get('q') || x.searchParams.get('url');
-                      if(q && q.indexOf('http')===0) return decodeURIComponent(q);
-                    }
-                    return x.href;
-                  }catch(e){ return h; }
-                }
-                function youtube(u){
-                  try{
-                    var h=new URL(u).hostname.toLowerCase().replace(/^www\./,'');
-                    return h==='youtube.com' || h.endsWith('.youtube.com') || h==='youtu.be';
-                  }catch(e){ return false; }
-                }
-                var anchors=document.querySelectorAll('a');
-                for(var i=0;i<anchors.length && found.length<15;i++){
-                  var a=anchors[i];
-                  var u=real(a.href||'');
-                  if(!/^https?:/i.test(u)) continue;
-                  try{
-                    var h=new URL(u).hostname.toLowerCase();
-                    if(h.indexOf('google.')>=0 || h==='webcache.googleusercontent.com') continue;
-                  }catch(e){ continue; }
-                  var t=(a.innerText||a.textContent||'').replace(/[\r\n\t]+/g,' ').replace(/\s+/g,' ').trim();
-                  if(!t && a.querySelector('h3')) t=a.querySelector('h3').innerText||'';
-                  var key=u.split('#')[0].replace(/\/$/,'').toLowerCase();
-                  var dup=false;
-                  for(var j=0;j<found.length;j++){ if(found[j].split('|||')[0].toLowerCase()===key){dup=true;break;} }
-                  if(dup) continue;
-                  found.push(u+'|||'+encodeURIComponent(t)+'|||'+(youtube(u)?'1':'0'));
-                }
-                MusicFinder.results(found.join('###'));
-              }catch(e){ MusicFinder.results(''); }
+              try {
+                var html = document.documentElement ? document.documentElement.outerHTML : document.body.innerHTML;
+                MusicFinder.googleHtml(encodeURIComponent(html || ''));
+              } catch(e) {
+                MusicFinder.googleHtml('');
+              }
             })();
         """.trimIndent()
-
         try { web.evaluateJavascript(script, null) } catch (_: Exception) { finishSearch() }
     }
 
     private fun extractMusicPage(pageUrl: String) {
-
         if (destroyed || resultGeneration != searchGeneration) return
         expectedPageUrl = pageUrl
-
         val script = """
             (function(){
-              try{
-                var title='',artist='',cover='',aud=[];
-                function add(v){
-                  if(!v) return;
-                  try{ v=new URL(v, location.href).href; }catch(e){ return; }
-                  if(!/^https?:/i.test(v)) return;
-                  if(aud.indexOf(v)<0 && aud.length<40) aud.push(v);
-                }
-                var og=document.querySelector('meta[property="og:title"]');
-                if(og) title=og.content||'';
-                var h=document.querySelector('h1');
-                if(!title && h) title=h.innerText||'';
-                var ma=document.querySelector('meta[property="music:musician"]');
-                if(ma) artist=ma.content||'';
-                var im=document.querySelector('meta[property="og:image"]');
-                if(im) cover=im.content||'';
-                document.querySelectorAll('audio,video,source,a').forEach(function(el){
-                  add(el.currentSrc||el.src||el.href||'');
-                  ['data-src','data-url','data-audio','data-mp3','data-file','data-download','data-media','data-stream'].forEach(function(k){ add(el.getAttribute(k)||''); });
-                });
-                document.querySelectorAll('script,script[type="application/ld+json"]').forEach(function(el){
-                  var text=el.textContent||'';
-                  var matches=text.match(/https?:\/\/[^\s\"'<>\]+/g)||[];
-                  matches.forEach(add);
-                });
-                var html=document.documentElement.outerHTML||'';
-                var urls=html.match(/https?:\/\/[^\s\"'<>\]+/g)||[];
-                urls.forEach(function(v){
-                  if(/(?:\.mp3|\.m4a|\.aac|\.ogg|\.opus|\.wav|\.flac|\.webm|download|\/dl\/|\/api\/audio|media|stream)/i.test(v)) add(v);
-                });
-                MusicFinder.page(encodeURIComponent(title)+'###'+encodeURIComponent(artist)+'###'+encodeURIComponent(cover)+'###'+encodeURIComponent(aud.join('|||')));
-              }catch(e){ MusicFinder.page('######'); }
+              try {
+                var html = document.documentElement ? document.documentElement.outerHTML : document.body.innerHTML;
+                MusicFinder.pageHtml(encodeURIComponent(html || ''));
+              } catch(e) {
+                MusicFinder.pageHtml('');
+              }
             })();
         """.trimIndent()
-
         try { web.evaluateJavascript(script, null) } catch (_: Exception) { finishCurrentResultPage() }
     }
 
@@ -1020,10 +1018,12 @@ class MainActivity : Activity() {
                 if (code in 200..399) type else null
             } catch (_: Exception) { null }
         }
-        val type = request("HEAD") ?: request("GET")
-        return type?.startsWith("audio/") == true ||
-            (type?.startsWith("video/") == true && url.contains("audio", true)) ||
-            ServerConfig.looksLikeAudioUrl(url)
+        val headType = request("HEAD")
+        val type = headType ?: request("GET")
+        val mimeAccept = type?.startsWith("audio/") == true ||
+            (type?.startsWith("video/") == true && url.contains("audio", true))
+        // A lot of CDNs reject HEAD or Range while still serving the media normally.
+        return mimeAccept || ServerConfig.looksLikeAudioUrl(url)
     }
 
     private fun addYouTubeView(url: String, title: String) {
@@ -1146,7 +1146,7 @@ class MainActivity : Activity() {
 
         handler.postDelayed(
             timeout,
-            5000L
+            7500L
         )
 
         try {
