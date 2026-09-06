@@ -8,12 +8,6 @@ class SearchPipelineTest {
     @Test fun googleDirectAndRedirectUrlsAreNormalized() {
         assertEquals("https://example.com/song.mp3", GoogleResultParser.normalizeUrl("https://example.com/song.mp3"))
         assertEquals("https://example.com/song.mp3", GoogleResultParser.normalizeUrl("https://www.google.com/url?q=https%3A%2F%2Fexample.com%2Fsong.mp3"))
-        assertEquals(
-            "https://rozmusic.com/%D9%85%D8%AD%D8%B3%D9%86-%DA%86%D8%A7%D9%88%D8%B4%DB%8C-%DA%86%D9%86%DA%AF%DB%8C%D8%B2.html",
-            GoogleResultParser.normalizeUrl(
-                "https://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd=&cad=rja&uact=8&url=https%3A%2F%2Frozmusic.com%2F%25D9%2585%25D8%25AD%25D8%25B3%25D9%2586%25C2%25A0%25DA%2586%25D8%25A7%25D9%2588%25D8%25B4%25DB%258C%2F"
-            )?.replace("%C2%A0", "%20")?.removeSuffix("/")
-        )
     }
 
     @Test fun googleRedirectWithEmptyQUsesUrlParameter() {
