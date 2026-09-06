@@ -15,8 +15,13 @@ object GoogleResultParser {
             val host = uri.host.orEmpty().lowercase()
             if (host.contains("google.")) {
                 val query = parseQuery(uri.rawQuery)
-                val target = query["q"] ?: query["url"] ?: query["u"]
-                if (!target.isNullOrBlank() && target.startsWith("http", true)) return target
+                // Google commonly sends q= empty and puts the real destination in url=.
+                val target = listOf(query["q"], query["url"], query["u"])
+                    .firstOrNull { !it.isNullOrBlank() }
+                    ?.trim()
+                if (!target.isNullOrBlank() && target.startsWith("http", true)) {
+                    return URLDecoder.decode(target, "UTF-8")
+                }
             }
             val resolved = URI(base).resolve(uri)
             resolved.toString().takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
