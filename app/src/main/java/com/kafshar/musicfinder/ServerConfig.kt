@@ -16,9 +16,10 @@ data class MusicServer(
 object ServerConfig {
     const val GOOGLE_HOST = "google.com"
     private val youtubeDomains = setOf("youtube.com", "m.youtube.com", "youtu.be")
+    private val audioExtensions = setOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm")
+    private val obviousPageExtensions = setOf(".html", ".htm", ".json", ".xml", ".css", ".js", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico")
 
     // Discovery is intentionally not limited to a hard-coded music-site list.
-    // These legacy properties stay empty for source compatibility only.
     val SERVERS: List<MusicServer> = emptyList()
     val MUSIC_HOSTS: Set<String> get() = emptySet()
     val MUSIC_SITES: List<String> get() = emptyList()
@@ -27,48 +28,49 @@ object ServerConfig {
     fun serverFor(host: String?): MusicServer? = null
     fun serverForUrl(url: String?): MusicServer? = null
     fun isMusicHost(host: String?): Boolean = false
-    fun isGoogleHost(host: String?): Boolean =
-        hostMatchesDomain(normalizeHost(host).orEmpty(), GOOGLE_HOST)
-    fun isYouTubeUrl(url: String?): Boolean =
-        extractHttpHost(url)?.let(::isYouTubeHost) == true
-    fun isYouTubeHost(host: String?): Boolean =
-        youtubeDomains.any { hostMatchesDomain(normalizeHost(host).orEmpty(), it) }
 
-    // Any normal HTTP(S) page may be inspected. Source filtering is done by
-    // media validation, not by a whitelist of music domains.
+    fun isGoogleHost(host: String?): Boolean = hostMatchesDomain(normalizeHost(host).orEmpty(), GOOGLE_HOST)
+
+    fun isYouTubeUrl(url: String?): Boolean = extractHttpHost(url)?.let(::isYouTubeHost) == true
+
+    fun isYouTubeHost(host: String?): Boolean = youtubeDomains.any { hostMatchesDomain(normalizeHost(host).orEmpty(), it) }
+
+    /** Any normal HTTP(S) page discovered by the search engine may be inspected. */
     fun isAllowedPageUrl(url: String): Boolean = extractHttpHost(url) != null
 
-    // Candidate URLs discovered inside a page may have no file extension.
-    // Obvious HTML/document URLs are rejected early; ambiguous URLs are passed
-    // to probeMediaUrl(), which verifies the actual Content-Type before use.
+    /**
+     * Candidate URLs are intentionally permissive when they came from a page.
+     * Actual reachability/type checks belong to probeMediaUrl(). This prevents
+     * legitimate extensionless streams and application/octet-stream responses
+     * from being discarded before probing.
+     */
     fun isAllowedMediaUrl(url: String, pageUrl: String? = null): Boolean {
         val host = extractHttpHost(url) ?: return false
         if (isYouTubeHost(host)) return false
-        val lower = url.lowercase()
-        val obviousNonMedia = listOf(
-            ".html", ".htm", ".php", ".asp", ".aspx", ".jsp", ".json", ".xml",
-            ".txt", ".css", ".js", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"
-        ).any { lower.substringBefore('?').substringBefore('#').endsWith(it) }
-        if (obviousNonMedia) return false
-        return pageUrl != null || looksLikeAudioUrl(url)
+        if (isObviousNonMediaUrl(url)) return false
+        if (pageUrl != null && extractHttpHost(pageUrl) != null) return true
+        return looksLikeAudioUrl(url)
     }
 
     fun isObviousNonMediaUrl(url: String): Boolean {
         val path = url.substringBefore('?').substringBefore('#').lowercase()
-        return listOf(".html", ".htm", ".json", ".xml", ".css", ".js", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico").any { path.endsWith(it) }
+        return obviousPageExtensions.any { path.endsWith(it) }
+    }
+
+    fun hasAudioExtension(url: String): Boolean {
+        val path = url.substringBefore('?').substringBefore('#').lowercase()
+        return audioExtensions.any { path.endsWith(it) }
     }
 
     fun looksLikeAudioUrl(url: String): Boolean {
         val l = url.lowercase()
-        return listOf(
-            ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm",
-            "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile", ".mp4",
-            "/stream", "/audio/", "/media/"
+        return hasAudioExtension(url) || listOf(
+            "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile",
+            ".mp4", "/stream", "/audio/", "/media/", "mime=audio", "type=audio"
         ).any { l.contains(it) }
     }
 
-    fun searchQuery(song: String): String =
-        SearchEngine.correctedQuery(song).trim().ifBlank { "music" }
+    fun searchQuery(song: String): String = SearchEngine.correctedQuery(song).trim().ifBlank { "music" }
 
     fun siteName(url: String): String {
         val host = extractHttpHost(url) ?: return "Music"
@@ -82,9 +84,7 @@ object ServerConfig {
         return h == d || h.endsWith(".$d")
     }
 
-    private fun normalizeHost(host: String?): String? =
-        host?.trim()?.lowercase()?.removePrefix("www.")?.trimEnd('.')
-            ?.takeIf { it.isNotBlank() }
+    private fun normalizeHost(host: String?): String? = host?.trim()?.lowercase()?.removePrefix("www.")?.trimEnd('.')?.takeIf { it.isNotBlank() }
 
     private fun extractHttpHost(url: String?): String? {
         if (url.isNullOrBlank()) return null
@@ -92,8 +92,7 @@ object ServerConfig {
         val scheme = uri.scheme?.lowercase() ?: return null
         if (scheme != "http" && scheme != "https") return null
         if (uri.userInfo != null || uri.rawAuthority.isNullOrBlank()) return null
-        val host = uri.host?.takeIf { it.isNotBlank() }
-            ?: fallbackHost(uri.rawAuthority) ?: return null
+        val host = uri.host?.takeIf { it.isNotBlank() } ?: fallbackHost(uri.rawAuthority) ?: return null
         return normalizeHost(host)
     }
 
