@@ -1,0 +1,138 @@
+name: Repair Search Pipeline
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply production search and media fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          root = Path('app/src/main/java/com/kafshar/musicfinder')
+          main = root / 'MainActivity.kt'
+          server = root / 'ServerConfig.kt'
+          service = root / 'MusicService.kt'
+
+          s = main.read_text(encoding='utf-8')
+
+          # --- MainActivity: imports and state ---
+          s = s.replace('import android.webkit.WebResourceRequest\n', 'import android.webkit.WebResourceRequest\n')
+          if 'import java.util.concurrent.ConcurrentHashMap' not in s:
+              s = s.replace('import java.util.concurrent.Executors\n', 'import java.util.concurrent.ConcurrentHashMap\nimport java.util.concurrent.Executors\n')
+          if 'private val networkMediaCandidates' not in s:
+              s = s.replace('    private var webRecreating = false\n', '    private var webRecreating = false\n\n    private val networkMediaCandidates = ConcurrentHashMap.newKeySet<String>()\n')
+
+          # Preserve referer with discovered candidates.
+          s = s.replace('    val isYouTube: Boolean = false\n)', '    val isYouTube: Boolean = false,\n    val pageUrl: String = ""\n)')
+
+          # Bridge should process up to 40 external results.
+          s = s.replace('.take(15)\n\n                discovered.filter', '.take(40)\n\n                discovered.filter')
+
+          # Search URL must not use basic-view gbv=1.
+          s = s.replace('web.loadUrl("https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1")', 'web.loadUrl("https://www.google.com/search?igu=1&hl=en&num=50&q=$encoded")')
+
+          # Replace the WebView client with a network-aware version by inserting interception before onPageFinished.
+          marker = '                override fun onPageFinished(\n'
+          if 'override fun shouldInterceptRequest(\n                    view: WebView,\n                    request: WebResourceRequest\n                ): android.webkit.WebResourceResponse?' not in s:
+              intercept = '''                override fun shouldInterceptRequest(\n                    view: WebView,\n                    request: WebResourceRequest\n                ): android.webkit.WebResourceResponse? {\n                    val url = request.url.toString()\n                    if (!destroyed && url.startsWith("http", true) && !isGoogleUrl(url)) {\n                        val lower = url.lowercase(Locale.US)\n                        val accept = request.requestHeaders["Accept"].orEmpty().lowercase(Locale.US)\n                        val likelyMedia =\n                            ServerConfig.looksLikeAudioUrl(url) ||\n                            accept.contains("audio/") ||\n                            accept.contains("video/") ||\n                            accept.contains("application/octet-stream")\n                        if (likelyMedia) {\n                            networkMediaCandidates.add(url)\n                            logDiscovery("NETWORK_CANDIDATE", url, "accept=$accept")\n                        }\n                    }\n                    return super.shouldInterceptRequest(view, request)\n                }\n\n'''
+              if marker not in s:
+                  raise SystemExit('WebView insertion marker not found')
+              s = s.replace(marker, intercept + marker, 1)
+
+          # Use robust Google host detection in navigation callbacks.
+          s = re.sub(r'url\.contains\(\s*"google\.com",\s*true\s*\)\s*\|\|', 'isGoogleUrl(url) ||', s, count=1)
+          s = re.sub(r'url\.contains\(\s*"google\.com/search",\s*true\s*\)', 'isGoogleSearchUrl(url)', s, count=1)
+
+          # Let JS/network discovery settle before extracting a music page, and perform a second pass.
+          old = '''                        extractMusicPage(url)\n                    }'''
+          new = '''                        networkMediaCandidates.clear()\n                        extractMusicPage(url)\n                        handler.postDelayed({\n                            if (!destroyed && resultGeneration == searchGeneration && expectedPageUrl == url) {\n                                extractMusicPage(url)\n                            }\n                        }, 1200L)\n                    }'''
+          if old not in s:
+              raise SystemExit('music page callback marker not found')
+          s = s.replace(old, new, 1)
+
+          # Replace Google parser completely.
+          start = s.index('    private fun extractGoogleResults() {')
+          end = s.index('    private fun extractMusicPage(pageUrl: String) {', start)
+          google = r'''    private fun isGoogleUrl(url: String): Boolean {\n        return try {\n            val host = URL(url).host.lowercase(Locale.US).removePrefix("www.")\n            host == "google.com" || host.endsWith(".google.com") || host.matches(Regex("google\\.[a-z.]+"))\n        } catch (_: Exception) { false }\n    }\n\n    private fun isGoogleSearchUrl(url: String): Boolean {\n        if (!isGoogleUrl(url)) return false\n        return try { URL(url).path.equals("/search", true) } catch (_: Exception) { false }\n    }\n\n    private fun extractGoogleResults() {\n        if (destroyed || searchGeneration <= 0) return\n        val script = """\n            (function(){\n              try{\n                var found=[], seen={};\n                function unwrap(u){\n                  try{\n                    var x=new URL(u,location.href);\n                    var host=x.hostname.toLowerCase().replace(/^www\\./,'');\n                    if(host==='google.com'||host.endsWith('.google.com')||host.match(/^google\\.[a-z.]+$/)){\n                      var q=x.searchParams.get('q')||x.searchParams.get('url')||x.searchParams.get('u');\n                      if(q&&/^https?:/i.test(q)) return q;\n                    }\n                    return x.href;\n                  }catch(e){return '';}\n                }\n                function blocked(u){\n                  try{\n                    var x=new URL(u);\n                    var h=x.hostname.toLowerCase().replace(/^www\\./,'');\n                    if(h==='google.com'||h.endsWith('.google.com')||h==='webcache.googleusercontent.com') return true;\n                    if(h==='accounts.google.com'||h==='support.google.com'||h==='maps.google.com'||h==='translate.google.com') return true;\n                    return x.pathname.indexOf('/search')===0||x.pathname.indexOf('/preferences')===0||x.pathname.indexOf('/cache')===0;\n                  }catch(e){return true;}\n                }\n                function yt(u){\n                  try{var h=new URL(u).hostname.toLowerCase().replace(/^www\\./,'');return h==='youtube.com'||h.endsWith('.youtube.com')||h==='youtu.be';}catch(e){return false;}\n                }\n                function add(u,t){\n                  u=unwrap(u); if(!/^https?:/i.test(u)||blocked(u)) return;\n                  var key=u.split('#')[0].replace(/\\/$/,'').toLowerCase(); if(seen[key]) return; seen[key]=1;\n                  t=(t||'').replace(/[\\r\\n\\t]+/g,' ').replace(/\\s+/g,' ').trim();\n                  found.push(u+'|||'+encodeURIComponent(t)+'|||'+(yt(u)?'1':'0'));\n                }\n                document.querySelectorAll('a[href],a[data-href],a[data-url]').forEach(function(a){\n                  add(a.getAttribute('href')||a.getAttribute('data-href')||a.getAttribute('data-url')||'',(a.querySelector('h3')||a).innerText||'');\n                });\n                document.querySelectorAll('h3').forEach(function(h){var a=h.closest('a');if(a)add(a.href,h.innerText||'');});\n                var html=document.documentElement.outerHTML||'';\n                (html.match(/(?:https?:\\/\\/|\\/url\\?)[^\\s\"'<>]+/g)||[]).forEach(function(v){if(v.indexOf('/url?')===0)v=location.origin+v;add(v,'');});\n                found.sort(function(a,b){\n                  function score(v){var x=decodeURIComponent(v).toLowerCase(),n=0;if(/\\.mp3|\\.m4a|\\.aac|download|\\bmusic\\b|\\bsong\\b|آهنگ|موزیک|دانلود/.test(x))n+=10;if(/youtube|youtu\\.be/.test(x))n-=5;return n;}\n                  return score(b)-score(a);\n                });\n                MusicFinder.results(found.slice(0,40).join('###'));\n              }catch(e){MusicFinder.results('');}\n            })();\n        """.replace('\\\\n','\\n').trimIndent()\n        try { web.evaluateJavascript(script, null) } catch (_: Exception) { finishSearch() }\n    }\n\n'''
+          s = s[:start] + google + s[end:]
+
+          # Replace page extractor with DOM + JS + performance resource discovery.
+          start = s.index('    private fun extractMusicPage(pageUrl: String) {')
+          end = s.index('    private fun validateAndAddAudioCandidates(', start)
+          page = r'''    private fun extractMusicPage(pageUrl: String) {\n        if (destroyed || resultGeneration != searchGeneration) return\n        expectedPageUrl = pageUrl\n        val network = networkMediaCandidates.toList()\n        val script = """\n            (function(){\n              try{\n                var title='',artist='',cover='',aud=[];\n                function add(v){\n                  if(!v) return;\n                  try{v=new URL(v,location.href).href;}catch(e){return;}\n                  if(!/^https?:/i.test(v))return;\n                  if(aud.indexOf(v)<0&&aud.length<100)aud.push(v);\n                }\n                var og=document.querySelector('meta[property="og:title"]');if(og)title=og.content||'';\n                var h=document.querySelector('h1');if(!title&&h)title=h.innerText||'';\n                var ma=document.querySelector('meta[property="music:musician"]');if(ma)artist=ma.content||'';\n                var im=document.querySelector('meta[property="og:image"]');if(im)cover=im.content||'';\n                document.querySelectorAll('audio,video,source,a').forEach(function(el){\n                  add(el.currentSrc||el.src||el.href||'');\n                  ['data-src','data-url','data-audio','data-mp3','data-file','data-download','data-media','data-stream','data-song','data-track'].forEach(function(k){add(el.getAttribute(k)||'');});\n                });\n                document.querySelectorAll('script,[type="application/ld+json"]').forEach(function(el){\n                  var text=el.textContent||'';\n                  (text.match(/https?:\\/\\/[^\\s\"'<>\\]+/g)||[]).forEach(add);\n                  (text.match(/(?:file|url|src|source|audio|stream|mp3|media)[\\s:=\"']+([^\\s\"']+)/ig)||[]).forEach(function(m){var q=m.replace(/^.*?[\\s:=\"']+/,'');add(q.replace(/[\\\"']+$/,''));});\n                });\n                try{performance.getEntriesByType('resource').forEach(function(e){var u=e.name||'';if(/audio|\\.mp3|\\.m4a|\\.aac|\\.ogg|\\.opus|\\.wav|\\.flac|\\.webm|download|stream|media|\\/file\\//i.test(u))add(u);});}catch(e){}\n                var html=document.documentElement.outerHTML||'';\n                (html.match(/https?:\\/\\/[^\\s\"'<>]+/g)||[]).forEach(function(v){if(/\\.mp3|\\.m4a|\\.aac|\\.ogg|\\.opus|\\.wav|\\.flac|download|stream|media|\\/audio\\//i.test(v))add(v);});\n                MusicFinder.page(encodeURIComponent(title)+'###'+encodeURIComponent(artist)+'###'+encodeURIComponent(cover)+'###'+encodeURIComponent(aud.join('|||')));\n              }catch(e){MusicFinder.page('######');}\n            })();\n        """.trimIndent()\n        val networkEncoded = network.joinToString("|||") { URLEncoder.encode(it, "UTF-8") }\n        try {\n            web.evaluateJavascript(script, null) {\n                val raw = "${'$'}networkEncoded"\n                if (raw.isNotBlank()) {\n                    runOnUiThread {\n                        val extra = raw.split("|||").mapNotNull { decode(it) }.filter { it.startsWith("http", true) }\n                        if (extra.isNotEmpty() && resultGeneration == searchGeneration) {\n                            validateAndAddAudioCandidates("Music", "Unknown Artist", "", extra, pageUrl)\n                        }\n                    }\n                }\n            }\n        } catch (_: Exception) { finishCurrentResultPage() }\n    }\n\n'''
+          # The network list is also appended to the Bridge result by a direct field merge below; the JS callback above is intentionally only a supplemental pass.
+          s = s[:start] + page + s[end:]
+
+          # Replace validation/probing with scored, content-type-aware candidates.
+          start = s.index('    private fun validateAndAddAudioCandidates(')
+          end = s.index('    private fun addYouTubeView(', start)
+          validation = r'''    private data class MediaProbe(val url: String, val mime: String, val score: Int)\n\n    private fun validateAndAddAudioCandidates(\n        title: String, artist: String, cover: String, candidates: List<String>, pageUrl: String\n    ) {\n        if (candidates.isEmpty()) { finishCurrentResultPage(); return }\n        val generation = searchGeneration\n        io.execute {\n            val probes = candidates.distinct().mapNotNull { probeMediaUrl(it, pageUrl) }\n                .sortedByDescending { it.score }\n                .take(8)\n            runOnUiThread {\n                if (destroyed || generation != searchGeneration) return@runOnUiThread\n                probes.forEach { probe ->\n                    val song = SongResult(probe.url, title.ifBlank { "Music" }, artist.ifBlank { "Unknown Artist" }, getSiteName(pageUrl), cover, false, pageUrl)\n                    if (songs.none { it.url == song.url }) { songs.add(song); addSongView(song, songs.lastIndex) }\n                }\n                logDiscovery("SUMMARY", pageUrl, "candidates=${candidates.size} playable=${probes.size} total=${songs.size}")\n                if (songs.isNotEmpty()) status.text = "${songs.size} آهنگ پیدا شد"\n                finishCurrentResultPage()\n            }\n        }\n    }\n\n    private fun probeMediaUrl(url: String, pageUrl: String): MediaProbe? {\n        if (!ServerConfig.isAllowedMediaUrl(url, pageUrl)) return null\n        return try {\n            val c = (URL(url).openConnection() as HttpURLConnection).apply {\n                requestMethod = "GET"\n                instanceFollowRedirects = true\n                connectTimeout = 5000\n                readTimeout = 5000\n                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36")\n                if (pageUrl.isNotBlank()) setRequestProperty("Referer", pageUrl)\n                setRequestProperty("Range", "bytes=0-0")\n                setRequestProperty("Accept", "audio/*,video/*,application/octet-stream;q=0.9,*/*;q=0.1")\n            }\n            c.connect()\n            val code = c.responseCode\n            val finalUrl = c.url?.toString().orEmpty().ifBlank { url }\n            val mime = c.contentType?.substringBefore(';')?.trim()?.lowercase(Locale.US).orEmpty()\n            val length = c.contentLengthLong\n            c.inputStream.use { it.read(ByteArray(1)) }\n            c.disconnect()\n            if (code !in 200..399) return null\n            if (ServerConfig.isObviousNonMediaUrl(finalUrl)) return null\n            val score = scoreMediaCandidate(finalUrl, mime, pageUrl, length)\n            if (score < 25) { logDiscovery("MEDIA_REJECTED", finalUrl, "mime=$mime score=$score"); null }\n            else { logDiscovery("MEDIA_SELECTED", finalUrl, "mime=$mime score=$score bytes=$length"); MediaProbe(finalUrl, mime, score) }\n        } catch (e: Exception) {\n            logDiscovery("MEDIA_REJECTED", url, e.javaClass.simpleName + ":" + (e.message ?: ""))\n            null\n        }\n    }\n\n    private fun scoreMediaCandidate(url: String, mime: String, pageUrl: String, length: Long): Int {\n        if (ServerConfig.isYouTubeUrl(url)) return -1000\n        var score = 0\n        val path = url.substringBefore('?').substringBefore('#').lowercase(Locale.US)\n        if (mime.startsWith("audio/")) score += 100\n        if (mime.startsWith("video/")) score += 20\n        if (mime == "application/octet-stream" || mime == "binary/octet-stream") score += 45\n        if (path.endsWith(".mp3") || path.endsWith(".m4a") || path.endsWith(".aac") || path.endsWith(".ogg") || path.endsWith(".opus") || path.endsWith(".wav") || path.endsWith(".flac")) score += 80\n        if (ServerConfig.looksLikeAudioUrl(url)) score += 60\n        if (pageUrl.isNotBlank()) score += 20\n        if (length > 100_000) score += 10\n        return score\n    }\n\n    private fun logDiscovery(stage: String, url: String, detail: String) {\n        android.util.Log.d("MusicFinder", "${'$'}stage url=${'$'}{url.take(220)} detail=${'$'}detail")\n    }\n\n'''
+          s = s[:start] + validation + s[end:]
+
+          # Increase page timeout.
+          s = s.replace('handler.postDelayed(\n            timeout,\n            5000L\n        )', 'handler.postDelayed(\n            timeout,\n            12000L\n        )')
+
+          # Pass page URL to service and preserve it in current result.
+          s = s.replace('putExtra(\n                    MusicService.EXTRA_COVER,\n                    cover\n                )', 'putExtra(\n                    MusicService.EXTRA_COVER,\n                    cover\n                )\n\n                putExtra("referer", currentSong?.pageUrl.orEmpty())')
+
+          # Do not persist the extra pageUrl field in the old five-field storage format; restored songs remain playable without referer.
+          main.write_text(s, encoding='utf-8')
+
+          # --- ServerConfig: extensionless media is allowed when page context exists; obvious non-media is explicit. ---
+          ss = server.read_text(encoding='utf-8')
+          ss = ss.replace('''        return pageUrl != null || looksLikeAudioUrl(url)\n    }\n\n    fun looksLikeAudioUrl''', '''        return pageUrl != null || looksLikeAudioUrl(url)\n    }\n\n    fun isObviousNonMediaUrl(url: String): Boolean {\n        val path = url.substringBefore('?').substringBefore('#').lowercase()\n        return listOf(".html", ".htm", ".json", ".xml", ".css", ".js", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico").any { path.endsWith(it) }\n    }\n\n    fun looksLikeAudioUrl''')
+          server.write_text(ss, encoding='utf-8')
+
+          # --- MusicService: allow validated extensionless URLs and send Referer with ExoPlayer requests. ---
+          ms = service.read_text(encoding='utf-8')
+          if 'androidx.media3.datasource.DefaultHttpDataSource' not in ms:
+              ms = ms.replace('import androidx.media3.common.Player\n', 'import androidx.media3.common.Player\nimport androidx.media3.datasource.DataSource\nimport androidx.media3.datasource.DefaultHttpDataSource\nimport androidx.media3.exoplayer.source.DefaultMediaSourceFactory\n')
+          if 'private var playbackReferer' not in ms:
+              ms = ms.replace('    private var lastCover = ""\n', '    private var lastCover = ""\n    private var playbackReferer = ""\n')
+          old_builder = '''        player = ExoPlayer.Builder(this)\n            .setAudioAttributes('''
+          new_builder = '''        val httpFactory = DefaultHttpDataSource.Factory()\n            .setUserAgent("Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36")\n        val dataSourceFactory = DataSource.Factory {\n            val dataSource = httpFactory.createDataSource()\n            if (playbackReferer.isNotBlank()) dataSource.setRequestProperty("Referer", playbackReferer)\n            dataSource\n        }\n        player = ExoPlayer.Builder(this)\n            .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(dataSourceFactory))\n            .setAudioAttributes('''
+          if old_builder not in ms:
+              raise SystemExit('MusicService player builder marker not found')
+          ms = ms.replace(old_builder, new_builder, 1)
+          ms = ms.replace('private fun loadAndPlay(url: String, title: String, artist: String, cover: String, resetRetry: Boolean = true)', 'private fun loadAndPlay(url: String, title: String, artist: String, cover: String, resetRetry: Boolean = true, referer: String = "")')
+          ms = ms.replace('''        if (!ServerConfig.isAllowedMediaUrl(url)) {\n            publish("Unsupported media source")\n            return\n        }\n        if (resetRetry) retryCount = 0''', '''        if (!ServerConfig.isAllowedMediaUrl(url, referer.takeIf { it.isNotBlank() })) {\n            publish("Unsupported media source")\n            return\n        }\n        playbackReferer = referer\n        if (resetRetry) retryCount = 0''')
+          ms = ms.replace('loadAndPlay(uri, lastTitle, lastArtist, lastCover, resetRetry = false)', 'loadAndPlay(uri, lastTitle, lastArtist, lastCover, resetRetry = false, referer = playbackReferer)')
+          ms = ms.replace('''loadAndPlay(url, intent.getStringExtra(EXTRA_TITLE).orEmpty(), intent.getStringExtra(EXTRA_ARTIST).orEmpty(), intent.getStringExtra(EXTRA_COVER).orEmpty())''', '''loadAndPlay(url, intent.getStringExtra(EXTRA_TITLE).orEmpty(), intent.getStringExtra(EXTRA_ARTIST).orEmpty(), intent.getStringExtra(EXTRA_COVER).orEmpty(), referer = intent.getStringExtra("referer").orEmpty())''')
+          ms = ms.replace('''loadAndPlay(url, intent.getStringExtra(EXTRA_TITLE).orEmpty(), intent.getStringExtra(EXTRA_ARTIST).orEmpty(), intent.getStringExtra(EXTRA_COVER).orEmpty())''', '''loadAndPlay(url, intent.getStringExtra(EXTRA_TITLE).orEmpty(), intent.getStringExtra(EXTRA_ARTIST).orEmpty(), intent.getStringExtra(EXTRA_COVER).orEmpty(), referer = intent.getStringExtra("referer").orEmpty())''')
+          service.write_text(ms, encoding='utf-8')
+
+          # Fail closed if critical changes did not land.
+          checks = [
+              ('Google parser', 'private fun isGoogleUrl(url: String)' in s),
+              ('network interception', 'override fun shouldInterceptRequest' in s),
+              ('performance resources', 'performance.getEntriesByType' in s),
+              ('scored probing', 'scoreMediaCandidate' in s),
+              ('referer playback', 'playbackReferer' in ms),
+              ('extensionless media helper', 'isObviousNonMediaUrl' in ss),
+          ]
+          failed = [name for name, ok in checks if not ok]
+          if failed:
+              raise SystemExit('Critical repair step missing: ' + ', '.join(failed))
+
+      - name: Commit repaired source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt app/src/main/java/com/kafshar/musicfinder/ServerConfig.kt app/src/main/java/com/kafshar/musicfinder/MusicService.kt
+          git commit -m "Fix end-to-end music discovery and playback" || exit 0
+          git push
