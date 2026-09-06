@@ -20,7 +20,7 @@ object MusicPageParser {
         for (m in tag.findAll(html)) collectAttributes(m.value, pageUrl, candidates)
         for (m in Regex(
             "<script\\b[^>]*>(.*?)</script>",
-            RegexOption.IGNORE_CASE + RegexOption.DOT_MATCHES_ALL
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
         ).findAll(html)) {
             for (u in urlPattern.findAll(unescape(m.groupValues[1]))) {
                 val candidate = normalizeUrl(u.value, pageUrl)
@@ -55,7 +55,7 @@ object MusicPageParser {
 
     private fun firstTagText(html: String, tag: String): String = Regex(
         "<$tag\\b[^>]*>(.*?)</$tag>",
-        RegexOption.IGNORE_CASE + RegexOption.DOT_MATCHES_ALL
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
     ).find(html)?.groupValues?.getOrNull(1)?.let { stripHtml(it) }.orEmpty()
 
     private fun stripHtml(value: String): String = value.replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim()
