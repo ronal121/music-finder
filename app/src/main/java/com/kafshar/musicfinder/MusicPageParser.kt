@@ -7,7 +7,7 @@ data class ParsedMusicPage(val title: String, val artist: String, val cover: Str
 /** Extracts metadata and possible media URLs from static HTML. Runtime WebView may run this repeatedly. */
 object MusicPageParser {
     private val mediaKeys = listOf("data-src", "data-url", "data-audio", "data-mp3", "data-file", "data-download", "data-media", "data-stream", "src", "href")
-    private val mediaPattern = Regex("(?:\\.mp3|\\.m4a|\\.aac|\\.ogg|\\.opus|\\.wav|\\.flac|\\.webm|/download(?:/|\\?|$)|/dl/|/stream(?:/|\\?|$)|/audio(?:/|\\?|$)|/media(?:/|\\?|$))", RegexOption.IGNORE_CASE)
+    private val mediaPattern = Regex("(?:\\.mp3|\\.m4a|\\.aac|\\.ogg|\\.opus|\\.wav|\\.flac|\\.webm|/download(?:/|\\?|$)|/dl/|/stream(?:/|\\?|$)|/audio(?:/|\\?|$)|/media(?:/|\\?|$)|[?&](?:type|format|mime)=(?:audio|audio/[^&\\s]+))", RegexOption.IGNORE_CASE)
     private val urlPattern = Regex("https?://[^\\s\\\"'<>\\\\]+", RegexOption.IGNORE_CASE)
 
     fun parse(html: String, pageUrl: String): ParsedMusicPage {
