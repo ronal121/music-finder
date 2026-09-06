@@ -41,6 +41,7 @@ import java.net.URL
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
@@ -50,7 +51,8 @@ data class SongResult(
     val artist: String,
     val site: String,
     val cover: String = "",
-    val isYouTube: Boolean = false
+    val isYouTube: Boolean = false,
+    val pageUrl: String = ""
 )
 
 class MainActivity : Activity() {
@@ -122,6 +124,8 @@ class MainActivity : Activity() {
     private var activeConnection: HttpURLConnection? = null
 
     private var webRecreating = false
+
+    private val networkMediaCandidates = ConcurrentHashMap.newKeySet<String>()
 
     private val playerReceiver = object : BroadcastReceiver() {
 
@@ -539,7 +543,7 @@ class MainActivity : Activity() {
                         Triple(url, title, isYouTube)
                     }
                     .distinctBy { it.first.substringBefore("#").trimEnd('/').lowercase() }
-                    .take(15)
+                    .take(40)
 
                 discovered.filter { it.third }.forEach { (url, title, _) ->
                     addYouTubeView(url, title.ifBlank { "YouTube" })
@@ -650,14 +654,32 @@ class MainActivity : Activity() {
                         request.url.toString()
 
                     return !(
-                        url.contains(
-                            "google.com",
-                            true
-                        ) ||
+                        isGoogleUrl(url) ||
                         ServerConfig.isAllowedPageUrl(
                             url
                         )
                     )
+                }
+
+                override fun shouldInterceptRequest(
+                    view: WebView,
+                    request: WebResourceRequest
+                ): android.webkit.WebResourceResponse? {
+                    val url = request.url.toString()
+                    if (!destroyed && url.startsWith("http", true) && !isGoogleUrl(url)) {
+                        val lower = url.lowercase(Locale.US)
+                        val accept = request.requestHeaders["Accept"].orEmpty().lowercase(Locale.US)
+                        val likelyMedia =
+                            ServerConfig.looksLikeAudioUrl(url) ||
+                            accept.contains("audio/") ||
+                            accept.contains("video/") ||
+                            accept.contains("application/octet-stream")
+                        if (likelyMedia) {
+                            networkMediaCandidates.add(url)
+                            logDiscovery("NETWORK_CANDIDATE", url, "accept=$accept")
+                        }
+                    }
+                    return super.shouldInterceptRequest(view, request)
                 }
 
                 override fun onPageFinished(
@@ -673,10 +695,7 @@ class MainActivity : Activity() {
                     if (destroyed) return
 
                     if (
-                        url.contains(
-                            "google.com/search",
-                            true
-                        )
+                        isGoogleSearchUrl(url)
                     ) {
 
                         handler.postDelayed(
@@ -699,7 +718,13 @@ class MainActivity : Activity() {
                         )
                     ) {
 
+                        networkMediaCandidates.clear()
                         extractMusicPage(url)
+                        handler.postDelayed({
+                            if (!destroyed && resultGeneration == searchGeneration && expectedPageUrl == url) {
+                                extractMusicPage(url)
+                            }
+                        }, 1200L)
                     }
                 }
 
@@ -855,7 +880,7 @@ class MainActivity : Activity() {
         }
         try {
             web.stopLoading()
-            web.loadUrl("https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1")
+            web.loadUrl("https://www.google.com/search?igu=1&hl=en&num=50&q=$encoded")
         } catch (_: Exception) {
             status.text = "جستجوی جایگزین در دسترس نیست"
         }
@@ -878,155 +903,7 @@ class MainActivity : Activity() {
         pageTimeout = null
     }
 
-    private fun extractGoogleResults() {
-
-        if (destroyed || searchGeneration <= 0) return
-
-        val script = """
-            (function(){
-              try{
-                var found=[];
-                function real(h){
-                  try{
-                    var x=new URL(h, location.href);
-                    if(x.hostname.toLowerCase().indexOf('google.')>=0){
-                      var q=x.searchParams.get('q') || x.searchParams.get('url');
-                      if(q && q.indexOf('http')===0) return decodeURIComponent(q);
-                    }
-                    return x.href;
-                  }catch(e){ return h; }
-                }
-                function youtube(u){
-                  try{
-                    var h=new URL(u).hostname.toLowerCase().replace(/^www\./,'');
-                    return h==='youtube.com' || h.endsWith('.youtube.com') || h==='youtu.be';
-                  }catch(e){ return false; }
-                }
-                var anchors=document.querySelectorAll('a');
-                for(var i=0;i<anchors.length && found.length<15;i++){
-                  var a=anchors[i];
-                  var u=real(a.href||'');
-                  if(!/^https?:/i.test(u)) continue;
-                  try{
-                    var h=new URL(u).hostname.toLowerCase();
-                    if(h.indexOf('google.')>=0 || h==='webcache.googleusercontent.com') continue;
-                  }catch(e){ continue; }
-                  var t=(a.innerText||a.textContent||'').replace(/[\r\n\t]+/g,' ').replace(/\s+/g,' ').trim();
-                  if(!t && a.querySelector('h3')) t=a.querySelector('h3').innerText||'';
-                  var key=u.split('#')[0].replace(/\/$/,'').toLowerCase();
-                  var dup=false;
-                  for(var j=0;j<found.length;j++){ if(found[j].split('|||')[0].toLowerCase()===key){dup=true;break;} }
-                  if(dup) continue;
-                  found.push(u+'|||'+encodeURIComponent(t)+'|||'+(youtube(u)?'1':'0'));
-                }
-                MusicFinder.results(found.join('###'));
-              }catch(e){ MusicFinder.results(''); }
-            })();
-        """.trimIndent()
-
-        try { web.evaluateJavascript(script, null) } catch (_: Exception) { finishSearch() }
-    }
-
-    private fun extractMusicPage(pageUrl: String) {
-
-        if (destroyed || resultGeneration != searchGeneration) return
-        expectedPageUrl = pageUrl
-
-        val script = """
-            (function(){
-              try{
-                var title='',artist='',cover='',aud=[];
-                function add(v){
-                  if(!v) return;
-                  try{ v=new URL(v, location.href).href; }catch(e){ return; }
-                  if(!/^https?:/i.test(v)) return;
-                  if(aud.indexOf(v)<0 && aud.length<40) aud.push(v);
-                }
-                var og=document.querySelector('meta[property="og:title"]');
-                if(og) title=og.content||'';
-                var h=document.querySelector('h1');
-                if(!title && h) title=h.innerText||'';
-                var ma=document.querySelector('meta[property="music:musician"]');
-                if(ma) artist=ma.content||'';
-                var im=document.querySelector('meta[property="og:image"]');
-                if(im) cover=im.content||'';
-                document.querySelectorAll('audio,video,source,a').forEach(function(el){
-                  add(el.currentSrc||el.src||el.href||'');
-                  ['data-src','data-url','data-audio','data-mp3','data-file','data-download','data-media','data-stream'].forEach(function(k){ add(el.getAttribute(k)||''); });
-                });
-                document.querySelectorAll('script,script[type="application/ld+json"]').forEach(function(el){
-                  var text=el.textContent||'';
-                  var matches=text.match(/https?:\/\/[^\s\"'<>\]+/g)||[];
-                  matches.forEach(add);
-                });
-                var html=document.documentElement.outerHTML||'';
-                var urls=html.match(/https?:\/\/[^\s\"'<>\]+/g)||[];
-                urls.forEach(function(v){
-                  if(/(?:\.mp3|\.m4a|\.aac|\.ogg|\.opus|\.wav|\.flac|\.webm|download|\/dl\/|\/api\/audio|media|stream)/i.test(v)) add(v);
-                });
-                MusicFinder.page(encodeURIComponent(title)+'###'+encodeURIComponent(artist)+'###'+encodeURIComponent(cover)+'###'+encodeURIComponent(aud.join('|||')));
-              }catch(e){ MusicFinder.page('######'); }
-            })();
-        """.trimIndent()
-
-        try { web.evaluateJavascript(script, null) } catch (_: Exception) { finishCurrentResultPage() }
-    }
-
-    private fun validateAndAddAudioCandidates(
-        title: String,
-        artist: String,
-        cover: String,
-        candidates: List<String>,
-        pageUrl: String
-    ) {
-        if (candidates.isEmpty()) { finishCurrentResultPage(); return }
-        val generation = searchGeneration
-        io.execute {
-            val accepted = candidates.mapNotNull { url ->
-                if (!ServerConfig.isAllowedMediaUrl(url, pageUrl)) return@mapNotNull null
-                if (probeMediaUrl(url, pageUrl)) url else null
-            }.distinct()
-            runOnUiThread {
-                if (destroyed || generation != searchGeneration) return@runOnUiThread
-                accepted.forEach { audio ->
-                    val song = SongResult(audio, title, artist, getSiteName(pageUrl), cover)
-                    if (songs.none { it.url == song.url }) {
-                        songs.add(song)
-                        addSongView(song, songs.lastIndex)
-                    }
-                }
-                if (songs.isNotEmpty()) status.text = "${songs.size} آهنگ پیدا شد"
-                finishCurrentResultPage()
-            }
-        }
-    }
-
-    private fun probeMediaUrl(url: String, pageUrl: String): Boolean {
-        if (!ServerConfig.isAllowedMediaUrl(url, pageUrl)) return false
-        fun request(method: String): String? {
-            return try {
-                val c = URL(url).openConnection() as HttpURLConnection
-                c.requestMethod = method
-                c.instanceFollowRedirects = true
-                c.connectTimeout = 2500
-                c.readTimeout = 2500
-                c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36")
-                c.setRequestProperty("Referer", pageUrl)
-                if (method == "GET") c.setRequestProperty("Range", "bytes=0-0")
-                c.connect()
-                val type = c.contentType?.lowercase()
-                val code = c.responseCode
-                c.disconnect()
-                if (code in 200..399) type else null
-            } catch (_: Exception) { null }
-        }
-        val type = request("HEAD") ?: request("GET")
-        return type?.startsWith("audio/") == true ||
-            (type?.startsWith("video/") == true && url.contains("audio", true)) ||
-            ServerConfig.looksLikeAudioUrl(url)
-    }
-
-    private fun addYouTubeView(url: String, title: String) {
+    private fun isGoogleUrl(url: String): Boolean {\n        return try {\n            val host = URL(url).host.lowercase(Locale.US).removePrefix("www.")\n            host == "google.com" || host.endsWith(".google.com") || host.matches(Regex("google\\.[a-z.]+"))\n        } catch (_: Exception) { false }\n    }\n\n    private fun isGoogleSearchUrl(url: String): Boolean {\n        if (!isGoogleUrl(url)) return false\n        return try { URL(url).path.equals("/search", true) } catch (_: Exception) { false }\n    }\n\n    private fun extractGoogleResults() {\n        if (destroyed || searchGeneration <= 0) return\n        val script = """\n            (function(){\n              try{\n                var found=[], seen={};\n                function unwrap(u){\n                  try{\n                    var x=new URL(u,location.href);\n                    var host=x.hostname.toLowerCase().replace(/^www\\./,'');\n                    if(host==='google.com'||host.endsWith('.google.com')||host.match(/^google\\.[a-z.]+$/)){\n                      var q=x.searchParams.get('q')||x.searchParams.get('url')||x.searchParams.get('u');\n                      if(q&&/^https?:/i.test(q)) return q;\n                    }\n                    return x.href;\n                  }catch(e){return '';}\n                }\n                function blocked(u){\n                  try{\n                    var x=new URL(u);\n                    var h=x.hostname.toLowerCase().replace(/^www\\./,'');\n                    if(h==='google.com'||h.endsWith('.google.com')||h==='webcache.googleusercontent.com') return true;\n                    if(h==='accounts.google.com'||h==='support.google.com'||h==='maps.google.com'||h==='translate.google.com') return true;\n                    return x.pathname.indexOf('/search')===0||x.pathname.indexOf('/preferences')===0||x.pathname.indexOf('/cache')===0;\n                  }catch(e){return true;}\n                }\n                function yt(u){\n                  try{var h=new URL(u).hostname.toLowerCase().replace(/^www\\./,'');return h==='youtube.com'||h.endsWith('.youtube.com')||h==='youtu.be';}catch(e){return false;}\n                }\n                function add(u,t){\n                  u=unwrap(u); if(!/^https?:/i.test(u)||blocked(u)) return;\n                  var key=u.split('#')[0].replace(/\\/$/,'').toLowerCase(); if(seen[key]) return; seen[key]=1;\n                  t=(t||'').replace(/[\\r\\n\\t]+/g,' ').replace(/\\s+/g,' ').trim();\n                  found.push(u+'|||'+encodeURIComponent(t)+'|||'+(yt(u)?'1':'0'));\n                }\n                document.querySelectorAll('a[href],a[data-href],a[data-url]').forEach(function(a){\n                  add(a.getAttribute('href')||a.getAttribute('data-href')||a.getAttribute('data-url')||'',(a.querySelector('h3')||a).innerText||'');\n                });\n                document.querySelectorAll('h3').forEach(function(h){var a=h.closest('a');if(a)add(a.href,h.innerText||'');});\n                var html=document.documentElement.outerHTML||'';\n                (html.match(/(?:https?:\\/\\/|\\/url\\?)[^\\s\"'<>]+/g)||[]).forEach(function(v){if(v.indexOf('/url?')===0)v=location.origin+v;add(v,'');});\n                found.sort(function(a,b){\n                  function score(v){var x=decodeURIComponent(v).toLowerCase(),n=0;if(/\\.mp3|\\.m4a|\\.aac|download|\\bmusic\\b|\\bsong\\b|آهنگ|موزیک|دانلود/.test(x))n+=10;if(/youtube|youtu\\.be/.test(x))n-=5;return n;}\n                  return score(b)-score(a);\n                });\n                MusicFinder.results(found.slice(0,40).join('###'));\n              }catch(e){MusicFinder.results('');}\n            })();\n        """.replace('\\\\n','\\n').trimIndent()\n        try { web.evaluateJavascript(script, null) } catch (_: Exception) { finishSearch() }\n    }\n\n    private fun extractMusicPage(pageUrl: String) {\n        if (destroyed || resultGeneration != searchGeneration) return\n        expectedPageUrl = pageUrl\n        val network = networkMediaCandidates.toList()\n        val script = """\n            (function(){\n              try{\n                var title='',artist='',cover='',aud=[];\n                function add(v){\n                  if(!v) return;\n                  try{v=new URL(v,location.href).href;}catch(e){return;}\n                  if(!/^https?:/i.test(v))return;\n                  if(aud.indexOf(v)<0&&aud.length<100)aud.push(v);\n                }\n                var og=document.querySelector('meta[property="og:title"]');if(og)title=og.content||'';\n                var h=document.querySelector('h1');if(!title&&h)title=h.innerText||'';\n                var ma=document.querySelector('meta[property="music:musician"]');if(ma)artist=ma.content||'';\n                var im=document.querySelector('meta[property="og:image"]');if(im)cover=im.content||'';\n                document.querySelectorAll('audio,video,source,a').forEach(function(el){\n                  add(el.currentSrc||el.src||el.href||'');\n                  ['data-src','data-url','data-audio','data-mp3','data-file','data-download','data-media','data-stream','data-song','data-track'].forEach(function(k){add(el.getAttribute(k)||'');});\n                });\n                document.querySelectorAll('script,[type="application/ld+json"]').forEach(function(el){\n                  var text=el.textContent||'';\n                  (text.match(/https?:\\/\\/[^\\s\"'<>\\]+/g)||[]).forEach(add);\n                  (text.match(/(?:file|url|src|source|audio|stream|mp3|media)[\\s:=\"']+([^\\s\"']+)/ig)||[]).forEach(function(m){var q=m.replace(/^.*?[\\s:=\"']+/,'');add(q.replace(/[\\\"']+$/,''));});\n                });\n                try{performance.getEntriesByType('resource').forEach(function(e){var u=e.name||'';if(/audio|\\.mp3|\\.m4a|\\.aac|\\.ogg|\\.opus|\\.wav|\\.flac|\\.webm|download|stream|media|\\/file\\//i.test(u))add(u);});}catch(e){}\n                var html=document.documentElement.outerHTML||'';\n                (html.match(/https?:\\/\\/[^\\s\"'<>]+/g)||[]).forEach(function(v){if(/\\.mp3|\\.m4a|\\.aac|\\.ogg|\\.opus|\\.wav|\\.flac|download|stream|media|\\/audio\\//i.test(v))add(v);});\n                MusicFinder.page(encodeURIComponent(title)+'###'+encodeURIComponent(artist)+'###'+encodeURIComponent(cover)+'###'+encodeURIComponent(aud.join('|||')));\n              }catch(e){MusicFinder.page('######');}\n            })();\n        """.trimIndent()\n        val networkEncoded = network.joinToString("|||") { URLEncoder.encode(it, "UTF-8") }\n        try {\n            web.evaluateJavascript(script, null) {\n                val raw = "${'$'}networkEncoded"\n                if (raw.isNotBlank()) {\n                    runOnUiThread {\n                        val extra = raw.split("|||").mapNotNull { decode(it) }.filter { it.startsWith("http", true) }\n                        if (extra.isNotEmpty() && resultGeneration == searchGeneration) {\n                            validateAndAddAudioCandidates("Music", "Unknown Artist", "", extra, pageUrl)\n                        }\n                    }\n                }\n            }\n        } catch (_: Exception) { finishCurrentResultPage() }\n    }\n\n    private data class MediaProbe(val url: String, val mime: String, val score: Int)\n\n    private fun validateAndAddAudioCandidates(\n        title: String, artist: String, cover: String, candidates: List<String>, pageUrl: String\n    ) {\n        if (candidates.isEmpty()) { finishCurrentResultPage(); return }\n        val generation = searchGeneration\n        io.execute {\n            val probes = candidates.distinct().mapNotNull { probeMediaUrl(it, pageUrl) }\n                .sortedByDescending { it.score }\n                .take(8)\n            runOnUiThread {\n                if (destroyed || generation != searchGeneration) return@runOnUiThread\n                probes.forEach { probe ->\n                    val song = SongResult(probe.url, title.ifBlank { "Music" }, artist.ifBlank { "Unknown Artist" }, getSiteName(pageUrl), cover, false, pageUrl)\n                    if (songs.none { it.url == song.url }) { songs.add(song); addSongView(song, songs.lastIndex) }\n                }\n                logDiscovery("SUMMARY", pageUrl, "candidates=${candidates.size} playable=${probes.size} total=${songs.size}")\n                if (songs.isNotEmpty()) status.text = "${songs.size} آهنگ پیدا شد"\n                finishCurrentResultPage()\n            }\n        }\n    }\n\n    private fun probeMediaUrl(url: String, pageUrl: String): MediaProbe? {\n        if (!ServerConfig.isAllowedMediaUrl(url, pageUrl)) return null\n        return try {\n            val c = (URL(url).openConnection() as HttpURLConnection).apply {\n                requestMethod = "GET"\n                instanceFollowRedirects = true\n                connectTimeout = 5000\n                readTimeout = 5000\n                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36")\n                if (pageUrl.isNotBlank()) setRequestProperty("Referer", pageUrl)\n                setRequestProperty("Range", "bytes=0-0")\n                setRequestProperty("Accept", "audio/*,video/*,application/octet-stream;q=0.9,*/*;q=0.1")\n            }\n            c.connect()\n            val code = c.responseCode\n            val finalUrl = c.url?.toString().orEmpty().ifBlank { url }\n            val mime = c.contentType?.substringBefore(';')?.trim()?.lowercase(Locale.US).orEmpty()\n            val length = c.contentLengthLong\n            c.inputStream.use { it.read(ByteArray(1)) }\n            c.disconnect()\n            if (code !in 200..399) return null\n            if (ServerConfig.isObviousNonMediaUrl(finalUrl)) return null\n            val score = scoreMediaCandidate(finalUrl, mime, pageUrl, length)\n            if (score < 25) { logDiscovery("MEDIA_REJECTED", finalUrl, "mime=$mime score=$score"); null }\n            else { logDiscovery("MEDIA_SELECTED", finalUrl, "mime=$mime score=$score bytes=$length"); MediaProbe(finalUrl, mime, score) }\n        } catch (e: Exception) {\n            logDiscovery("MEDIA_REJECTED", url, e.javaClass.simpleName + ":" + (e.message ?: ""))\n            null\n        }\n    }\n\n    private fun scoreMediaCandidate(url: String, mime: String, pageUrl: String, length: Long): Int {\n        if (ServerConfig.isYouTubeUrl(url)) return -1000\n        var score = 0\n        val path = url.substringBefore('?').substringBefore('#').lowercase(Locale.US)\n        if (mime.startsWith("audio/")) score += 100\n        if (mime.startsWith("video/")) score += 20\n        if (mime == "application/octet-stream" || mime == "binary/octet-stream") score += 45\n        if (path.endsWith(".mp3") || path.endsWith(".m4a") || path.endsWith(".aac") || path.endsWith(".ogg") || path.endsWith(".opus") || path.endsWith(".wav") || path.endsWith(".flac")) score += 80\n        if (ServerConfig.looksLikeAudioUrl(url)) score += 60\n        if (pageUrl.isNotBlank()) score += 20\n        if (length > 100_000) score += 10\n        return score\n    }\n\n    private fun logDiscovery(stage: String, url: String, detail: String) {\n        android.util.Log.d("MusicFinder", "${'$'}stage url=${'$'}{url.take(220)} detail=${'$'}detail")\n    }\n\n    private fun addYouTubeView(url: String, title: String) {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1146,7 +1023,7 @@ class MainActivity : Activity() {
 
         handler.postDelayed(
             timeout,
-            5000L
+            12000L
         )
 
         try {
@@ -1620,6 +1497,8 @@ class MainActivity : Activity() {
                     MusicService.EXTRA_COVER,
                     cover
                 )
+
+                putExtra("referer", currentSong?.pageUrl.orEmpty())
             }
         )
     }

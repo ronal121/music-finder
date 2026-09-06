@@ -53,6 +53,11 @@ object ServerConfig {
         return pageUrl != null || looksLikeAudioUrl(url)
     }
 
+    fun isObviousNonMediaUrl(url: String): Boolean {
+        val path = url.substringBefore('?').substringBefore('#').lowercase()
+        return listOf(".html", ".htm", ".json", ".xml", ".css", ".js", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico").any { path.endsWith(it) }
+    }
+
     fun looksLikeAudioUrl(url: String): Boolean {
         val l = url.lowercase()
         return listOf(
