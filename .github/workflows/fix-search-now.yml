@@ -1,0 +1,152 @@
+name: Apply search fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch MainActivity search pipeline
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          p = Path('app/src/main/java/com/kafshar/musicfinder/MainActivity.kt')
+          s = p.read_text(encoding='utf-8')
+
+          s = s.replace('web.loadUrl("https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1")',
+                        'web.loadUrl("https://www.google.com/search?igu=1&hl=en&num=50&q=$encoded")')
+
+          s = s.replace('''url.contains(\n                            "google.com",\n                            true\n                        ) ||''',
+                        '''isGoogleUrl(url) ||''')
+
+          s = s.replace('''url.contains(\n                            "google.com/search",\n                            true\n                        )''',
+                        '''isGoogleSearchUrl(url)''')
+
+          start = s.index('    private fun extractGoogleResults() {')
+          end = s.index('    private fun extractMusicPage(pageUrl: String) {', start)
+          new_extract = r'''    private fun isGoogleUrl(url: String): Boolean {
+        return try {
+            val host = URL(url).host.lowercase(Locale.US).removePrefix("www.")
+            host == "google.com" || host.endsWith(".google.com") || host.matches(Regex("google\\.[a-z.]+"))
+        } catch (_: Exception) { false }
+    }
+
+    private fun isGoogleSearchUrl(url: String): Boolean {
+        return isGoogleUrl(url) && try {
+            URL(url).path.equals("/search", true)
+        } catch (_: Exception) { false }
+    }
+
+    private fun extractGoogleResults() {
+        if (destroyed || searchGeneration <= 0) return
+
+        val script = """
+            (function(){
+              try{
+                var found=[], seen={};
+                function clean(u){
+                  try{
+                    var x=new URL(u, location.href);
+                    var host=x.hostname.toLowerCase().replace(/^www\\./,'');
+                    if(host.indexOf('google.')===0 || host.indexOf('.google.')>=0) {
+                      var q=x.searchParams.get('q') || x.searchParams.get('url') || x.searchParams.get('u');
+                      if(q && /^https?:/i.test(q)) return q;
+                    }
+                    return x.href;
+                  }catch(e){ return ''; }
+                }
+                function blocked(u){
+                  try{
+                    var x=new URL(u);
+                    var h=x.hostname.toLowerCase().replace(/^www\\./,'');
+                    if(h==='google.com' || h.endsWith('.google.com') || h==='webcache.googleusercontent.com') return true;
+                    if(h==='accounts.google.com' || h==='support.google.com' || h==='maps.google.com' || h==='translate.google.com') return true;
+                    if(x.pathname.indexOf('/search')===0 || x.pathname.indexOf('/preferences')===0) return true;
+                    return false;
+                  }catch(e){ return true; }
+                }
+                function youtube(u){
+                  try{
+                    var h=new URL(u).hostname.toLowerCase().replace(/^www\\./,'');
+                    return h==='youtube.com' || h.endsWith('.youtube.com') || h==='youtu.be';
+                  }catch(e){ return false; }
+                }
+                function add(u,t){
+                  u=clean(u);
+                  if(!/^https?:/i.test(u) || blocked(u)) return;
+                  var key=u.split('#')[0].replace(/\\/$/,'').toLowerCase();
+                  if(seen[key]) return;
+                  seen[key]=1;
+                  t=(t||'').replace(/[\\r\\n\\t]+/g,' ').replace(/\\s+/g,' ').trim();
+                  found.push(u+'|||'+encodeURIComponent(t)+'|||'+(youtube(u)?'1':'0'));
+                }
+                document.querySelectorAll('a[href], [data-href]').forEach(function(a){
+                  var u=a.getAttribute('href')||a.getAttribute('data-href')||'';
+                  var h3=a.querySelector('h3');
+                  var t=h3 ? h3.innerText : (a.innerText||a.textContent||'');
+                  add(u,t);
+                });
+                document.querySelectorAll('h3').forEach(function(h){
+                  var a=h.closest('a');
+                  if(a) add(a.href,h.innerText||'');
+                });
+                var html=document.documentElement.outerHTML||'';
+                var raw=html.match(/(?:https?:\\/\\/|\\/url\\?)[^\\s\"'<>]+/g)||[];
+                raw.forEach(function(v){ if(v.indexOf('/url?')===0) v=location.origin+v; add(v,''); });
+                found.sort(function(a,b){
+                  function score(x){
+                    var z=decodeURIComponent(x).toLowerCase();
+                    var n=0;
+                    if(/\\.mp3|\\.m4a|download|\\bmusic\\b|\\bsong\\b|آهنگ|موزیک|دانلود/.test(z)) n+=5;
+                    if(/\\.com|\\.net|\\.org/.test(z)) n+=1;
+                    return n;
+                  }
+                  return score(b)-score(a);
+                });
+                MusicFinder.results(found.slice(0,40).join('###'));
+              }catch(e){ MusicFinder.results(''); }
+            })();
+        """.trimIndent()
+        try { web.evaluateJavascript(script, null) } catch (_: Exception) { finishSearch() }
+    }
+
+'''
+          s = s[:start] + new_extract + s[end:]
+
+          s = s.replace('.take(15)\n\n                discovered.filter', '.take(40)\n\n                discovered.filter')
+
+          # Give JS-heavy music pages enough time and retry extraction once before abandoning the page.
+          s = s.replace('handler.postDelayed(\n            timeout,\n            5000L\n        )', 'handler.postDelayed(\n            timeout,\n            9000L\n        )')
+
+          old = '''        val type = request("HEAD") ?: request("GET")
+        return type?.startsWith("audio/") == true ||
+            (type?.startsWith("video/") == true && url.contains("audio", true)) ||
+            ServerConfig.looksLikeAudioUrl(url)'''
+          new = '''        val type = request("HEAD") ?: request("GET")
+        val normalizedType = type?.substringBefore(';')?.trim().orEmpty()
+        return normalizedType.startsWith("audio/") ||
+            normalizedType.startsWith("video/") ||
+            normalizedType == "application/octet-stream" ||
+            normalizedType == "binary/octet-stream" ||
+            ServerConfig.looksLikeAudioUrl(url)'''
+          if old not in s:
+              raise SystemExit('probe block not found')
+          s = s.replace(old, new)
+
+          p.write_text(s, encoding='utf-8')
+
+      - name: Commit source fix and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
+          git rm .github/workflows/fix-search-now.yml
+          git commit -m "Fix Google result extraction and media discovery" || exit 0
+          git push
