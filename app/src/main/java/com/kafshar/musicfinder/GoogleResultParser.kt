@@ -1,6 +1,7 @@
 package com.kafshar.musicfinder
 
-import android.net.Uri
+import java.net.URI
+import java.net.URLDecoder
 
 /** Testable parser for Google/WebView result anchors. It does not know any music domains. */
 object GoogleResultParser {
@@ -9,16 +10,16 @@ object GoogleResultParser {
     fun normalizeUrl(raw: String, base: String = "https://www.google.com/"): String? {
         if (raw.isBlank()) return null
         return try {
-            val u = Uri.parse(raw.trim())
-            val host = u.host.orEmpty().lowercase()
+            val input = raw.trim()
+            val uri = URI(input)
+            val host = uri.host.orEmpty().lowercase()
             if (host.contains("google.")) {
-                val target = u.getQueryParameter("q")
-                    ?: u.getQueryParameter("url")
-                    ?: u.getQueryParameter("u")
+                val query = parseQuery(uri.rawQuery)
+                val target = query["q"] ?: query["url"] ?: query["u"]
                 if (!target.isNullOrBlank() && target.startsWith("http", true)) return target
             }
-            Uri.parse(base).buildUpon().encodedPath(u.encodedPath ?: "").encodedQuery(u.encodedQuery).build().toString().takeIf { it.startsWith("http", true) }
-                ?: raw
+            val resolved = URI(base).resolve(uri)
+            resolved.toString().takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
         } catch (_: Exception) { null }
     }
 
@@ -38,9 +39,14 @@ object GoogleResultParser {
         return results.values.toList()
     }
 
+    private fun parseQuery(raw: String?): Map<String, String> = raw.orEmpty().split('&').mapNotNull { part ->
+        val p = part.split('=', limit = 2)
+        if (p.size == 2) URLDecoder.decode(p[0], "UTF-8") to URLDecoder.decode(p[1], "UTF-8") else null
+    }.toMap()
+
     private fun isExternalHttp(url: String): Boolean {
         if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) return false
-        val host = Uri.parse(url).host?.lowercase().orEmpty()
+        val host = try { URI(url).host.orEmpty().lowercase() } catch (_: Exception) { "" }
         return host.isNotBlank() && !host.contains("google.") && host != "webcache.googleusercontent.com"
     }
 
