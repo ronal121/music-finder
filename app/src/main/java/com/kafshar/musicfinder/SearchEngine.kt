@@ -58,12 +58,21 @@ object SearchEngine {
         return variants.map { it.trim().replace(whitespace, " ") }.filter { it.isNotBlank() }.take(8)
     }
 
-    /** Search Google for the song itself, while biasing discovery toward playable music pages. */
+    /** Search Google for the song itself, without hard-coding music domains. */
     fun buildGoogleQuery(input: String): String {
-        val corrected = correctedQuery(input)
+        val original = displayQuery(input)
+        if (original.isBlank()) return "music mp3"
+        val corrected = correctedQuery(original)
         val clean = withoutSearchNoise(corrected)
-        if (clean.isBlank()) return "music mp3"
-        return if (clean == corrected) "$clean (mp3 OR آهنگ OR دانلود)" else "$corrected $clean (mp3 OR آهنگ OR دانلود)"
+        if (clean.isBlank()) return original
+        // Keep the user's spelling and only add generic music intent terms.
+        // For a typo, offer the corrected spelling as an OR alternative instead of
+        // replacing the user's query or duplicating it.
+        return if (corrected == normalizeQuery(original) || corrected == original) {
+            "$original (mp3 OR آهنگ OR دانلود)"
+        } else {
+            "($original OR $corrected) (mp3 OR آهنگ OR دانلود)"
+        }
     }
 
     fun parseArtistTitle(input: String): Pair<String?, String?> {
