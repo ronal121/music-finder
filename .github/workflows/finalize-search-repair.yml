@@ -28,9 +28,7 @@ jobs:
         return try {
             val host = URL(url).host.lowercase(Locale.US).removePrefix("www.")
             host == "google.com" || host.endsWith(".google.com") || host.matches(Regex("google\\.[a-z.]+"))
-        } catch (_: Exception) {
-            false
-        }
+        } catch (_: Exception) { false }
     }
 
     private fun isGoogleSearchUrl(url: String): Boolean {
@@ -40,262 +38,110 @@ jobs:
 
     private fun extractGoogleResults() {
         if (destroyed || searchGeneration <= 0) return
-
         val script = """
             (function(){
               try {
-                var found = [], seen = {};
-                function googleHost(h) {
-                  h = (h || '').toLowerCase().replace(/^www\\./, '');
-                  return h === 'google.com' || h.endsWith('.google.com') || /^google\\.[a-z.]+$/.test(h);
-                }
-                function unwrap(raw) {
-                  try {
-                    var u = new URL(raw, location.href);
-                    if (googleHost(u.hostname)) {
-                      var q = u.searchParams.get('q') || u.searchParams.get('url') || u.searchParams.get('u');
-                      if (q && /^https?:/i.test(q)) return q;
-                    }
-                    return u.href;
-                  } catch (e) { return ''; }
-                }
-                function blocked(raw) {
-                  try {
-                    var u = new URL(raw);
-                    var h = u.hostname.toLowerCase().replace(/^www\\./, '');
-                    if (googleHost(h)) return true;
-                    return h === 'accounts.google.com' || h === 'support.google.com' || h === 'maps.google.com' || h === 'translate.google.com';
-                  } catch (e) { return true; }
-                }
-                function isYoutube(raw) {
-                  try {
-                    var h = new URL(raw).hostname.toLowerCase().replace(/^www\\./, '');
-                    return h === 'youtube.com' || h.endsWith('.youtube.com') || h === 'youtu.be';
-                  } catch (e) { return false; }
-                }
-                function add(raw, text) {
-                  var u = unwrap(raw);
-                  if (!/^https?:/i.test(u) || blocked(u)) return;
-                  var key = u.split('#')[0].replace(/\\/$/, '').toLowerCase();
-                  if (seen[key]) return;
-                  seen[key] = 1;
-                  text = (text || '').replace(/[\\r\\n\\t]+/g, ' ').replace(/\\s+/g, ' ').trim();
-                  found.push(u + '|||' + encodeURIComponent(text) + '|||' + (isYoutube(u) ? '1' : '0'));
-                }
-                document.querySelectorAll('a[href], a[data-href], a[data-url]').forEach(function(a){
-                  add(a.getAttribute('href') || a.getAttribute('data-href') || a.getAttribute('data-url') || '', (a.querySelector('h3') || a).innerText || '');
-                });
-                document.querySelectorAll('h3').forEach(function(h){
-                  var a = h.closest('a');
-                  if (a) add(a.href, h.innerText || '');
-                });
-                document.querySelectorAll('[data-href]').forEach(function(a){ add(a.getAttribute('data-href'), a.innerText || ''); });
-                var html = document.documentElement ? document.documentElement.outerHTML : '';
-                (html.match(/https?:\\/\\/[^\\s\"'<>]+/g) || []).forEach(function(u){ add(u, ''); });
-                found.sort(function(a,b){
-                  function score(v){
-                    var x = decodeURIComponent(v).toLowerCase(), n = 0;
-                    if (/\\.mp3|\\.m4a|\\.aac|download|\\bmusic\\b|\\bsong\\b|آهنگ|موزیک|دانلود/.test(x)) n += 10;
-                    if (/youtube|youtu\\.be/.test(x)) n -= 5;
-                    return n;
-                  }
-                  return score(b) - score(a);
-                });
-                MusicFinder.results(found.slice(0, 40).join('###'));
-              } catch (e) {
-                MusicFinder.results('');
-              }
+                var found=[],seen={};
+                function gh(h){h=(h||'').toLowerCase().replace(/^www\\./,'');return h==='google.com'||h.endsWith('.google.com')||/^google\\.[a-z.]+$/.test(h);}
+                function unwrap(raw){try{var u=new URL(raw,location.href);if(gh(u.hostname)){var q=u.searchParams.get('q')||u.searchParams.get('url')||u.searchParams.get('u');if(q&&/^https?:/i.test(q))return q;}return u.href;}catch(e){return '';}}
+                function blocked(raw){try{var u=new URL(raw),h=u.hostname.toLowerCase().replace(/^www\\./,'');return gh(h)||h==='accounts.google.com'||h==='support.google.com'||h==='maps.google.com'||h==='translate.google.com';}catch(e){return true;}}
+                function yt(raw){try{var h=new URL(raw).hostname.toLowerCase().replace(/^www\\./,'');return h==='youtube.com'||h.endsWith('.youtube.com')||h==='youtu.be';}catch(e){return false;}}
+                function add(raw,text){var u=unwrap(raw);if(!/^https?:/i.test(u)||blocked(u))return;var k=u.split('#')[0].replace(/\\/$/,'').toLowerCase();if(seen[k])return;seen[k]=1;text=(text||'').replace(/[\\r\\n\\t]+/g,' ').replace(/\\s+/g,' ').trim();found.push(u+'|||'+encodeURIComponent(text)+'|||'+(yt(u)?'1':'0'));}
+                document.querySelectorAll('a[href],a[data-href],a[data-url]').forEach(function(a){add(a.getAttribute('href')||a.getAttribute('data-href')||a.getAttribute('data-url')||'',(a.querySelector('h3')||a).innerText||'');});
+                document.querySelectorAll('h3').forEach(function(h){var a=h.closest('a');if(a)add(a.href,h.innerText||'');});
+                var html=document.documentElement?document.documentElement.outerHTML:'';(html.match(/https?:\\/\\/[^\\s\"'<>]+/g)||[]).forEach(function(u){add(u,'');});
+                found.sort(function(a,b){function sc(v){var x=decodeURIComponent(v).toLowerCase(),n=0;if(/\\.mp3|\\.m4a|\\.aac|download|\\bmusic\\b|\\bsong\\b|آهنگ|موزیک|دانلود/.test(x))n+=10;if(/youtube|youtu\\.be/.test(x))n-=5;return n;}return sc(b)-sc(a);});
+                MusicFinder.results(found.slice(0,40).join('###'));
+              }catch(e){MusicFinder.results('');}
             })();
         """.trimIndent()
-
-        try {
-            web.evaluateJavascript(script, null)
-        } catch (_: Exception) {
-            finishSearch()
-        }
+        try { web.evaluateJavascript(script,null) } catch (_: Exception) { finishSearch() }
     }
 
     private fun extractMusicPage(pageUrl: String) {
         if (destroyed || resultGeneration != searchGeneration) return
         expectedPageUrl = pageUrl
-
         val script = """
             (function(){
-              try {
-                var title = '', artist = '', cover = '', aud = [];
-                function add(v) {
-                  if (!v) return;
-                  try { v = new URL(v, location.href).href; } catch(e) { return; }
-                  if (!/^https?:/i.test(v)) return;
-                  if (aud.indexOf(v) < 0 && aud.length < 100) aud.push(v);
-                }
-                var og = document.querySelector('meta[property="og:title"]'); if (og) title = og.content || '';
-                var h1 = document.querySelector('h1'); if (!title && h1) title = h1.innerText || '';
-                var ma = document.querySelector('meta[property="music:musician"]'); if (ma) artist = ma.content || '';
-                var im = document.querySelector('meta[property="og:image"]'); if (im) cover = im.content || '';
-                document.querySelectorAll('audio,video,source,a').forEach(function(el){
-                  add(el.currentSrc || el.src || el.href || '');
-                  ['data-src','data-url','data-audio','data-mp3','data-file','data-download','data-media','data-stream','data-song','data-track'].forEach(function(k){ add(el.getAttribute(k) || ''); });
-                });
-                document.querySelectorAll('script,[type="application/ld+json"]').forEach(function(el){
-                  var text = el.textContent || '';
-                  (text.match(/https?:\\/\\/[^\\s\"'<>]+/g) || []).forEach(add);
-                });
-                try {
-                  performance.getEntriesByType('resource').forEach(function(e){
-                    var u = e.name || '';
-                    if (/audio|\\.mp3|\\.m4a|\\.aac|\\.ogg|\\.opus|\\.wav|\\.flac|\\.webm|download|stream|media|\\/file\\//i.test(u)) add(u);
-                  });
-                } catch(e) {}
-                var html = document.documentElement ? document.documentElement.outerHTML : '';
-                (html.match(/https?:\\/\\/[^\\s\"'<>]+/g) || []).forEach(function(v){
-                  if (/\\.mp3|\\.m4a|\\.aac|\\.ogg|\\.opus|\\.wav|\\.flac|download|stream|media|\\/audio\\//i.test(v)) add(v);
-                });
-                MusicFinder.page(encodeURIComponent(title) + '###' + encodeURIComponent(artist) + '###' + encodeURIComponent(cover) + '###' + encodeURIComponent(aud.join('|||')));
-              } catch(e) {
-                MusicFinder.page('######');
-              }
+              try{
+                var title='',artist='',cover='',aud=[];
+                function add(v){if(!v)return;try{v=new URL(v,location.href).href;}catch(e){return;}if(!/^https?:/i.test(v))return;if(aud.indexOf(v)<0&&aud.length<100)aud.push(v);}
+                var og=document.querySelector('meta[property="og:title"]');if(og)title=og.content||'';
+                var h=document.querySelector('h1');if(!title&&h)title=h.innerText||'';
+                var ma=document.querySelector('meta[property="music:musician"]');if(ma)artist=ma.content||'';
+                var im=document.querySelector('meta[property="og:image"]');if(im)cover=im.content||'';
+                document.querySelectorAll('audio,video,source,a').forEach(function(el){add(el.currentSrc||el.src||el.href||'');['data-src','data-url','data-audio','data-mp3','data-file','data-download','data-media','data-stream','data-song','data-track'].forEach(function(k){add(el.getAttribute(k)||'');});});
+                document.querySelectorAll('script,[type="application/ld+json"]').forEach(function(el){var text=el.textContent||'';(text.match(/https?:\\/\\/[^\\s\"'<>]+/g)||[]).forEach(add);});
+                try{performance.getEntriesByType('resource').forEach(function(e){var u=e.name||'';if(/audio|\\.mp3|\\.m4a|\\.aac|\\.ogg|\\.opus|\\.wav|\\.flac|\\.webm|download|stream|media|\\/file\\//i.test(u))add(u);});}catch(e){}
+                var html=document.documentElement?document.documentElement.outerHTML:'';(html.match(/https?:\\/\\/[^\\s\"'<>]+/g)||[]).forEach(function(v){if(/\\.mp3|\\.m4a|\\.aac|\\.ogg|\\.opus|\\.wav|\\.flac|download|stream|media|\\/audio\\//i.test(v))add(v);});
+                MusicFinder.page(encodeURIComponent(title)+'###'+encodeURIComponent(artist)+'###'+encodeURIComponent(cover)+'###'+encodeURIComponent(aud.join('|||')));
+              }catch(e){MusicFinder.page('######');}
             })();
         """.trimIndent()
-
-        try {
-            web.evaluateJavascript(script, null)
-        } catch (_: Exception) {
-            finishCurrentResultPage()
-        }
+        try { web.evaluateJavascript(script,null) } catch (_: Exception) { finishCurrentResultPage() }
     }
 
-    private data class MediaProbe(val url: String, val mime: String, val score: Int)
+    private data class MediaProbe(val url: String,val mime: String,val score: Int)
 
-    private fun validateAndAddAudioCandidates(
-        title: String,
-        artist: String,
-        cover: String,
-        candidates: List<String>,
-        pageUrl: String
-    ) {
-        val allCandidates = (candidates + networkMediaCandidates.toList())
-            .filter { it.startsWith("http", true) }
-            .distinct()
-            .take(80)
-        if (allCandidates.isEmpty()) {
-            finishCurrentResultPage()
-            return
-        }
-
-        val generation = searchGeneration
-        io.execute {
-            val probes = allCandidates
-                .mapNotNull { probeMediaUrl(it, pageUrl) }
-                .sortedByDescending { it.score }
-                .take(8)
-
-            runOnUiThread {
-                if (destroyed || generation != searchGeneration) return@runOnUiThread
-                probes.forEach { probe ->
-                    val song = SongResult(
-                        probe.url,
-                        title.ifBlank { "Music" },
-                        artist.ifBlank { "Unknown Artist" },
-                        getSiteName(pageUrl),
-                        cover,
-                        false,
-                        pageUrl
-                    )
-                    if (songs.none { it.url == song.url }) {
-                        songs.add(song)
-                        addSongView(song, songs.lastIndex)
-                    }
-                }
-                logDiscovery("SUMMARY", pageUrl, "candidates=${allCandidates.size} playable=${probes.size} total=${songs.size}")
-                if (songs.isNotEmpty()) status.text = "${songs.size} آهنگ پیدا شد"
+    private fun validateAndAddAudioCandidates(title:String,artist:String,cover:String,candidates:List<String>,pageUrl:String){
+        val all=(candidates+networkMediaCandidates.toList()).filter{it.startsWith("http",true)}.distinct().take(80)
+        if(all.isEmpty()){finishCurrentResultPage();return}
+        val generation=searchGeneration
+        io.execute{
+            val probes=all.mapNotNull{probeMediaUrl(it,pageUrl)}.sortedByDescending{it.score}.take(8)
+            runOnUiThread{
+                if(destroyed||generation!=searchGeneration)return@runOnUiThread
+                probes.forEach{probe->val song=SongResult(probe.url,title.ifBlank{"Music"},artist.ifBlank{"Unknown Artist"},getSiteName(pageUrl),cover,false,pageUrl);if(songs.none{it.url==song.url}){songs.add(song);addSongView(song,songs.lastIndex)}}
+                logDiscovery("SUMMARY",pageUrl,"candidates=${all.size} playable=${probes.size} total=${songs.size}")
+                if(songs.isNotEmpty())status.text="${songs.size} آهنگ پیدا شد"
                 finishCurrentResultPage()
             }
         }
     }
 
-    private fun probeMediaUrl(url: String, pageUrl: String): MediaProbe? {
-        if (!ServerConfig.isAllowedMediaUrl(url, pageUrl)) return null
-        return try {
-            val c = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                instanceFollowRedirects = true
-                connectTimeout = 5000
-                readTimeout = 5000
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36")
-                if (pageUrl.isNotBlank()) setRequestProperty("Referer", pageUrl)
-                setRequestProperty("Range", "bytes=0-0")
-                setRequestProperty("Accept", "audio/*,video/*,application/octet-stream;q=0.9,*/*;q=0.1")
-            }
-            c.connect()
-            val code = c.responseCode
-            val finalUrl = c.url?.toString().orEmpty().ifBlank { url }
-            val mime = c.contentType?.substringBefore(';')?.trim()?.lowercase(Locale.US).orEmpty()
-            val length = c.contentLengthLong
-            try { c.inputStream.use { it.read(ByteArray(1)) } } catch (_: Exception) { }
-            c.disconnect()
-            if (code !in 200..399) return null
-            if (ServerConfig.isObviousNonMediaUrl(finalUrl)) return null
-            val score = scoreMediaCandidate(finalUrl, mime, pageUrl, length)
-            if (score < 25) {
-                logDiscovery("MEDIA_REJECTED", finalUrl, "mime=$mime score=$score")
-                null
-            } else {
-                logDiscovery("MEDIA_SELECTED", finalUrl, "mime=$mime score=$score bytes=$length")
-                MediaProbe(finalUrl, mime, score)
-            }
-        } catch (e: Exception) {
-            logDiscovery("MEDIA_REJECTED", url, e.javaClass.simpleName + ":" + (e.message ?: ""))
-            null
-        }
+    private fun probeMediaUrl(url:String,pageUrl:String):MediaProbe?{
+        if(!ServerConfig.isAllowedMediaUrl(url,pageUrl))return null
+        return try{
+            val c=(URL(url).openConnection() as HttpURLConnection).apply{requestMethod="GET";instanceFollowRedirects=true;connectTimeout=5000;readTimeout=5000;setRequestProperty("User-Agent","Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36");if(pageUrl.isNotBlank())setRequestProperty("Referer",pageUrl);setRequestProperty("Range","bytes=0-0");setRequestProperty("Accept","audio/*,video/*,application/octet-stream;q=0.9,*/*;q=0.1")}
+            c.connect();val code=c.responseCode;val finalUrl=c.url?.toString().orEmpty().ifBlank{url};val mime=c.contentType?.substringBefore(';')?.trim()?.lowercase(Locale.US).orEmpty();val length=c.contentLengthLong;try{c.inputStream.use{it.read(ByteArray(1))}}catch(_:Exception){};c.disconnect()
+            if(code !in 200..399||ServerConfig.isObviousNonMediaUrl(finalUrl))return null
+            val score=scoreMediaCandidate(finalUrl,mime,pageUrl,length)
+            if(score<25){logDiscovery("MEDIA_REJECTED",finalUrl,"mime=$mime score=$score");null}else{logDiscovery("MEDIA_SELECTED",finalUrl,"mime=$mime score=$score bytes=$length");MediaProbe(finalUrl,mime,score)}
+        }catch(e:Exception){logDiscovery("MEDIA_REJECTED",url,e.javaClass.simpleName+":"+(e.message?:""));null}
     }
 
-    private fun scoreMediaCandidate(url: String, mime: String, pageUrl: String, length: Long): Int {
-        if (ServerConfig.isYouTubeUrl(url)) return -1000
-        var score = 0
-        val path = url.substringBefore('?').substringBefore('#').lowercase(Locale.US)
-        if (mime.startsWith("audio/")) score += 100
-        if (mime.startsWith("video/")) score += 20
-        if (mime == "application/octet-stream" || mime == "binary/octet-stream") score += 45
-        if (path.endsWith(".mp3") || path.endsWith(".m4a") || path.endsWith(".aac") || path.endsWith(".ogg") || path.endsWith(".opus") || path.endsWith(".wav") || path.endsWith(".flac")) score += 80
-        if (ServerConfig.looksLikeAudioUrl(url)) score += 60
-        if (pageUrl.isNotBlank()) score += 20
-        if (length > 100_000) score += 10
+    private fun scoreMediaCandidate(url:String,mime:String,pageUrl:String,length:Long):Int{
+        if(ServerConfig.isYouTubeUrl(url))return -1000
+        var score=0;val path=url.substringBefore('?').substringBefore('#').lowercase(Locale.US)
+        if(mime.startsWith("audio/"))score+=100
+        if(mime.startsWith("video/"))score+=20
+        if(mime=="application/octet-stream"||mime=="binary/octet-stream")score+=45
+        if(path.endsWith(".mp3")||path.endsWith(".m4a")||path.endsWith(".aac")||path.endsWith(".ogg")||path.endsWith(".opus")||path.endsWith(".wav")||path.endsWith(".flac"))score+=80
+        if(ServerConfig.looksLikeAudioUrl(url))score+=60
+        if(pageUrl.isNotBlank())score+=20
+        if(length>100_000)score+=10
         return score
     }
 
-    private fun logDiscovery(stage: String, url: String, detail: String) {
-        android.util.Log.d("MusicFinder", "$stage url=${url.take(220)} detail=$detail")
-    }
+    private fun logDiscovery(stage:String,url:String,detail:String){android.util.Log.d("MusicFinder","$stage url=${url.take(220)} detail=$detail")}
 
 '''
-
           s = s[:start] + block + s[end:]
-
-          # Merge WebView network candidates into the Bridge page callback.
           old = '''                val audioCandidates = decode(parts[3])
                     .split("|||")
                     .map { it.trim() }
                     .filter { it.startsWith("http", true) }
                     .distinct()
                     .take(30)'''
-          new = '''                val audioCandidates = (decode(parts[3])
-                    .split("|||") + networkMediaCandidates.toList())
+          new = '''                val audioCandidates = (decode(parts[3]).split("|||") + networkMediaCandidates.toList())
                     .map { it.trim() }
                     .filter { it.startsWith("http", true) }
                     .distinct()
                     .take(80)'''
-          if old in s:
-              s = s.replace(old, new, 1)
-
-          # Give heavy JS/media pages enough time, without changing search cancellation semantics.
-          s = s.replace('},\n            5000L\n        )', '},\n            12000L\n        )')
-
-          p.write_text(s, encoding='utf-8')
-
-          # Remove this migration workflow after the source commit is made.
-          wf = Path('.github/workflows/finalize-search-repair.yml')
-          if wf.exists(): wf.unlink()
+          if old in s: s=s.replace(old,new,1)
+          s=s.replace('},\n            5000L\n        )','},\n            12000L\n        )')
+          p.write_text(s,encoding='utf-8')
+          Path('.github/workflows/finalize-search-repair.yml').unlink(missing_ok=True)
 
       - name: Commit source and remove migration
         shell: bash
