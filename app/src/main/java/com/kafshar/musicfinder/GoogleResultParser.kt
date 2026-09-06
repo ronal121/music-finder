@@ -28,7 +28,7 @@ object GoogleResultParser {
         val results = LinkedHashMap<String, Result>()
         val anchor = Regex(
             "<a\\b[^>]*href\\s*=\\s*[\\\"']([^\\\"']+)[\\\"'][^>]*>(.*?)</a>",
-            RegexOption.IGNORE_CASE + RegexOption.DOT_MATCHES_ALL
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
         )
         for (m in anchor.findAll(html)) {
             if (results.size >= limit) break
