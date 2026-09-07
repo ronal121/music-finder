@@ -4,22 +4,18 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "app/src/main/java/com/kafshar/musicfinder/MainActivity.kt"
 MANIFEST = ROOT / "app/src/main/AndroidManifest.xml"
-MARKER = "// RUNTIME_SEARCH_FIX_V3"
+MARKER = "// RUNTIME_SEARCH_FIX_V4"
 
 text = MAIN.read_text(encoding="utf-8")
 if MARKER not in text:
-    text = text.replace(
-        "import java.util.Locale\n",
-        "import java.util.Locale\nimport java.util.Collections\n",
-        1,
-    )
-    text = text.replace(
-        "    private var webRecreating = false\n",
-        "    private var webRecreating = false\n\n"
-        "    // RUNTIME_SEARCH_FIX_V3: observe media created by the real WebView player.\n"
-        "    private val capturedMediaUrls = Collections.synchronizedSet(mutableSetOf<String>())\n",
-        1,
-    )
+    if "import java.util.Collections\n" not in text:
+        text = text.replace("import java.util.Locale\n", "import java.util.Locale\nimport java.util.Collections\n", 1)
+    state_anchor = "    private var webRecreating = false\n"
+    state = "    private var webRecreating = false\n\n    // RUNTIME_SEARCH_FIX_V4\n    private val capturedMediaUrls = Collections.synchronizedSet(mutableSetOf<String>())\n    private var runtimeTitle = \"Music\"\n    private var runtimeArtist = \"Unknown Artist\"\n    private var runtimeCover = \"\"\n"
+    if "capturedMediaUrls" not in text:
+        if state_anchor not in text:
+            raise SystemExit("webRecreating state anchor not found")
+        text = text.replace(state_anchor, state, 1)
 
     extract = '''    private fun extractMusicPage(pageUrl: String) {
         if (destroyed || resultGeneration != searchGeneration) return
@@ -37,10 +33,10 @@ if MARKER not in text:
                   ['src','data-src','data-url','data-audio','data-file','data-mp3','data-stream'].forEach(function(k){ add(e.getAttribute(k)); });
                 });
                 try {
-                  performance.getEntriesByType('resource').forEach(function(e){ add(e.name); });
+                  performance.getEntriesByType('resource').forEach(function(e){ if (e && e.name) add(e.name); });
                 } catch(e) {}
                 MusicFinder.runtimeMedia(encodeURIComponent(JSON.stringify(urls)));
-                var html = document.documentElement ? document.documentElement.outerHTML : document.body.innerHTML;
+                var html = document.documentElement ? document.documentElement.outerHTML : '';
                 MusicFinder.pageHtml(encodeURIComponent(html || ''));
               } catch(e) {
                 MusicFinder.runtimeMedia('');
@@ -50,26 +46,14 @@ if MARKER not in text:
         """.trimIndent()
         try { web.evaluateJavascript(script, null) } catch (_: Exception) { finishCurrentResultPage() }
     }
+
 '''
-    text, count = re.subn(
-        r"    private fun extractMusicPage\(pageUrl: String\) \{.*?\n    \}\n\n    private fun validateAndAddAudioCandidates",
-        extract + "\n    private fun validateAndAddAudioCandidates",
-        text,
-        count=1,
-        flags=re.S,
-    )
+    pattern = r"    private fun extractMusicPage\(pageUrl: String\) \{.*?\n    \}\n\n    private fun validateAndAddAudioCandidates"
+    text, count = re.subn(pattern, extract + "    private fun validateAndAddAudioCandidates", text, count=1, flags=re.S)
     if count != 1:
         raise SystemExit("extractMusicPage function not found")
 
-    helper = '''    private var runtimeTitle = "Music"
-    private var runtimeArtist = "Unknown Artist"
-    private var runtimeCover = ""
-
-    private fun currentPageTitle(): String = runtimeTitle.ifBlank { "Music" }
-    private fun currentPageArtist(): String = runtimeArtist.ifBlank { "Unknown Artist" }
-    private fun currentPageCover(): String = runtimeCover
-
-    private fun isLikelyRuntimeMediaUrl(url: String): Boolean {
+    helper = '''    private fun isLikelyRuntimeMediaUrl(url: String): Boolean {
         val lower = url.lowercase(Locale.US)
         if (!lower.startsWith("http://") && !lower.startsWith("https://")) return false
         if (ServerConfig.isYouTubeUrl(url)) return false
@@ -80,7 +64,11 @@ if MARKER not in text:
     }
 
 '''
-    text = text.replace("    private fun extractMusicPage(pageUrl: String) {\n", helper + "    private fun extractMusicPage(pageUrl: String) {\n", 1)
+    if "private fun isLikelyRuntimeMediaUrl" not in text:
+        anchor = "    private fun extractMusicPage(pageUrl: String) {\n"
+        if anchor not in text:
+            raise SystemExit("extractMusicPage anchor missing")
+        text = text.replace(anchor, helper + anchor, 1)
 
     bridge = '''        @JavascriptInterface
         fun runtimeMedia(raw: String?) {
@@ -95,51 +83,40 @@ if MARKER not in text:
                 capturedMediaUrls.addAll(candidates)
                 if (candidates.isNotEmpty()) {
                     validateAndAddAudioCandidates(
-                        currentPageTitle(), currentPageArtist(), currentPageCover(), candidates, expectedPageUrl
+                        runtimeTitle.ifBlank { "Music" },
+                        runtimeArtist.ifBlank { "Unknown Artist" },
+                        runtimeCover,
+                        candidates,
+                        expectedPageUrl
                     )
                 }
             }
         }
 
 '''
-    anchor = "        @JavascriptInterface\n        fun page(raw: String?) {\n"
-    if anchor not in text:
-        raise SystemExit("Bridge page() anchor not found")
-    text = text.replace(anchor, bridge + anchor, 1)
+    if "fun runtimeMedia(raw: String?)" not in text:
+        anchor = "        @JavascriptInterface\n        fun pageHtml(raw: String?) {\n"
+        if anchor not in text:
+            raise SystemExit("pageHtml anchor not found")
+        text = text.replace(anchor, bridge + anchor, 1)
 
-    # Preserve parsed metadata for dynamically discovered player URLs.
-    text = re.sub(
-        r"(val parsed = MusicPageParser\.parse\(html, expectedPageUrl\).*?val candidates = parsed\.audioCandidates\n)",
-        r"\1                runtimeTitle = parsed.title.ifBlank { \"Music\" }\n                runtimeArtist = parsed.artist.ifBlank { \"Unknown Artist\" }\n                runtimeCover = parsed.cover\n",
-        text,
-        count=1,
-        flags=re.S,
-    )
-    text = text.replace(
-        "                val audioCandidates = decode(parts[3])",
-        "                runtimeTitle = title\n                runtimeArtist = artist\n                runtimeCover = cover\n\n                val audioCandidates = decode(parts[3])",
-        1,
-    )
+    old = "                val parsed = MusicPageParser.parse(html, expectedPageUrl)\n                val candidates = parsed.audioCandidates\n"
+    new = "                val parsed = MusicPageParser.parse(html, expectedPageUrl)\n                runtimeTitle = parsed.title.ifBlank { \"Music\" }\n                runtimeArtist = parsed.artist.ifBlank { \"Unknown Artist\" }\n                runtimeCover = parsed.cover\n                val candidates = parsed.audioCandidates\n"
+    if old in text:
+        text = text.replace(old, new, 1)
 
-    # Accept media URLs observed from the WebView even when CDN HEAD/range probes fail.
-    text, count = re.subn(
-        r"(private fun probeMediaUrl\(url: String, pageUrl: String\): Boolean \{\s*if \(!ServerConfig\.isAllowedMediaUrl\(url, pageUrl\)\) return false\s*)",
-        r"\1        if (capturedMediaUrls.contains(url)) return true\n",
-        text,
-        count=1,
-    )
+    page_old = "                val cover =\n                    decode(parts[2])\n                        .trim()\n\n                val audioCandidates = decode(parts[3])"
+    page_new = "                val cover =\n                    decode(parts[2])\n                        .trim()\n\n                runtimeTitle = title\n                runtimeArtist = artist\n                runtimeCover = cover\n\n                val audioCandidates = decode(parts[3])"
+    if page_old in text:
+        text = text.replace(page_old, page_new, 1)
+
+    probe_pattern = r"(private fun probeMediaUrl\(url: String, pageUrl: String\): Boolean \{\s*if \(!ServerConfig\.isAllowedMediaUrl\(url, pageUrl\)\) return false\s*)"
+    text, count = re.subn(probe_pattern, r"\1        if (capturedMediaUrls.contains(url)) return true\n", text, count=1)
     if count != 1:
         raise SystemExit("probeMediaUrl function not found")
 
-    # Reset per-page capture state and extend dynamic-player grace period.
-    text = text.replace(
-        "        expectedPageUrl = url\n\n        pageTimeout?.let {",
-        "        expectedPageUrl = url\n        runtimeTitle = \"Music\"\n        runtimeArtist = \"Unknown Artist\"\n        runtimeCover = \"\"\n        capturedMediaUrls.clear()\n\n        pageTimeout?.let {",
-        1,
-    )
-    text = text.replace("            7500L\n", "            15000L\n", 1)
-
-    intercept = '''                override fun shouldInterceptRequest(
+    if "override fun shouldInterceptRequest" not in text:
+        intercept = '''                override fun shouldInterceptRequest(
                     view: WebView,
                     request: WebResourceRequest
                 ): android.webkit.WebResourceResponse? {
@@ -150,7 +127,11 @@ if MARKER not in text:
                             handler.post {
                                 if (!destroyed && resultGeneration == searchGeneration) {
                                     validateAndAddAudioCandidates(
-                                        currentPageTitle(), currentPageArtist(), currentPageCover(), listOf(requestUrl), expectedPageUrl
+                                        runtimeTitle.ifBlank { "Music" },
+                                        runtimeArtist.ifBlank { "Unknown Artist" },
+                                        runtimeCover,
+                                        listOf(requestUrl),
+                                        expectedPageUrl
                                     )
                                 }
                             }
@@ -160,27 +141,32 @@ if MARKER not in text:
                 }
 
 '''
-    if "override fun shouldInterceptRequest(" not in text:
         anchor = "                override fun onPageFinished(\n                    view: WebView,\n                    url: String\n                ) {\n"
         if anchor not in text:
-            raise SystemExit("WebView onPageFinished anchor not found")
+            raise SystemExit("onPageFinished anchor not found")
         text = text.replace(anchor, intercept + anchor, 1)
 
-    # Route YouTube results to the in-app player instead of ACTION_VIEW.
-    old = '''                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)))'''
-    new = '''                    val videoId = youtubeVideoId(url)
-                    if (videoId.isBlank()) {
-                        Toast.makeText(this@MainActivity, "شناسه ویدئوی YouTube پیدا نشد", Toast.LENGTH_SHORT).show()
-                    } else {
-                        startActivity(Intent(this@MainActivity, YouTubePlayerActivity::class.java).apply {
-                            putExtra(YouTubePlayerActivity.EXTRA_VIDEO_ID, videoId)
-                            putExtra(YouTubePlayerActivity.EXTRA_TITLE, title)
-                        })
-                    }'''
-    if old not in text:
-        raise SystemExit("YouTube ACTION_VIEW call not found")
-    text = text.replace(old, new, 1)
-    text = text.replace("text = \"YouTube • باز کردن\"", "text = \"YouTube • پخش داخل برنامه\"", 1)
+    reset_old = "        expectedPageUrl = url\n\n        pageTimeout?.let {"
+    reset_new = "        expectedPageUrl = url\n        runtimeTitle = \"Music\"\n        runtimeArtist = \"Unknown Artist\"\n        runtimeCover = \"\"\n        capturedMediaUrls.clear()\n\n        pageTimeout?.let {"
+    if reset_old in text:
+        text = text.replace(reset_old, reset_new, 1)
+    text = text.replace("            7500L\n", "            15000L\n", 1)
+
+    yt_pattern = r"(private fun addYouTubeView\(url: String, title: String\) \{.*?setOnClickListener \{\s*)try \{\s*startActivity\(Intent\(Intent\.ACTION_VIEW, android\.net\.Uri\.parse\(url\)\)\)\s*\} catch \(_:\s*Exception\) \{.*?\}\s*(\})"
+    def yt_repl(m):
+        return m.group(1) + '''val videoId = youtubeVideoId(url)
+                if (videoId.isBlank()) {
+                    Toast.makeText(this@MainActivity, "شناسه ویدئوی YouTube پیدا نشد", Toast.LENGTH_SHORT).show()
+                } else {
+                    startActivity(Intent(this@MainActivity, YouTubePlayerActivity::class.java).apply {
+                        putExtra(YouTubePlayerActivity.EXTRA_VIDEO_ID, videoId)
+                        putExtra(YouTubePlayerActivity.EXTRA_TITLE, title)
+                    })
+                }''' + "\n            " + m.group(2)
+    text, count = re.subn(yt_pattern, yt_repl, text, count=1, flags=re.S)
+    if count != 1:
+        raise SystemExit("addYouTubeView ACTION_VIEW block not found")
+    text = text.replace('text = "YouTube • باز کردن"', 'text = "YouTube • پخش داخل برنامه"', 1)
 
     MAIN.write_text(text, encoding="utf-8")
 
@@ -190,7 +176,6 @@ if activity not in manifest:
     anchor = '        <activity android:name=".MainActivity" android:exported="false" />\n'
     if anchor not in manifest:
         raise SystemExit("MainActivity manifest anchor not found")
-    manifest = manifest.replace(anchor, anchor + "\n" + activity, 1)
-    MANIFEST.write_text(manifest, encoding="utf-8")
+    MANIFEST.write_text(manifest.replace(anchor, anchor + activity, 1), encoding="utf-8")
 
-print("Runtime search/player patch applied")
+print("Runtime search/player patch V4 applied")
