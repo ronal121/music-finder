@@ -10,85 +10,91 @@ data class ParsedMusicPage(
     val audioCandidates: List<String>
 )
 
-/**
- * Extracts playable media from real-world music pages.
- *
- * Music sites frequently do not expose an <audio src="..."> element. They put the
- * media URL in JSON/JS player configuration, data-* attributes, OpenGraph metadata,
- * or escaped strings. This parser deliberately does not depend on a fixed site list.
- */
+/** Site-agnostic extraction of playable media from music pages. */
 object MusicPageParser {
     private val mediaKeys = setOf(
         "data-src", "data-url", "data-audio", "data-mp3", "data-file",
         "data-download", "data-media", "data-stream", "src", "href",
         "file", "url", "audio", "audio_url", "audioUrl", "mp3",
         "mp3_url", "mp3Url", "download", "download_url", "downloadUrl",
-        "stream", "stream_url", "streamUrl", "source", "source_url", "sourceUrl"
+        "stream", "stream_url", "streamUrl", "source", "source_url", "sourceUrl",
+        "content", "data-content"
     )
 
     private val audioExtensions = Regex(
-        "\\.(?:mp3|m4a|aac|ogg|opus|wav|flac|webm)(?:$|[?#&])",
+        "\\.(?:mp3|m4a|aac|ogg|oga|opus|wav|flac|webm)(?:$|[?#&])",
         RegexOption.IGNORE_CASE
     )
 
     private val mediaPath = Regex(
-        "(?:/download(?:/|\\?|$)|/dl/|/stream(?:/|\\?|$)|/audio(?:/|\\?|$)|/media(?:/|\\?|$)|" +
+        "(?:/download(?:/|\\?|$)|/dl(?:/|\\?|$)|/stream(?:/|\\?|$)|/audio(?:/|\\?|$)|/media(?:/|\\?|$)|" +
             "download\\.(?:php|aspx|asp|jsp)|getfile|mediafile|[?&](?:type|format|mime)=audio)",
         RegexOption.IGNORE_CASE
     )
 
     private val urlPattern = Regex(
-        "https?://[^\\s\\\"'<>\\\\]+",
+        "https?://[^\\s\\\"'<>\\\\]+|//[^\\s\\\"'<>\\\\]+",
         RegexOption.IGNORE_CASE
     )
 
     fun parse(html: String, pageUrl: String): ParsedMusicPage {
-        val title = firstMeta(html, "og:title").ifBlank { firstMeta(html, "twitter:title") }
-            .ifBlank { firstTagText(html, "h1") }
-        val artist = firstMeta(html, "music:musician").ifBlank { firstMeta(html, "author") }
-            .ifBlank { firstMeta(html, "twitter:creator") }
-        val cover = firstMeta(html, "og:image").ifBlank { firstMeta(html, "twitter:image") }
+        val normalizedHtml = unescape(html)
+        val title = firstMeta(normalizedHtml, "og:title").ifBlank { firstMeta(normalizedHtml, "twitter:title") }
+            .ifBlank { firstTagText(normalizedHtml, "h1") }
+        val artist = firstMeta(normalizedHtml, "music:musician").ifBlank { firstMeta(normalizedHtml, "author") }
+            .ifBlank { firstMeta(normalizedHtml, "twitter:creator") }
+        val cover = firstMeta(normalizedHtml, "og:image").ifBlank { firstMeta(normalizedHtml, "twitter:image") }
         val candidates = LinkedHashSet<String>()
 
-        // Standard media/source elements.
+        // Standard HTML5 media plus preload/link hints.
         val mediaTag = Regex(
-            "<(?:audio|video|source|a)\\b[^>]*>",
+            "<(?:audio|video|source|a|link)\\b[^>]*>",
             RegexOption.IGNORE_CASE
         )
-        for (m in mediaTag.findAll(html)) {
+        for (m in mediaTag.findAll(normalizedHtml)) {
             collectAttributes(m.value, pageUrl, candidates)
         }
 
-        // Any absolute media-looking URL in the document or script blocks.
-        val escapedHtml = unescape(html)
-        for (u in urlPattern.findAll(escapedHtml)) {
+        // OpenGraph/Twitter audio metadata and other common meta names.
+        val meta = Regex("<meta\\b[^>]*>", RegexOption.IGNORE_CASE)
+        for (m in meta.findAll(normalizedHtml)) {
+            val tag = m.value
+            val key = attrValue(tag, "property").ifBlank { attrValue(tag, "name") }.lowercase()
+            val value = attrValue(tag, "content")
+            if (value.isBlank()) continue
+            if (key.contains("audio") || key.contains("stream") || key.contains("media") ||
+                key.contains("mp3") || key.contains("download")) {
+                normalizeUrl(value, pageUrl)?.let { if (!ServerConfig.isObviousNonMediaUrl(it)) candidates += it }
+            }
+        }
+
+        // Absolute and protocol-relative media-looking URLs anywhere in HTML/JS.
+        for (u in urlPattern.findAll(normalizedHtml)) {
             val candidate = normalizeUrl(u.value, pageUrl) ?: continue
             if (looksLikeMedia(candidate)) candidates += candidate
         }
 
-        // Player configuration is commonly JSON such as {"file":"..."},
-        // {"audioUrl":"..."}, {"download_url":"..."}, etc. Accept the URL even
-        // when it is extensionless; the caller will perform an HTTP media probe.
+        // JSON/player configuration. Do not require an audio extension: many CDNs use
+        // extensionless endpoints and the caller validates the response MIME type.
         val jsonValue = Regex(
-            "[\\\"']([A-Za-z0-9_-]*(?:audio|mp3|stream|download|media|source|file|url)[A-Za-z0-9_-]*)[\\\"']\\s*[:=]\\s*[\\\"']([^\\\"']+)[\\\"']",
+            "[\\\"']([A-Za-z0-9:_-]*(?:audio|mp3|stream|download|media|source|file|url)[A-Za-z0-9:_-]*)[\\\"']\\s*[:=]\\s*[\\\"']([^\\\"']+)[\\\"']",
             RegexOption.IGNORE_CASE
         )
-        for (m in jsonValue.findAll(escapedHtml)) {
-            val key = m.groupValues[1]
-            if (!isMediaKey(key)) continue
+        for (m in jsonValue.findAll(normalizedHtml)) {
             val candidate = normalizeUrl(m.groupValues[2], pageUrl) ?: continue
             if (!ServerConfig.isObviousNonMediaUrl(candidate)) candidates += candidate
         }
 
-        // JS often stores an encoded/escaped URL in a player object. Look for a
-        // media keyword near each URL instead of requiring an .mp3 suffix.
-        for (m in urlPattern.findAll(escapedHtml)) {
-            val start = maxOf(0, m.range.first - 180)
-            val end = minOf(escapedHtml.length, m.range.last + 181)
-            val context = escapedHtml.substring(start, end)
-            if (!Regex("(?:audio|mp3|stream|download|media|player|source|file)", RegexOption.IGNORE_CASE)
+        // Player URLs may be encoded as JSON unicode/hex strings or surrounded by a
+        // media keyword. Decode first, then use a wider contextual pass.
+        val decoded = decodeJsEscapes(normalizedHtml)
+        for (u in urlPattern.findAll(decoded)) {
+            val start = maxOf(0, u.range.first - 220)
+            val end = minOf(decoded.length, u.range.last + 221)
+            val context = decoded.substring(start, end)
+            if (!Regex("(?:audio|mp3|stream|download|media|player|source|file|playlist|sound)", RegexOption.IGNORE_CASE)
                     .containsMatchIn(context)) continue
-            val candidate = normalizeUrl(m.value, pageUrl) ?: continue
+            val candidate = normalizeUrl(u.value, pageUrl) ?: continue
             if (!ServerConfig.isObviousNonMediaUrl(candidate)) candidates += candidate
         }
 
@@ -100,36 +106,34 @@ object MusicPageParser {
         )
     }
 
-    private fun isMediaKey(key: String): Boolean {
-        val k = key.lowercase()
-        return mediaKeys.any { it.lowercase() == k } ||
-            k.contains("audio") || k.contains("mp3") || k.contains("stream") ||
-            k.contains("download") || k.contains("media") || k.contains("source") ||
-            k == "file" || k == "url"
-    }
-
-    private fun looksLikeMedia(url: String): Boolean =
-        audioExtensions.containsMatchIn(url) || mediaPath.containsMatchIn(url)
-
     private fun collectAttributes(tag: String, pageUrl: String, out: MutableSet<String>) {
         val attr = Regex(
             "([a-zA-Z0-9:_-]+)\\s*=\\s*[\\\"']([^\\\"']+)[\\\"']",
             RegexOption.IGNORE_CASE
         )
+        val tagName = Regex("^<([a-zA-Z0-9]+)").find(tag)?.groupValues?.getOrNull(1)?.lowercase().orEmpty()
         for (m in attr.findAll(tag)) {
             val key = m.groupValues[1].lowercase()
             if (key !in mediaKeys.map { it.lowercase() }.toSet()) continue
-            val candidate = normalizeUrl(unescape(m.groupValues[2]), pageUrl) ?: continue
+            val value = m.groupValues[2]
+            val candidate = normalizeUrl(value, pageUrl) ?: continue
+            // href on ordinary navigation links is not a media candidate unless the
+            // URL itself looks like media or the element is an actual media element.
+            if (key == "href" && tagName == "a" && !looksLikeMedia(candidate)) continue
             if (!ServerConfig.isObviousNonMediaUrl(candidate)) out += candidate
         }
     }
 
+    private fun attrValue(tag: String, name: String): String = Regex(
+        "\\b${Regex.escape(name)}\\s*=\\s*[\\\"']([^\\\"']*)[\\\"']",
+        RegexOption.IGNORE_CASE
+    ).find(tag)?.groupValues?.getOrNull(1)?.trim().orEmpty()
+
     private fun normalizeUrl(raw: String, pageUrl: String): String? = try {
-        val clean = raw.trim()
+        val clean = decodeJsEscapes(raw.trim())
             .replace("\\/", "/")
-            .replace("\\u0026", "&")
-            .replace("\\u003F", "?")
-            .replace("\\u003D", "=")
+            .replace("&amp;", "&")
+            .replace("&quot;", "\"")
         URI(pageUrl).resolve(clean).toString().takeIf {
             it.startsWith("http://", true) || it.startsWith("https://", true)
         }
@@ -137,15 +141,16 @@ object MusicPageParser {
         null
     }
 
+    private fun looksLikeMedia(url: String): Boolean =
+        audioExtensions.containsMatchIn(url) || mediaPath.containsMatchIn(url)
+
     private fun firstMeta(html: String, property: String): String {
-        // Support both property/name-before-content and content-before-property.
         val escaped = Regex.escape(property)
         val a = Regex(
             "<meta\\b[^>]*(?:property|name)\\s*=\\s*[\\\"']$escaped[\\\"'][^>]*content\\s*=\\s*[\\\"']([^\\\"']*)[\\\"']",
             RegexOption.IGNORE_CASE
         ).find(html)?.groupValues?.getOrNull(1)
         if (!a.isNullOrBlank()) return unescape(a)
-
         return Regex(
             "<meta\\b[^>]*content\\s*=\\s*[\\\"']([^\\\"']*)[\\\"'][^>]*(?:property|name)\\s*=\\s*[\\\"']$escaped[\\\"']",
             RegexOption.IGNORE_CASE
@@ -158,18 +163,24 @@ object MusicPageParser {
     ).find(html)?.groupValues?.getOrNull(1)?.let { stripHtml(it) }.orEmpty()
 
     private fun stripHtml(value: String): String =
-        value.replace(Regex("<[^>]+>"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
+        value.replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim()
 
-    private fun unescape(value: String): String = value
+    private fun decodeJsEscapes(value: String): String {
+        var result = value
+        result = result.replace(Regex("\\\\u([0-9a-fA-F]{4})")) { m ->
+            m.groupValues[1].toIntOrNull(16)?.toChar()?.toString() ?: m.value
+        }
+        result = result.replace(Regex("\\\\x([0-9a-fA-F]{2})")) { m ->
+            m.groupValues[1].toIntOrNull(16)?.toChar()?.toString() ?: m.value
+        }
+        return result
+    }
+
+    private fun unescape(value: String): String = decodeJsEscapes(value)
         .replace("&amp;", "&")
         .replace("&quot;", "\"")
         .replace("&#39;", "'")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("\\/", "/")
-        .replace("\\u0026", "&")
-        .replace("\\u003F", "?")
-        .replace("\\u003D", "=")
 }
