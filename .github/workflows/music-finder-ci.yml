@@ -29,6 +29,9 @@ jobs:
       - name: Apply search and YouTube UI improvements
         run: python3 scripts/apply_search_and_youtube_ui.py
 
+      - name: Apply fast visible result preview
+        run: python3 scripts/apply_fast_result_preview.py
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
