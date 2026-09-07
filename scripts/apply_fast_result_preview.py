@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "app/src/main/java/com/kafshar/musicfinder/MainActivity.kt"
@@ -38,6 +37,7 @@ if "FAST_RESULT_PREVIEW_V1" not in main:
             )
         }
 
+        container.visibility = View.VISIBLE
         container.removeAllViews()
 
         val header = TextView(this).apply {
@@ -88,7 +88,6 @@ if "FAST_RESULT_PREVIEW_V1" not in main:
 '''
     main = main.replace(anchor, helper + anchor, 1)
 
-    # Show Google results immediately, before any music-page extraction starts.
     old = '''                val parsed = GoogleResultParser.parse(html, 30)
                 resultGeneration = searchGeneration
 '''
@@ -105,16 +104,6 @@ if "FAST_RESULT_PREVIEW_V1" not in main:
         raise SystemExit("google parser block not found")
     main = main.replace(old, new, 1)
 
-    old = '''                val discovered = raw.orEmpty()
-                    .split("###")
-'''
-    new = '''                val discovered = raw.orEmpty()
-                    .split("###")
-'''
-    if old not in main:
-        raise SystemExit("results parser anchor not found")
-
-    # Insert preview after the discovered list has been constructed.
     old2 = '''                    .distinctBy { it.first.substringBefore("#").trimEnd('/').lowercase() }
                     .take(15)
 
@@ -134,28 +123,26 @@ if "FAST_RESULT_PREVIEW_V1" not in main:
         raise SystemExit("discovered list block not found")
     main = main.replace(old2, new2, 1)
 
-    # Keep background extraction bounded; the visible list is independent of extraction.
-    old = '''                resultPages = parsed.filterNot { it.isYouTube }
+    old3 = '''                resultPages = parsed.filterNot { it.isYouTube }
                     .map { "${it.url}|||${it.title}" }
 '''
-    new = '''                resultPages = parsed.filterNot { it.isYouTube }
+    new3 = '''                resultPages = parsed.filterNot { it.isYouTube }
                     .take(10)
                     .map { "${it.url}|||${it.title}" }
 '''
-    if old not in main:
+    if old3 not in main:
         raise SystemExit("resultPages block not found")
-    main = main.replace(old, new, 1)
+    main = main.replace(old3, new3, 1)
 
-    old = '''        val text = query.text.toString().trim()
+    old4 = '''        val text = query.text.toString().trim()
         if (text.isBlank()) {'''
-    new = '''        val text = query.text.toString().trim()
+    new4 = '''        val text = query.text.toString().trim()
         clearSearchPreviews()
         if (text.isBlank()) {'''
-    if old not in main:
+    if old4 not in main:
         raise SystemExit("searchMusic text block not found")
-    main = main.replace(old, new, 1)
+    main = main.replace(old4, new4, 1)
 
-    # Reduce the per-page wait so dead/slow sites do not hold the whole search hostage.
     main = main.replace('            7500L\n', '            4500L\n', 1)
 
     MAIN.write_text(main, encoding="utf-8")
