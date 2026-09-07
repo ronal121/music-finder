@@ -6,12 +6,17 @@ MAIN = ROOT / "app/src/main/java/com/kafshar/musicfinder/MainActivity.kt"
 SEARCH = ROOT / "app/src/main/java/com/kafshar/musicfinder/SearchEngine.kt"
 LAYOUT = ROOT / "app/src/main/res/layout/activity_main.xml"
 
-# More than 200 candidate Persian/Iranian music domains. They are only Google hints;
-# unavailable domains are harmless and the app still accepts any HTTP(S) result.
+# Persian/Iranian discovery domains plus established international/electronic platforms.
+# These are Google hints, not mandatory servers; unavailable domains are harmless.
 SITES = '''
 music-fa.com upmusics.com songsara.net rozmusic.com nicmusic.net vmusic.ir sakhamusic.ir jenabmusic.com ganja2music.com iran-music.net silamusic.ir bibakmusic.com blogmusic.ir pop-music.ir behmusic.com irmp3.ir next1.ir musicdel.ir mybia2music.com musics-fa.com musicito.com persianamusic.ir songironi.ir farsiplayer.com meloyab.com playmusic.ir radiojavan.com beeptunes.com navaak.com santoori.com easy-persian.com musicmedia.ir smusic.ir rosemusics.com tabanmusic.com mokhtalefmusic.com musiclove.ir ahaang.com madarmusic.ir nab-music.com music-single.com musicweek.ir ir-music.ir upmusic.ir upmusics.ir takmusics.com tapmusics.ir isongs.ir nashid.ir music-saz.ir ahangfakher.ir top10music.ir sahebmusic.ir batomusic.ir talesh-music.ir farsmusical.ir jmp3.ir hailymusic.ir tanin-taraneh.ir mazanimusic.ir radiomazani.com abrarecord.com babol3da.com musics-mehr.com musicbaran.org musicbaran.ir melodyfa.com melodyha.com ahangestan.com ahang98.com ahangino.com ahangchi.com ahangdownload.com ahangha.com musicsweb.ir music98.ir musicema.com musicema.ir musiciranian.com musicjavan.com musicjavan.ir musicdel.net musicdel.org music-fa.ir music-fa.net rozmusic.net rozmusic.ir nicmusic.ir jenab-music.com jenabmusic.ir ganja2music.ir silamusic.com bibakmusic.ir pop-music.com behmusic.ir irmp3.com next1music.com next1.ir apmusic.ir apmusics.ir tehranmusic.com tehranmusic.ir tehran-music.ir musicscity.ir music-city.ir musicsweb.com musicweb.ir musicwebs.ir musiciran.ir musiciran.com iranmusic.ir iranmusic.com iran-music.com iranianmusic.ir iranianmusic.com persian-music.ir persianmusic.ir persianmusic.com persianmusic.net persianmusics.ir persianmusics.com persian-song.com persiansong.ir persiansongs.ir farsimusic.ir farsimusic.com farsisong.ir farsisong.com farsimp3.ir farsimp3.com farsimusic.net parsmp3.ir parsmp3.com parsmusic.ir parsmusic.com parsmusic.net iranmp3.ir iranmp3.com iranmp3.net mp3iran.ir mp3iran.com mp3iran.net mp3music.ir mp3music.com mp3music.net musicdl.ir musicdl.com musicdownload.ir musicdownload.com downloadmusic.ir downloadmusic.com ahangdownload.ir downloadahang.ir downloadahang.com mp3download.ir mp3download.com ahangnew.ir ahangnew.com newmusic.ir newmusic.com newmusic.net newmusics.ir newmusics.com iranmusicdownload.ir iranmusicdownload.com persianmusicdownload.ir persianmusicdownload.com musicsdownload.ir musicsdownload.com ahangroz.ir ahangroz.com ahangiran.ir ahangiran.com ahangpersian.ir ahangpersian.com musicirani.ir musicirani.com iranmusics.ir iranmusics.com musicirani.net musicpersian.ir musicpersian.com musicpersian.net musicstar.ir musicstar.com musicstars.ir musicstars.com musicland.ir musicland.com musicplanet.ir musicplanet.com musicbox.ir musicbox.com musicroom.ir musicroom.com musicradio.ir musicradio.com radio-music.ir radio-music.com songfa.ir songfa.com songmusic.ir songmusic.com songmp3.ir songmp3.com mp3song.ir mp3song.com ahang2.ir ahang2.com ahangplus.ir ahangplus.com musicplus.ir musicplus.com musicplus.net ahang24.ir ahang24.com music24.ir music24.com music24.net ahangmix.ir ahangmix.com musicmix.ir musicmix.com musicmix.net remixfa.ir remixfa.com remixmusic.ir remixmusic.com remixmusic.net djmusic.ir djmusic.com djmusic.net djsong.ir djsong.com djsongs.ir djsongs.com rapfa.ir rapfa.com rapmusic.ir rapmusic.com rapmusic.net hiphopfa.ir hiphopfa.com hiphopmusic.ir hiphopmusic.com classicmusic.ir classicmusic.com oldmusic.ir oldmusic.com nostalgicmusic.ir nostalgicmusic.com
 '''.split()
-SITES = list(dict.fromkeys(SITES))
+
+INTERNATIONAL_SITES = '''
+soundcloud.com bandcamp.com audius.co audius.one mixcloud.com hearthis.at jamendo.com freemusicarchive.org archive.org ccMixter.org ccMixter.cc last.fm lastfm.com beatport.com traxsource.com junodownload.com boomkat.com bleep.com residentadvisor.net residentadvisor.com discogs.com rateyourmusic.com allmusic.com noisetrade.com reverbnation.com soundclick.com purevolume.com 8tracks.com diymag.com xlr8r.com edm.com dancingastronaut.com thissongissick.com edmidentity.com youredm.com weareyourfriends.net electronicgroove.com magneticmag.com attackmagazine.com insomniac.com mau5trap.com monstercat.com spinninrecords.com anjunabeats.com anjunadeep.com armadamusic.com toolroomrecords.com defected.com drumcode.se bitbird.com dimmak.com drumandbassarena.com UKF.com UKFmusic.com dnbdojo.com livesets.com livesets.fm techno.fm techno-sounds.com technomusic.com electro-music.com electronica.org
+'''.split()
+
+SITES = list(dict.fromkeys(SITES + INTERNATIONAL_SITES))
 assert len(SITES) > 200, len(SITES)
 
 # 1) Make Google search site-aware without making the rest of the app depend on any one host.
@@ -43,6 +48,11 @@ SEARCH.write_text(search, encoding="utf-8")
 
 # 2) YouTube: clicking a result opens a 16:9 WebView in the top-right corner of MainActivity.
 main = MAIN.read_text(encoding="utf-8")
+
+# The previous CI failure was caused by the new WebChromeClient reference without its import.
+if "import android.webkit.WebChromeClient" not in main:
+    main = main.replace("import android.webkit.RenderProcessGoneDetail\n", "import android.webkit.RenderProcessGoneDetail\nimport android.webkit.WebChromeClient\n", 1)
+
 if "YOUTUBE_CORNER_PLAYER_V1" not in main:
     field = "    private lateinit var vinyl: VinylView\n"
     if field not in main: raise SystemExit("vinyl field not found")
@@ -129,7 +139,8 @@ if "YOUTUBE_CORNER_PLAYER_V1" not in main:
     private fun youtubeVideoId'''
     main, n = re.subn(pattern, replacement, main, count=1, flags=re.S)
     if n != 1: raise SystemExit("addYouTubeView not found")
-    MAIN.write_text(main, encoding="utf-8")
+
+MAIN.write_text(main, encoding="utf-8")
 
 layout = LAYOUT.read_text(encoding="utf-8")
 if 'android:id="@+id/youtubeCornerPlayer"' not in layout:
@@ -167,4 +178,4 @@ if 'android:id="@+id/youtubeCornerPlayer"' not in layout:
     layout = layout.replace(anchor, overlay, 1)
     LAYOUT.write_text(layout, encoding="utf-8")
 
-print(f"Applied {len(SITES)} Persian music discovery domains and YouTube corner player")
+print(f"Applied {len(SITES)} Persian + international music discovery domains and YouTube corner player")
