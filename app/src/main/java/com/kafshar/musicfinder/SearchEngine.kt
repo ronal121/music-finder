@@ -58,21 +58,23 @@ object SearchEngine {
         return variants.map { it.trim().replace(whitespace, " ") }.filter { it.isNotBlank() }.take(8)
     }
 
-    /** Search Google for the song itself, without hard-coding music domains. */
+    /**
+     * Build a permissive Google query. The previous implementation forced every
+     * result to contain mp3/آهنگ/دانلود. That is too restrictive: Google often
+     * returns the useful lyric/music page without any of those words in its title,
+     * URL or indexed text. We keep the user's exact text as the primary query and
+     * only add a second, broader music-intent variant when useful.
+     */
     fun buildGoogleQuery(input: String): String {
         val original = displayQuery(input)
-        if (original.isBlank()) return "music mp3"
+        if (original.isBlank()) return "music"
         val corrected = correctedQuery(original)
-        val clean = withoutSearchNoise(corrected)
-        if (clean.isBlank()) return original
-        // Keep the user's spelling and only add generic music intent terms.
-        // For a typo, offer the corrected spelling as an OR alternative instead of
-        // replacing the user's query or duplicating it.
-        return if (corrected == normalizeQuery(original) || corrected == original) {
-            "$original (mp3 OR آهنگ OR دانلود)"
-        } else {
-            "($original OR $corrected) (mp3 OR آهنگ OR دانلود)"
+        if (corrected.isNotBlank() && corrected != normalizeQuery(original) && corrected != original) {
+            // Do not require either spelling to contain a music keyword. Google can
+            // then return lyric pages, artist pages and download pages alike.
+            return "($original OR $corrected)"
         }
+        return original
     }
 
     fun parseArtistTitle(input: String): Pair<String?, String?> {
