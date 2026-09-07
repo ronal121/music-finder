@@ -26,8 +26,8 @@ jobs:
       - name: Apply runtime music search fix
         run: python3 scripts/apply_runtime_search_fix.py
 
-      - name: Apply YouTube mini player
-        run: python3 scripts/apply_youtube_mini_player.py
+      - name: Apply search and YouTube UI improvements
+        run: python3 scripts/apply_search_and_youtube_ui.py
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
