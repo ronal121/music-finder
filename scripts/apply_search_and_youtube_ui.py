@@ -13,10 +13,12 @@ music-fa.com upmusics.com songsara.net rozmusic.com nicmusic.net vmusic.ir sakha
 '''.split()
 
 INTERNATIONAL_SITES = '''
-soundcloud.com bandcamp.com audius.co audius.one mixcloud.com hearthis.at jamendo.com freemusicarchive.org archive.org ccMixter.org ccMixter.cc last.fm lastfm.com beatport.com traxsource.com junodownload.com boomkat.com bleep.com residentadvisor.net residentadvisor.com discogs.com rateyourmusic.com allmusic.com noisetrade.com reverbnation.com soundclick.com purevolume.com 8tracks.com diymag.com xlr8r.com edm.com dancingastronaut.com thissongissick.com edmidentity.com youredm.com weareyourfriends.net electronicgroove.com magneticmag.com attackmagazine.com insomniac.com mau5trap.com monstercat.com spinninrecords.com anjunabeats.com anjunadeep.com armadamusic.com toolroomrecords.com defected.com drumcode.se bitbird.com dimmak.com drumandbassarena.com UKF.com UKFmusic.com dnbdojo.com livesets.com livesets.fm techno.fm techno-sounds.com technomusic.com electro-music.com electronica.org
+soundcloud.com bandcamp.com audius.co audius.one mixcloud.com hearthis.at jamendo.com freemusicarchive.org archive.org ccMixter.org ccMixter.cc last.fm lastfm.com beatport.com traxsource.com junodownload.com boomkat.com bleep.com residentadvisor.net residentadvisor.com discogs.com rateyourmusic.com allmusic.com noisetrade.com reverbnation.com soundclick.com purevolume.com 8tracks.com diymag.com xlr8r.com edm.com dancingastronaut.com thissongissick.com edmidentity.com youredm.com electronicgroove.com magneticmag.com attackmagazine.com insomniac.com mau5trap.com monstercat.com spinninrecords.com anjunabeats.com anjunadeep.com armadamusic.com toolroomrecords.com defected.com drumcode.se bitbird.com dimmak.com drumandbassarena.com ukf.com dnbdojo.com livesets.com livesets.fm techno.fm techno-sounds.com technomusic.com electro-music.com electronica.org
 '''.split()
 
-SITES = list(dict.fromkeys(SITES + INTERNATIONAL_SITES))
+# Keep international platforms first so the generated Google query stays useful
+# even when a search engine truncates very long OR expressions.
+SITES = list(dict.fromkeys(INTERNATIONAL_SITES + SITES))
 assert len(SITES) > 200, len(SITES)
 
 # 1) Make Google search site-aware without making the rest of the app depend on any one host.
@@ -36,7 +38,8 @@ replacement = '''    fun buildGoogleQuery(input: String): String {
         val base = if (corrected.isNotBlank() && corrected != normalizeQuery(original) && corrected != original) {
             "($original OR $corrected)"
         } else original
-        val siteFilter = PERSIAN_MUSIC_SITES.joinToString(" OR ") { "site:$it" }
+        // Use a bounded, prioritized set: giant Google OR expressions can be truncated.
+        val siteFilter = PERSIAN_MUSIC_SITES.take(90).joinToString(" OR ") { "site:$it" }
         return "$base ($siteFilter)"
     }
 
@@ -49,7 +52,7 @@ SEARCH.write_text(search, encoding="utf-8")
 # 2) YouTube: clicking a result opens a 16:9 WebView in the top-right corner of MainActivity.
 main = MAIN.read_text(encoding="utf-8")
 
-# The previous CI failure was caused by the new WebChromeClient reference without its import.
+# Fix the CI compile error caused by the WebChromeClient reference without its import.
 if "import android.webkit.WebChromeClient" not in main:
     main = main.replace("import android.webkit.RenderProcessGoneDetail\n", "import android.webkit.RenderProcessGoneDetail\nimport android.webkit.WebChromeClient\n", 1)
 
