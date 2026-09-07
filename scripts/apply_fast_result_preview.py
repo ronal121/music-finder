@@ -9,11 +9,7 @@ if "FAST_RESULT_PREVIEW_V1" not in main:
     field = "    private lateinit var resultsContainer: LinearLayout\n"
     if field not in main:
         raise SystemExit("resultsContainer field not found")
-    main = main.replace(
-        field,
-        field + "    private var searchPreviewContainer: LinearLayout? = null\n",
-        1,
-    )
+    main = main.replace(field, field + "    private var searchPreviewContainer: LinearLayout? = null\n", 1)
 
     anchor = "    private fun setupButtons() {\n"
     if anchor not in main:
@@ -22,61 +18,45 @@ if "FAST_RESULT_PREVIEW_V1" not in main:
     helper = r'''    // FAST_RESULT_PREVIEW_V1
     private fun showSearchPreviews(items: List<Pair<String, String>>) {
         if (items.isEmpty()) return
-
         val container = searchPreviewContainer ?: LinearLayout(this).also {
             it.orientation = LinearLayout.VERTICAL
             it.setPadding(0, 0, 0, 8)
             searchPreviewContainer = it
-            resultsContainer.addView(
-                it,
-                0,
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-            )
+            resultsContainer.addView(it, 0, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
         }
-
         container.visibility = View.VISIBLE
         container.removeAllViews()
-
-        val header = TextView(this).apply {
+        container.addView(TextView(this).apply {
             text = "نتایج جستجو"
             setTextColor(turquoiseColor)
             textSize = 17f
             setPadding(8, 10, 8, 6)
-        }
-        container.addView(header)
-
+        })
         items.take(10).forEachIndexed { index, item ->
-            val title = item.first.ifBlank { "نتیجه ${index + 1}" }
-            val site = item.second.ifBlank { "منبع موسیقی" }
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(12, 9, 12, 9)
                 setBackgroundColor(0xFF15151D.toInt())
             }
-            val titleView = TextView(this).apply {
-                text = title
+            row.addView(TextView(this).apply {
+                text = item.first.ifBlank { "نتیجه ${index + 1}" }
                 setTextColor(0xFFFFFFFF.toInt())
                 textSize = 15f
                 maxLines = 2
-            }
-            val siteView = TextView(this).apply {
-                text = "$site  •  در حال آماده‌سازی پخش..."
+            })
+            row.addView(TextView(this).apply {
+                text = "${item.second.ifBlank { "منبع موسیقی" }}  •  در حال آماده‌سازی پخش..."
                 setTextColor(0xFFAAAAAA.toInt())
                 textSize = 11f
                 maxLines = 1
-            }
-            row.addView(titleView)
-            row.addView(siteView)
-            container.addView(
-                row,
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { setMargins(0, 0, 0, 6) }
-            )
+            })
+            container.addView(row, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(0, 0, 0, 6) })
         }
     }
 
@@ -88,63 +68,58 @@ if "FAST_RESULT_PREVIEW_V1" not in main:
 '''
     main = main.replace(anchor, helper + anchor, 1)
 
-    old = '''                val parsed = GoogleResultParser.parse(html, 30)
+    old = '''                val parsed = GoogleResultParser.parseAnchors(html, 30)
                 resultGeneration = searchGeneration
 '''
-    new = '''                val parsed = GoogleResultParser.parse(html, 15)
-                showSearchPreviews(
-                    parsed.take(10).map { result ->
-                        result.title.ifBlank { result.url } to
-                            result.url.removePrefix("https://").removePrefix("http://").substringBefore("/")
-                    }
-                )
+    new = '''                val parsed = GoogleResultParser.parseAnchors(html, 15)
+                showSearchPreviews(parsed.take(10).map { result ->
+                    result.title.ifBlank { result.url } to
+                        result.url.removePrefix("https://").removePrefix("http://").substringBefore("/")
+                })
                 resultGeneration = searchGeneration
 '''
     if old not in main:
         raise SystemExit("google parser block not found")
     main = main.replace(old, new, 1)
 
-    old2 = '''                    .distinctBy { it.first.substringBefore("#").trimEnd('/').lowercase() }
+    old = '''                    .distinctBy { it.first.substringBefore("#").trimEnd('/').lowercase() }
                     .take(15)
 
                 discovered.filter { it.third }.forEach'''
-    new2 = '''                    .distinctBy { it.first.substringBefore("#").trimEnd('/').lowercase() }
+    new = '''                    .distinctBy { it.first.substringBefore("#").trimEnd('/').lowercase() }
                     .take(12)
 
-                showSearchPreviews(
-                    discovered.filterNot { it.third }.take(10).map { result ->
-                        result.second.ifBlank { result.first } to
-                            result.first.removePrefix("https://").removePrefix("http://").substringBefore("/")
-                    }
-                )
+                showSearchPreviews(discovered.filterNot { it.third }.take(10).map { result ->
+                    result.second.ifBlank { result.first } to
+                        result.first.removePrefix("https://").removePrefix("http://").substringBefore("/")
+                })
 
                 discovered.filter { it.third }.forEach'''
-    if old2 not in main:
+    if old not in main:
         raise SystemExit("discovered list block not found")
-    main = main.replace(old2, new2, 1)
+    main = main.replace(old, new, 1)
 
-    old3 = '''                resultPages = parsed.filterNot { it.isYouTube }
+    old = '''                resultPages = parsed.filterNot { it.isYouTube }
                     .map { "${it.url}|||${it.title}" }
 '''
-    new3 = '''                resultPages = parsed.filterNot { it.isYouTube }
+    new = '''                resultPages = parsed.filterNot { it.isYouTube }
                     .take(10)
                     .map { "${it.url}|||${it.title}" }
 '''
-    if old3 not in main:
+    if old not in main:
         raise SystemExit("resultPages block not found")
-    main = main.replace(old3, new3, 1)
+    main = main.replace(old, new, 1)
 
-    old4 = '''        val text = query.text.toString().trim()
+    old = '''        val text = query.text.toString().trim()
         if (text.isBlank()) {'''
-    new4 = '''        val text = query.text.toString().trim()
+    new = '''        val text = query.text.toString().trim()
         clearSearchPreviews()
         if (text.isBlank()) {'''
-    if old4 not in main:
+    if old not in main:
         raise SystemExit("searchMusic text block not found")
-    main = main.replace(old4, new4, 1)
+    main = main.replace(old, new, 1)
 
-    main = main.replace('            7500L\n', '            4500L\n', 1)
-
+    main = main.replace("            7500L\n", "            4500L\n", 1)
     MAIN.write_text(main, encoding="utf-8")
 
 print("Applied immediate result preview, bounded background extraction, and faster page timeout")
