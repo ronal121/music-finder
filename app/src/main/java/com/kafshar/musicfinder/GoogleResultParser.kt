@@ -11,14 +11,15 @@ object GoogleResultParser {
         if (raw.isBlank()) return null
         return try {
             val input = unescapeHtml(raw.trim())
+                .replace("\\u003d", "=", true)
+                .replace("\\u0026", "&", true)
+                .replace("\\/", "/")
             val resolved = URI(base).resolve(input)
             val host = resolved.host.orEmpty().lowercase()
 
             if (host.contains("google.")) {
                 val query = parseQuery(resolved.rawQuery)
-                // Google result redirects may use q, url or u. q can be present but empty,
-                // so choose the first non-empty destination instead of blindly preferring q.
-                val target = listOf(query["q"], query["url"], query["u"])
+                val target = listOf(query["q"], query["url"], query["u"], query["uddg"])
                     .firstOrNull { !it.isNullOrBlank() }
                     ?.trim()
 
@@ -41,8 +42,6 @@ object GoogleResultParser {
 
         val results = LinkedHashMap<String, Result>()
 
-        // Google has used both href and data-href, and its result markup changes over time.
-        // Keep the parser structural rather than depending on a specific result CSS class.
         val attribute = Regex(
             "(?:href|data-href)\\s*=\\s*([\\\"'])(.*?)\\1",
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
@@ -52,6 +51,7 @@ object GoogleResultParser {
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
         )
 
+        // First pass: real anchors, preserving their visible titles.
         for (m in anchor.findAll(html)) {
             if (results.size >= limit) break
 
@@ -72,11 +72,30 @@ object GoogleResultParser {
             )
         }
 
-        // Some markup exposes a destination on data-href outside a conventional anchor.
+        // Second pass: Google sometimes puts the destination in data-href or in an
+        // element that is not a conventional <a>. Do not require a specific CSS class.
         if (results.size < limit) {
             for (m in attribute.findAll(html)) {
                 if (results.size >= limit) break
                 val url = normalizeUrl(m.groupValues.getOrNull(2).orEmpty()) ?: continue
+                if (!isExternalHttp(url)) continue
+                val key = canonicalKey(url)
+                if (results.containsKey(key)) continue
+                results[key] = Result(url, hostTitle(url), ServerConfig.isYouTubeUrl(url))
+            }
+        }
+
+        // Third pass: some WebView/Google variants serialize destination URLs in
+        // scripts or JSON rather than href. This is intentionally generic and has
+        // no hard-coded music domains.
+        if (results.size < limit) {
+            val rawUrl = Regex(
+                "https?://[^\\s\\\"'<>\\\\]+",
+                RegexOption.IGNORE_CASE
+            )
+            for (m in rawUrl.findAll(unescapeHtml(html))) {
+                if (results.size >= limit) break
+                val url = normalizeUrl(m.value) ?: continue
                 if (!isExternalHttp(url)) continue
                 val key = canonicalKey(url)
                 if (results.containsKey(key)) continue
