@@ -23,20 +23,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      # V5/V6 provide the existing runtime bridge and redirect/JS handling.
-      # V7 makes runtime discovery MIME-first; V8 keeps the YouTube embed inside
-      # the existing hidden WebView and gives it the viewport required by YouTube.
+      # Apply the final runtime media-discovery patch after the older patches so
+      # the generated APK contains the latest search/playback implementation.
       - name: Apply runtime search fix V5
         run: python3 scripts/apply_runtime_search_fix.py
 
       - name: Apply runtime search fix V6
         run: python3 scripts/apply_runtime_search_fix_v6.py
 
-      - name: Apply runtime search fix V7
+      - name: Apply runtime search fix V7/V9
         run: python3 scripts/apply_runtime_search_fix_v7.py
-
-      - name: Apply runtime search fix V8
-        run: python3 scripts/apply_runtime_search_fix_v8.py
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
