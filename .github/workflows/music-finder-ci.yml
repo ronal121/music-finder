@@ -23,14 +23,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      # Keep the runtime search fix deterministic: the V5 patch contains the
-      # existing runtime bridge/network capture, while V6 fixes redirects and
-      # delayed JS player initialization. No unrelated UI/source mutation runs here.
+      # V5/V6 provide the existing runtime bridge and redirect/JS handling.
+      # V7 changes discovery to MIME-first resource capture and keeps YouTube
+      # playback inside the app's existing hidden WebView instead of launching
+      # an external YouTube Activity.
       - name: Apply runtime search fix V5
         run: python3 scripts/apply_runtime_search_fix.py
 
       - name: Apply runtime search fix V6
         run: python3 scripts/apply_runtime_search_fix_v6.py
+
+      - name: Apply runtime search fix V7
+        run: python3 scripts/apply_runtime_search_fix_v7.py
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
