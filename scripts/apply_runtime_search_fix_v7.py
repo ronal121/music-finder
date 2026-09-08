@@ -166,4 +166,3 @@ text = text.replace(old, new, 1)
 
 MAIN.write_text(text, encoding="utf-8")
 print("Runtime search patch V9 applied")
-'''}
