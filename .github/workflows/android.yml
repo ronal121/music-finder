@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -15,26 +15,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-
-      - name: Apply runtime music search fix to source
-        run: python3 scripts/apply_runtime_search_fix_v7.py
-
-      - name: Apply search and YouTube UI improvements
-        run: python3 scripts/apply_search_and_youtube_ui.py
-
-      - name: Persist generated source changes
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          set -euo pipefail
-          if git diff --quiet; then
-            echo "Source already contains generated fixes."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt
-            git commit -m "Apply runtime music search fix to source"
-            git push
-          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -67,6 +47,7 @@ jobs:
           set -euo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK"
+          test -s "$APK"
           ls -lh "$APK"
 
       - name: Upload APK
