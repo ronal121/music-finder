@@ -590,7 +590,7 @@ class MainActivity : Activity() {
                     finishSearch()
                 } else {
                     status.text =
-                        "نتایج پیدا شد؛ در حال بررسی..."
+                        "${resultPages.size} صفحه پیدا شد؛ در حال بررسی آهنگ‌های قابل پخش..."
                     processNextResultPage()
                 }
             }
@@ -616,7 +616,7 @@ class MainActivity : Activity() {
                     status.text = "Google نتیجه قابل پردازشی برنگرداند"
                     finishSearch()
                 } else {
-                    status.text = "${resultPages.size} نتیجه پیدا شد؛ در حال بررسی..."
+                    status.text = "${resultPages.size} صفحه پیدا شد؛ در حال بررسی آهنگ‌های قابل پخش..."
                     processNextResultPage()
                 }
             }
@@ -636,7 +636,6 @@ class MainActivity : Activity() {
                     .distinct()
                     .take(160)
                 if (candidates.isEmpty()) {
-                    // Give JS-generated players/network requests another pass before abandoning the page.
                     handler.postDelayed({
                         if (!destroyed && resultGeneration == searchGeneration && expectedPageUrl.isNotBlank()) {
                             extractMusicPage(expectedPageUrl)
@@ -795,8 +794,17 @@ class MainActivity : Activity() {
                         )
                     ) {
 
+                        // Google and other search engines may redirect a result URL.
+                        // The final URL is the actual page that must be parsed and used as Referer.
+                        expectedPageUrl = url
+
                         handler.postDelayed({
-                            if (!destroyed && resultGeneration == searchGeneration && expectedPageUrl == url) {
+                            if (
+                                !destroyed &&
+                                resultGeneration == searchGeneration &&
+                                expectedPageUrl == url &&
+                                web.url == url
+                            ) {
                                 extractMusicPage(url)
                             }
                         }, 650L)
@@ -947,6 +955,7 @@ class MainActivity : Activity() {
         resultPages = emptyList()
         resultPageIndex = 0
         expectedPageUrl = ""
+        capturedRuntimeUrls.clear()
         songs.clear()
         currentIndex = -1
         currentAudioUrl = ""
@@ -1054,7 +1063,7 @@ class MainActivity : Activity() {
                         addSongView(song, songs.lastIndex)
                     }
                 }
-                if (songs.isNotEmpty()) status.text = "${songs.size} آهنگ پیدا شد"
+                if (songs.isNotEmpty()) status.text = "${songs.size} آهنگ قابل پخش پیدا شد"
                 finishCurrentResultPage()
             }
         }
@@ -1259,7 +1268,7 @@ class MainActivity : Activity() {
             if (songs.isEmpty()) {
                 "آهنگ قابل پخش پیدا نشد"
             } else {
-                "${songs.size} نتیجه پیدا شد"
+                "${songs.size} آهنگ قابل پخش پیدا شد"
             }
 
         if (
