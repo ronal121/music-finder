@@ -118,6 +118,8 @@ class MainActivity : Activity() {
     private var expectedPageUrl = ""
     @Volatile private var capturedRuntimeUrls = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     // RUNTIME_SEARCH_FIX_V10
+    @Volatile private var capturedRuntimeUrls = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    // RUNTIME_SEARCH_FIX_V10
 
     private var searchTimeout: Runnable? = null
     private var pageTimeout: Runnable? = null
