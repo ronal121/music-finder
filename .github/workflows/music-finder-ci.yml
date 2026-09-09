@@ -23,17 +23,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      # Apply the final runtime media-discovery patch after the older patches so
-      # the generated APK contains the latest search/playback implementation.
-      - name: Apply runtime search fix V5
-        run: python3 scripts/apply_runtime_search_fix.py
-
-      - name: Apply runtime search fix V6
-        run: python3 scripts/apply_runtime_search_fix_v6.py
-
-      - name: Apply runtime search fix V7/V9
-        run: python3 scripts/apply_runtime_search_fix_v7.py
-
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
