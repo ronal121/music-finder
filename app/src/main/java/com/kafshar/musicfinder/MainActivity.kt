@@ -23,6 +23,7 @@ import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -83,6 +84,8 @@ class MainActivity : Activity() {
     private lateinit var historyContainer: LinearLayout
     private lateinit var resultsContainer: LinearLayout
     private lateinit var vinyl: VinylView
+    private lateinit var youtubeCornerPlayer: WebView
+    private lateinit var youtubeCornerClose: TextView
 
     private val turquoiseColor = 0xFF20C9C9.toInt()
 
@@ -113,6 +116,8 @@ class MainActivity : Activity() {
     private var resultPageIndex = 0
     private var resultGeneration = 0
     private var expectedPageUrl = ""
+    @Volatile private var capturedRuntimeUrls = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    // RUNTIME_SEARCH_FIX_V10
 
     private var searchTimeout: Runnable? = null
     private var pageTimeout: Runnable? = null
@@ -196,6 +201,7 @@ class MainActivity : Activity() {
 
         bindViews()
         setupWebView()
+        setupYouTubeCornerPlayer()
         setupButtons()
         setupVolumeControl()
         applyTurquoiseButtonStyle()
@@ -243,6 +249,35 @@ class MainActivity : Activity() {
         resultsContainer = findViewById(R.id.resultsContainer)
 
         vinyl = findViewById(R.id.vinyl)
+    }
+
+    // YOUTUBE_CORNER_PLAYER_V1
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun setupYouTubeCornerPlayer() {
+        youtubeCornerPlayer = findViewById(R.id.youtubeCornerPlayer)
+        youtubeCornerClose = findViewById(R.id.youtubeCornerClose)
+        youtubeCornerPlayer.settings.javaScriptEnabled = true
+        youtubeCornerPlayer.settings.domStorageEnabled = true
+        youtubeCornerPlayer.settings.mediaPlaybackRequiresUserGesture = false
+        youtubeCornerPlayer.webChromeClient = WebChromeClient()
+        youtubeCornerPlayer.webViewClient = object : WebViewClient() {}
+        youtubeCornerClose.setOnClickListener {
+            youtubeCornerPlayer.stopLoading()
+            youtubeCornerPlayer.loadUrl("about:blank")
+            youtubeCornerPlayer.visibility = View.GONE
+            youtubeCornerClose.visibility = View.GONE
+        }
+    }
+
+    private fun showYouTubeCornerPlayer(url: String) {
+        val id = youtubeVideoId(url)
+        if (id.isBlank()) {
+            Toast.makeText(this, "شناسه ویدئوی YouTube پیدا نشد", Toast.LENGTH_SHORT).show()
+            return
+        }
+        youtubeCornerPlayer.visibility = View.VISIBLE
+        youtubeCornerClose.visibility = View.VISIBLE
+        youtubeCornerPlayer.loadUrl("https://www.youtube.com/embed/$id?autoplay=1&playsinline=1&rel=0")
     }
 
     private fun setupButtons() {
@@ -595,14 +630,18 @@ class MainActivity : Activity() {
                 if (html.isBlank()) { finishCurrentResultPage(); return@runOnUiThread }
 
                 val parsed = MusicPageParser.parse(html, expectedPageUrl)
-                val candidates = parsed.audioCandidates
+                val runtimeCandidates = synchronized(capturedRuntimeUrls) { capturedRuntimeUrls.toList() }
+                    .filter { it.startsWith("http", true) }
+                val candidates = (parsed.audioCandidates + runtimeCandidates)
+                    .distinct()
+                    .take(160)
                 if (candidates.isEmpty()) {
-                    // Give JS-generated players a second pass before abandoning the page.
+                    // Give JS-generated players/network requests another pass before abandoning the page.
                     handler.postDelayed({
-                        if (!destroyed && resultGeneration == searchGeneration) {
+                        if (!destroyed && resultGeneration == searchGeneration && expectedPageUrl.isNotBlank()) {
                             extractMusicPage(expectedPageUrl)
                         }
-                    }, 900L)
+                    }, 1200L)
                     return@runOnUiThread
                 }
 
@@ -762,6 +801,28 @@ class MainActivity : Activity() {
                             }
                         }, 650L)
                     }
+                }
+
+                override fun shouldInterceptRequest(
+                    view: WebView,
+                    request: WebResourceRequest
+                ): android.webkit.WebResourceResponse? {
+                    val requestUrl = request.url.toString()
+                    if (!destroyed && resultGeneration == searchGeneration && expectedPageUrl.isNotBlank() &&
+                        requestUrl.startsWith("http", true) && !ServerConfig.isYouTubeUrl(requestUrl) &&
+                        !ServerConfig.isObviousNonMediaUrl(requestUrl)) {
+                        capturedRuntimeUrls.add(requestUrl)
+                    }
+                    return super.shouldInterceptRequest(view, request)
+                }
+
+                override fun onLoadResource(view: WebView, url: String) {
+                    if (!destroyed && resultGeneration == searchGeneration && expectedPageUrl.isNotBlank() &&
+                        url.startsWith("http", true) && !ServerConfig.isYouTubeUrl(url) &&
+                        !ServerConfig.isObviousNonMediaUrl(url)) {
+                        capturedRuntimeUrls.add(url)
+                    }
+                    super.onLoadResource(view, url)
                 }
 
                 override fun onReceivedError(
@@ -1001,29 +1062,40 @@ class MainActivity : Activity() {
 
     private fun probeMediaUrl(url: String, pageUrl: String): Boolean {
         if (!ServerConfig.isAllowedMediaUrl(url, pageUrl)) return false
+        val browserUa = "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36"
+
         fun request(method: String): String? {
+            var c: HttpURLConnection? = null
             return try {
-                val c = URL(url).openConnection() as HttpURLConnection
+                c = URL(url).openConnection() as HttpURLConnection
                 c.requestMethod = method
                 c.instanceFollowRedirects = true
-                c.connectTimeout = 2500
-                c.readTimeout = 2500
-                c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36")
+                c.connectTimeout = 5000
+                c.readTimeout = 5000
+                c.useCaches = false
+                c.setRequestProperty("User-Agent", browserUa)
                 c.setRequestProperty("Referer", pageUrl)
-                if (method == "GET") c.setRequestProperty("Range", "bytes=0-0")
+                c.setRequestProperty("Accept", "audio/*,video/*,application/octet-stream,application/vnd.apple.mpegurl,*/*;q=0.5")
+                val cookie = android.webkit.CookieManager.getInstance().getCookie(url)
+                if (!cookie.isNullOrBlank()) c.setRequestProperty("Cookie", cookie)
+                if (method == "GET") c.setRequestProperty("Range", "bytes=0-1")
                 c.connect()
-                val type = c.contentType?.lowercase()
+                val type = c.contentType?.lowercase(Locale.US)?.substringBefore(';')?.trim()
                 val code = c.responseCode
-                c.disconnect()
                 if (code in 200..399) type else null
-            } catch (_: Exception) { null }
+            } catch (_: Exception) {
+                null
+            } finally {
+                try { c?.disconnect() } catch (_: Exception) {}
+            }
         }
-        val headType = request("HEAD")
-        val type = headType ?: request("GET")
-        val mimeAccept = type?.startsWith("audio/") == true ||
-            (type?.startsWith("video/") == true && url.contains("audio", true))
-        // A lot of CDNs reject HEAD or Range while still serving the media normally.
-        return mimeAccept || ServerConfig.looksLikeAudioUrl(url)
+
+        val type = request("HEAD") ?: request("GET")
+        val mediaMime = type?.startsWith("audio/") == true ||
+            type == "application/vnd.apple.mpegurl" ||
+            type == "application/x-mpegurl" ||
+            type == "application/octet-stream"
+        return mediaMime || ServerConfig.looksLikeAudioUrl(url)
     }
 
     private fun addYouTubeView(url: String, title: String) {
@@ -1032,13 +1104,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(12, 10, 12, 10)
             setBackgroundColor(0xFF15151D.toInt())
-            setOnClickListener {
-                try {
-                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)))
-                } catch (_: Exception) {
-                    Toast.makeText(this@MainActivity, "باز کردن YouTube ممکن نیست", Toast.LENGTH_SHORT).show()
-                }
-            }
+            setOnClickListener { showYouTubeCornerPlayer(url) }
         }
         val cover = ImageView(this).apply {
             setBackgroundColor(0xFF22222A.toInt())
@@ -1059,7 +1125,7 @@ class MainActivity : Activity() {
             maxLines = 2
         }
         val sub = TextView(this).apply {
-            text = "YouTube • باز کردن"
+            text = "YouTube • پخش داخل برنامه"
             setTextColor(0xFFFF5555.toInt())
             textSize = 11f
         }
@@ -1122,6 +1188,7 @@ class MainActivity : Activity() {
         }
 
         expectedPageUrl = url
+        capturedRuntimeUrls.clear()
 
         pageTimeout?.let {
             handler.removeCallbacks(it)
