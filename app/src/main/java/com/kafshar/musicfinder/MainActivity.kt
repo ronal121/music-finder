@@ -1565,37 +1565,6 @@ class MainActivity : Activity() {
                     MusicService.EXTRA_COVER,
                     cover
                 )
-
-                putExtra(
-                    "referer",
-                    currentSong?.referer.orEmpty()
-                )
-
-                putExtra(
-                    "referer",
-                    currentSong?.referer.orEmpty()
-                )
-
-                putExtra(
-                    "referer",
-                    currentSong?.referer.orEmpty()
-                )
-
-                putExtra(
-                    "referer",
-                    currentSong?.referer.orEmpty()
-                )
-
-                putExtra(
-                    "referer",
-                    currentSong?.referer.orEmpty()
-                )
-
-                putExtra(
-                    "referer",
-                    currentSong?.referer.orEmpty()
-                )
-
                 putExtra(
                     "referer",
                     currentSong?.referer.orEmpty()
