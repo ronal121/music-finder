@@ -60,11 +60,66 @@ class HttpSearchProvider(
     }
 }
 
+/**
+ * Google-first music discovery. It performs one normal web search plus a small
+ * number of safe site: batches. Each batch contains only six domains because
+ * oversized Google operator queries can return no results.
+ */
+class GoogleMusicSearchProvider : SearchProvider {
+    override val name: String = "google"
+
+    private val google = HttpSearchProvider("google") {
+        "https://www.google.com/search?q=$it&num=20&hl=fa&gbv=1"
+    }
+
+    private val priorityDomains = linkedSetOf<String>().apply {
+        addAll(
+            listOf(
+                "sahand-music.ir", "musicdel.ir", "upmusics.com", "next1.ir", "shabamusic.com",
+                "rozmusic.com", "mybia2music.com", "bia2music.ir", "behmusic.com", "behmusics.com",
+                "songsara.net", "music-fa.com", "radiojavan.com", "nicmusic.net", "vmusic.ir",
+                "sakhamusic.ir", "jenabmusic.com", "ganja2music.com", "silamusic.ir", "pop-music.ir",
+                "farsiplayer.com", "sorud.com", "matnmusic.com", "dtaraneh.net", "trackmelody.com",
+                "biya2ahang.ir", "songsun.ir", "rozsong.com", "sultanmusics.com", "musicaz.ir",
+                "myspotify.ir", "musickordi.com", "shomal-music.info", "hailymusic.ir", "ahangtv.com",
+                "genius.com", "musixmatch.com", "lyrics.com", "soundcloud.com", "bandcamp.com"
+            )
+        )
+        addAll(MusicSiteAdditions.domains)
+    }
+
+    override fun search(query: String, limit: Int): List<GoogleResultParser.Result> {
+        if (query.isBlank() || limit <= 0) return emptyList()
+
+        val merged = LinkedHashMap<String, GoogleResultParser.Result>()
+        fun add(results: List<GoogleResultParser.Result>) {
+            results.forEach { result ->
+                val key = result.url.substringBefore("#").trimEnd('/').lowercase()
+                if (key.isNotBlank()) merged.putIfAbsent(key, result)
+            }
+        }
+
+        add(google.search(query, limit.coerceAtLeast(20)))
+
+        // Keep the site-targeted pass bounded. General Google results remain the
+        // primary source; these batches only recover pages hidden by broad ranking.
+        priorityDomains
+            .chunked(6)
+            .take(6)
+            .forEach { batch ->
+                val sites = batch.joinToString(" OR ") { "site:$it" }
+                add(google.search("$query ($sites)", 20))
+            }
+
+        return merged.values.take(limit.coerceAtLeast(20))
+    }
+}
+
 object SearchNetwork {
     const val USER_AGENT = "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36"
 
     val providers: List<SearchProvider> = listOf(
-        HttpSearchProvider("google") { "https://www.google.com/search?q=$it&num=20&hl=fa&gbv=1" },
+        GoogleMusicSearchProvider(),
         HttpSearchProvider("bing") { "https://www.bing.com/search?q=$it&count=20&setlang=fa" },
         HttpSearchProvider("duckduckgo") { "https://html.duckduckgo.com/html/?q=$it" }
     )
