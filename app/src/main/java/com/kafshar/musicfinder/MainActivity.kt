@@ -997,7 +997,7 @@ class MainActivity : Activity() {
     }
 
     private fun loadNextSiteBatch() {
-        if (destroyed || siteSearchQueries.isEmpty() || discoveryEngineIndex >= discoveryEngines.size) {
+        if (destroyed || siteSearchQueries.isEmpty() || discoveryEngineIndex >= SearchNetwork.providers.size) {
             dynamicSearchFinished = true
             finishSearch()
             return
@@ -1005,33 +1005,32 @@ class MainActivity : Activity() {
         if (siteBatchIndex >= siteSearchQueries.size) {
             discoveryEngineIndex++
             siteBatchIndex = 0
-            if (discoveryEngineIndex >= discoveryEngines.size) {
+            if (discoveryEngineIndex >= SearchNetwork.providers.size) {
                 dynamicSearchFinished = true
                 finishSearch()
                 return
             }
         }
-        pageTimeout?.let { handler.removeCallbacks(it) }
-        pageTimeout = null
-        expectedPageUrl = ""
-        resultPages = emptyList()
-        resultPageIndex = 0
         val generation = searchGeneration
-        val provider = discoveryEngines[discoveryEngineIndex]
+        val provider = SearchNetwork.providers[discoveryEngineIndex]
         val searchQuery = siteSearchQueries[siteBatchIndex++]
-        val encoded = try { URLEncoder.encode(searchQuery, "UTF-8") } catch (_: Exception) {
-            loadNextSiteBatch(); return
-        }
-        val url = when (provider) {
-            "google" -> "https://www.google.com/search?q=$encoded&num=20&hl=fa&gbv=1"
-            "bing" -> "https://www.bing.com/search?q=$encoded&count=20&setlang=fa"
-            else -> "https://html.duckduckgo.com/html/?q=$encoded"
-        }
-        try {
-            web.stopLoading()
-            web.loadUrl(url)
-        } catch (_: Exception) {
-            if (generation == searchGeneration) loadNextSiteBatch()
+        status.text = "در حال جستجو در ${provider.name}..."
+        searchFuture = io.submit {
+            val results = try { provider.search(searchQuery, 20) } catch (_: Exception) { emptyList() }
+            if (destroyed || generation != searchGeneration) return@submit
+            runOnUiThread {
+                if (destroyed || generation != searchGeneration) return@runOnUiThread
+                resultGeneration = generation
+                resultPageIndex = 0
+                val ranked = results
+                    .filter { ServerConfig.isAllowedPageUrl(it.url) }
+                    .distinctBy { it.url.substringBefore('#').trimEnd('/').lowercase() }
+                    .sortedByDescending { SearchRanking.webScore(searchQuery, it.title, it.url, it.isYouTube) }
+                    .take(15)
+                ranked.filter { it.isYouTube }.forEach { addYouTubeView(it.url, it.title.ifBlank { "YouTube" }) }
+                resultPages = ranked.filterNot { it.isYouTube }.map { "${it.url}|||${it.title}" }
+                if (resultPages.isEmpty()) loadNextSiteBatch() else processNextResultPage()
+            }
         }
     }
 
@@ -1067,9 +1066,7 @@ class MainActivity : Activity() {
     }
 
     private fun extractGoogleResults() {
-        if (destroyed) return
-        if (searchGeneration <= 0) return
-
+        if (destroyed || searchGeneration <= 0) return
         val script = """
             (function() {
                 try {
@@ -1078,35 +1075,7 @@ class MainActivity : Activity() {
                     var seen = {};
                     for (var i = 0; i < links.length; i++) {
                         var href = links[i].href || "";
-                        var text = links[i].innerText || "";
-                        try {
-                            var parsed = new URL(href);
-                            if ((parsed.hostname || "").toLowerCase().indexOf("google.com") >= 0 && parsed.pathname.indexOf("/url") === 0) {
-                                var target = parsed.searchParams.get("url") || parsed.searchParams.get("q");
-                                if (target) href = decodeURIComponent(target);
-                            }
-                        } catch (e) {}
-                        try {
-                            var parsed = new URL(href);
-                            if ((parsed.hostname || "").toLowerCase().indexOf("google.com") >= 0 && parsed.pathname.indexOf("/url") === 0) {
-                                var target = parsed.searchParams.get("url") || parsed.searchParams.get("q");
-                                if (target) href = decodeURIComponent(target);
-                            }
-                        } catch (e) {}
-                        try {
-                            var parsed = new URL(href);
-                            if ((parsed.hostname || "").toLowerCase().indexOf("google.com") >= 0 && parsed.pathname.indexOf("/url") === 0) {
-                                var target = parsed.searchParams.get("url") || parsed.searchParams.get("q");
-                                if (target) href = decodeURIComponent(target);
-                            }
-                        } catch (e) {}
-                        try {
-                            var parsed = new URL(href);
-                            if ((parsed.hostname || "").toLowerCase().indexOf("google.com") >= 0 && parsed.pathname.indexOf("/url") === 0) {
-                                var target = parsed.searchParams.get("url") || parsed.searchParams.get("q");
-                                if (target) href = decodeURIComponent(target);
-                            }
-                        } catch (e) {}
+                        var label = links[i].innerText || "";
                         try {
                             var parsed = new URL(href);
                             if ((parsed.hostname || "").toLowerCase().indexOf("google.com") >= 0 && parsed.pathname.indexOf("/url") === 0) {
@@ -1116,28 +1085,17 @@ class MainActivity : Activity() {
                         } catch (e) {}
                         if (!/^https?:\/\//i.test(href)) continue;
                         var lower = href.toLowerCase();
-                        if (lower.indexOf("google.com/search") >= 0) continue;
-                        if (lower.indexOf("google.com/accounts") >= 0) continue;
-                        if (lower.indexOf("support.google.com") >= 0) continue;
-                        if (lower.indexOf("policies.google.com") >= 0) continue;
-                        if (lower.indexOf("youtube.com") >= 0 || lower.indexOf("youtu.be") >= 0) continue;
+                        if (lower.indexOf("google.com/search") >= 0 || lower.indexOf("google.com/accounts") >= 0 || lower.indexOf("support.google.com") >= 0 || lower.indexOf("policies.google.com") >= 0) continue;
                         if (seen[href]) continue;
                         seen[href] = true;
-                        found.push(href + "|||" + text.replace(/[\r\n]+/g, " "));
+                        found.push(href + "|||" + label.replace(/[\r\n]+/g, " "));
                         if (found.length >= 50) break;
                     }
                     MusicFinder.results(found.join("###"));
-                } catch (e) {
-                    MusicFinder.results("");
-                }
+                } catch (e) { MusicFinder.results(""); }
             })();
         """.trimIndent()
-
-        try {
-            web.evaluateJavascript(script, null)
-        } catch (_: Exception) {
-            if (!destroyed) loadNextSiteBatch()
-        }
+        try { web.evaluateJavascript(script, null) } catch (_: Exception) { if (!destroyed) loadNextSiteBatch() }
     }
 
     private fun extractMusicPage(pageUrl: String) {
@@ -1606,6 +1564,11 @@ class MainActivity : Activity() {
                 putExtra(
                     MusicService.EXTRA_COVER,
                     cover
+                )
+
+                putExtra(
+                    "referer",
+                    currentSong?.referer.orEmpty()
                 )
 
                 putExtra(
