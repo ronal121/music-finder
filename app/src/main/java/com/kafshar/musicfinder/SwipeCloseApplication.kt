@@ -2,8 +2,10 @@ package com.kafshar.musicfinder
 
 import android.app.Activity
 import android.app.Application
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -19,6 +21,7 @@ class SwipeCloseApplication : Application() {
             override fun onActivityPostCreated(activity: Activity, savedInstanceState: Bundle?) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && activity is MainActivity) {
                     installSwipeClose(activity)
+                    installCategoryButton(activity)
                     val controller = SearchAutoPlayController(activity)
                     searchAutoPlayControllers[activity] = controller
                     controller.start()
@@ -56,6 +59,37 @@ class SwipeCloseApplication : Application() {
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
     }
+
+    private fun installCategoryButton(activity: MainActivity) {
+        val content = activity.findViewById<ViewGroup>(android.R.id.content) ?: return
+        val wrapper = content.getChildAt(0) as? ViewGroup ?: return
+        if (wrapper.findViewWithTag<View>("music_finder_categories") != null) return
+
+        val button = HarmonizedButton(activity).apply {
+            tag = "music_finder_categories"
+            text = "☷  دسته‌ها"
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setTextColor(0xFFF3F1F7.toInt())
+            setPadding(14, 0, 14, 0)
+            elevation = 10f
+            setOnClickListener {
+                activity.startActivity(Intent(activity, CategoryActivity::class.java))
+            }
+        }
+
+        wrapper.addView(button, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            dp(activity, 42)
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            topMargin = dp(activity, 10)
+            marginEnd = dp(activity, 12)
+        })
+    }
+
+    private fun dp(activity: Activity, value: Int): Int =
+        (value * activity.resources.displayMetrics.density).toInt()
 }
 
 private class SwipeCloseLayout(
