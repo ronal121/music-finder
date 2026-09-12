@@ -1067,6 +1067,13 @@ class MainActivity : Activity() {
                                 if (target) href = decodeURIComponent(target);
                             }
                         } catch (e) {}
+                        try {
+                            var parsed = new URL(href);
+                            if ((parsed.hostname || "").toLowerCase().indexOf("google.com") >= 0 && parsed.pathname.indexOf("/url") === 0) {
+                                var target = parsed.searchParams.get("url") || parsed.searchParams.get("q");
+                                if (target) href = decodeURIComponent(target);
+                            }
+                        } catch (e) {}
                         if (!/^https?:\/\//i.test(href)) continue;
                         var lower = href.toLowerCase();
                         if (lower.indexOf("google.com/search") >= 0) continue;
