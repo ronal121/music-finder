@@ -2,6 +2,7 @@ package com.kafshar.musicfinder
 
 import java.io.BufferedInputStream
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
 
 object MediaProbe {
@@ -25,31 +26,47 @@ object MediaProbe {
     }
 
     private fun request(url: String, pageUrl: String?, method: String): Result? {
-        var connection: HttpURLConnection? = null
-        return try {
-            connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                requestMethod = method
-                instanceFollowRedirects = true
-                connectTimeout = 4000
-                readTimeout = 5000
-                useCaches = false
-                setRequestProperty("User-Agent", SearchNetwork.USER_AGENT)
-                setRequestProperty("Accept", "audio/*,application/vnd.apple.mpegurl,application/dash+xml,application/octet-stream,*/*;q=0.4")
-                pageUrl?.takeIf { it.isNotBlank() }?.let { setRequestProperty("Referer", it) }
-                android.webkit.CookieManager.getInstance().getCookie(url)?.takeIf { it.isNotBlank() }?.let { setRequestProperty("Cookie", it) }
-                if (method == "GET") setRequestProperty("Range", "bytes=0-4095")
+        var currentUrl = url
+        repeat(5) {
+            if (!ServerConfig.isAllowedMediaUrl(currentUrl, pageUrl)) return null
+            var connection: HttpURLConnection? = null
+            try {
+                connection = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+                    requestMethod = method
+                    instanceFollowRedirects = false
+                    connectTimeout = 4000
+                    readTimeout = 5000
+                    useCaches = false
+                    setRequestProperty("User-Agent", SearchNetwork.USER_AGENT)
+                    setRequestProperty("Accept", "audio/*,application/vnd.apple.mpegurl,application/dash+xml,application/octet-stream,*/*;q=0.4")
+                    pageUrl?.takeIf { it.isNotBlank() }?.let { setRequestProperty("Referer", it) }
+                    android.webkit.CookieManager.getInstance().getCookie(currentUrl)?.takeIf { it.isNotBlank() }?.let { setRequestProperty("Cookie", it) }
+                    if (method == "GET") setRequestProperty("Range", "bytes=0-4095")
+                }
+
+                val code = connection.responseCode
+                if (code in 300..399) {
+                    val location = connection.getHeaderField("Location") ?: return null
+                    val next = try { URI(currentUrl).resolve(location).toString() } catch (_: Exception) { return null }
+                    if (!ServerConfig.isAllowedMediaUrl(next, pageUrl)) return null
+                    currentUrl = next
+                    return@repeat
+                }
+                if (code !in 200..299) return null
+
+                val finalUrl = connection.url?.toString().orEmpty().ifBlank { currentUrl }
+                if (!ServerConfig.isAllowedMediaUrl(finalUrl, pageUrl)) return null
+                val mime = connection.contentType?.substringBefore(';')?.trim()?.lowercase().orEmpty()
+                val length = connection.contentLengthLong
+                val sniff = if (method == "GET") sniff(connection) else ByteArray(0)
+                return classify(url, finalUrl, mime, sniff, code, length)
+            } catch (_: Exception) {
+                return null
+            } finally {
+                try { connection?.disconnect() } catch (_: Exception) { }
             }
-            val code = connection.responseCode
-            if (code !in 200..399) return null
-            val finalUrl = connection.url?.toString().orEmpty().ifBlank { url }
-            if (!ServerConfig.isPublicWebUrl(finalUrl)) return null
-            val mime = connection.contentType?.substringBefore(';')?.trim()?.lowercase().orEmpty()
-            val length = connection.contentLengthLong
-            val sniff = if (method == "GET") sniff(connection) else ByteArray(0)
-            classify(url, finalUrl, mime, sniff, code, length)
-        } catch (_: Exception) { null } finally {
-            try { connection?.disconnect() } catch (_: Exception) { }
         }
+        return null
     }
 
     private fun sniff(connection: HttpURLConnection): ByteArray {
