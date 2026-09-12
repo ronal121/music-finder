@@ -1,6 +1,7 @@
 package com.kafshar.musicfinder
 
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URLEncoder
 import java.net.URL
 import java.nio.charset.StandardCharsets
@@ -15,25 +16,47 @@ class HttpSearchProvider(
     private val endpoint: (String) -> String
 ) : SearchProvider {
     override fun search(query: String, limit: Int): List<GoogleResultParser.Result> {
+        if (query.isBlank() || limit <= 0) return emptyList()
         val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
-        val url = endpoint(encoded)
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 4500
-            readTimeout = 6500
-            instanceFollowRedirects = true
-            useCaches = false
-            setRequestProperty("User-Agent", SearchNetwork.USER_AGENT)
-            setRequestProperty("Accept-Language", "fa-IR,fa;q=0.9,en;q=0.8")
+        var currentUrl = endpoint(encoded)
+
+        repeat(5) {
+            if (!ServerConfig.isPublicWebUrl(currentUrl)) return emptyList()
+
+            val connection = try {
+                (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 4500
+                    readTimeout = 6500
+                    instanceFollowRedirects = false
+                    useCaches = false
+                    setRequestProperty("User-Agent", SearchNetwork.USER_AGENT)
+                    setRequestProperty("Accept-Language", "fa-IR,fa;q=0.9,en;q=0.8")
+                    setRequestProperty("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5")
+                }
+            } catch (_: Exception) {
+                return emptyList()
+            }
+
+            try {
+                val code = connection.responseCode
+                if (code in 300..399) {
+                    val location = connection.getHeaderField("Location") ?: return emptyList()
+                    val next = try { URI(currentUrl).resolve(location).toString() } catch (_: Exception) { return emptyList() }
+                    if (!ServerConfig.isPublicWebUrl(next)) return emptyList()
+                    currentUrl = next
+                    return@repeat
+                }
+                if (code !in 200..299) return emptyList()
+                val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                return GoogleResultParser.parseAnchors(html, limit)
+            } catch (_: Exception) {
+                return emptyList()
+            } finally {
+                connection.disconnect()
+            }
         }
-        return try {
-            val code = connection.responseCode
-            if (code !in 200..299) return emptyList()
-            val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            GoogleResultParser.parseAnchors(html, limit)
-        } finally {
-            connection.disconnect()
-        }
+        return emptyList()
     }
 }
 
