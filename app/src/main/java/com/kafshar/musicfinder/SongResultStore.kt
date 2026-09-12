@@ -18,6 +18,7 @@ object SongResultStore {
                 put("site", song.site)
                 put("cover", song.cover)
                 put("isYouTube", song.isYouTube)
+                put("referer", song.referer)
                 put("timestamp", System.currentTimeMillis())
                 put("playable", !song.isYouTube && song.url.isNotBlank())
                 put("sourceType", if (song.isYouTube) "YOUTUBE" else "DIRECT_AUDIO")
@@ -36,7 +37,7 @@ object SongResultStore {
                         val item = array.optJSONObject(i) ?: continue
                         val url = item.optString("url")
                         if (url.isBlank()) continue
-                        add(SongResult(url, item.optString("title"), item.optString("artist"), item.optString("site"), item.optString("cover"), item.optBoolean("isYouTube", false)))
+                        add(SongResult(url, item.optString("title"), item.optString("artist"), item.optString("site"), item.optString("cover"), item.optBoolean("isYouTube", false), item.optString("referer")))
                     }
                 }
             } catch (_: Exception) { }
