@@ -4,12 +4,22 @@ package com.kafshar.musicfinder
 object SearchEngine {
     private val whitespace = Regex("\\s+")
     private val punctuation = Regex("[^\\p{L}\\p{N}\\s]")
+    private val combiningMarks = Regex("\\p{M}+")
     private val searchNoise = setOf("آهنگ", "دانلود", "mp3", "music", "song", "download")
     private val persianToCanonical = mapOf('آ' to 'ا','أ' to 'ا','إ' to 'ا','ٱ' to 'ا','ة' to 'ه','ي' to 'ی','ى' to 'ی','ك' to 'ک','ۀ' to 'ه','ؤ' to 'و','ئ' to 'ی','ـ' to null)
     private val digitMap = mapOf('۰' to '0','۱' to '1','۲' to '2','۳' to '3','۴' to '4','۵' to '5','۶' to '6','۷' to '7','۸' to '8','۹' to '9','٠' to '0','١' to '1','٢' to '2','٣' to '3','٤' to '4','٥' to '5','٦' to '6','٧' to '7','٨' to '8','٩' to '9')
     private val commonTypos = mapOf("michal" to "michael","michal jakson" to "michael jackson","michal jackson" to "michael jackson","michal jaskon" to "michael jackson","jakson" to "jackson","jaskon" to "jackson","micheal" to "michael","swft" to "swift","talyor" to "taylor","taylor swft" to "taylor swift","bill jin" to "billie jean","billie jin" to "billie jean","billie jine" to "billie jean","adel" to "adele","adele helol" to "adele hello")
 
-    fun normalizeQuery(input: String): String = input.mapNotNull { ch -> persianToCanonical[ch] ?: digitMap[ch] ?: ch }.joinToString("").replace(Regex("[\\u200c\\u200d\\u200e\\u200f\\u0640]"), " ").replace(punctuation, " ").replace(whitespace, " ").trim().lowercase()
+    fun normalizeQuery(input: String): String = input
+        .mapNotNull { ch -> persianToCanonical[ch] ?: digitMap[ch] ?: ch }
+        .joinToString("")
+        .replace(Regex("[\\u200c\\u200d\\u200e\\u200f\\u0640]"), " ")
+        .replace(combiningMarks, "")
+        .replace(punctuation, " ")
+        .replace(whitespace, " ")
+        .trim()
+        .lowercase()
+
     fun displayQuery(input: String): String = input.replace(Regex("[\\u200c\\u200d]"), " ").replace(whitespace, " ").trim()
 
     fun correctedQuery(input: String): String {
@@ -58,22 +68,11 @@ object SearchEngine {
         return variants.map { it.trim().replace(whitespace, " ") }.filter { it.isNotBlank() }.take(8)
     }
 
-    /**
-     * Build a permissive Google query. The previous implementation forced every
-     * result to contain mp3/آهنگ/دانلود. That is too restrictive: Google often
-     * returns the useful lyric/music page without any of those words in its title,
-     * URL or indexed text. We keep the user's exact text as the primary query and
-     * only add a second, broader music-intent variant when useful.
-     */
     fun buildGoogleQuery(input: String): String {
         val original = displayQuery(input)
         if (original.isBlank()) return "music"
         val corrected = correctedQuery(original)
-        if (corrected.isNotBlank() && corrected != normalizeQuery(original) && corrected != original) {
-            // Do not require either spelling to contain a music keyword. Google can
-            // then return lyric pages, artist pages and download pages alike.
-            return "($original OR $corrected)"
-        }
+        if (corrected.isNotBlank() && corrected != normalizeQuery(original) && corrected != original) return "($original OR $corrected)"
         return original
     }
 
