@@ -988,8 +988,8 @@ class MainActivity : Activity() {
             return
         }
 
-        pageTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
-        pageTimeoutRunnable = null
+        pageTimeout?.let { handler.removeCallbacks(it) }
+        pageTimeout = null
         expectedPageUrl = ""
         resultPages = emptyList()
         resultPageIndex = 0
@@ -1010,6 +1010,16 @@ class MainActivity : Activity() {
             web.loadUrl(url)
         } catch (_: Exception) {
             if (generation == searchGeneration) loadNextSiteBatch()
+        }
+    }
+
+    private fun loadNextDiscoveryEngine() {
+        loadNextSiteBatch()
+    }
+
+    private fun loadGoogleFallback(text: String, generation: Int) {
+        if (!destroyed && generation == searchGeneration) {
+            loadNextSiteBatch()
         }
     }
 
@@ -1043,6 +1053,13 @@ class MainActivity : Activity() {
                     for (var i = 0; i < links.length; i++) {
                         var href = links[i].href || "";
                         var text = links[i].innerText || "";
+                        try {
+                            var parsed = new URL(href);
+                            if ((parsed.hostname || "").toLowerCase().indexOf("google.com") >= 0 && parsed.pathname.indexOf("/url") === 0) {
+                                var target = parsed.searchParams.get("url") || parsed.searchParams.get("q");
+                                if (target) href = decodeURIComponent(target);
+                            }
+                        } catch (e) {}
                         try {
                             var parsed = new URL(href);
                             if ((parsed.hostname || "").toLowerCase().indexOf("google.com") >= 0 && parsed.pathname.indexOf("/url") === 0) {
