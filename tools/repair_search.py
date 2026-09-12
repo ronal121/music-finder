@@ -1,325 +1,246 @@
 from pathlib import Path
+import re
 
 ROOT = Path("app/src/main/java/com/kafshar/musicfinder")
 MAIN = ROOT / "MainActivity.kt"
-GP = ROOT / "GoogleResultParser.kt"
-MP = ROOT / "MusicPageParser.kt"
-SE = ROOT / "SearchEngine.kt"
 
 
-def replace_once(path, old, new):
+def replace_regex(path: Path, pattern: str, replacement: str, count: int = 1):
+    text = path.read_text(encoding="utf-8")
+    new_text, n = re.subn(pattern, replacement, text, count=count, flags=re.S)
+    if n == 0:
+        return False
+    path.write_text(new_text, encoding="utf-8")
+    return True
+
+
+def replace_literal(path: Path, old: str, new: str):
     text = path.read_text(encoding="utf-8")
     if old not in text:
-        raise SystemExit(f"missing target in {path}: {old[:120]!r}")
+        return False
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
+    return True
 
 
-# Discovery layer: search engines discover candidate pages; they are never final audio sources.
-replace_once(MAIN, '''    private var googleFallbackUsed = false
+# The old implementation hard-coded four sites. Replace it with a batched
+# Google search over MusicSitePool.domains. The pool contains 200+ domains;
+# Google is queried in small batches so the URL itself stays practical.
+replace_literal(
+    MAIN,
+    '''    private var searchGeneration = 0\n''',
+    '''    private var searchGeneration = 0\n    private var siteBatchIndex = 0\n    private var siteSearchQueries: List<String> = emptyList()\n'''
+)
 
-    private var resultPages: List<String> = emptyList()
-''', '''    private var googleFallbackUsed = false
-    private var discoveryEngineIndex = 0
-    private val discoveryEngines = listOf("google", "bing", "duckduckgo")
+search_method = r'''    private fun searchMusic() {
+        if (destroyed) return
 
-    private var resultPages: List<String> = emptyList()
-''')
+        val text = query.text.toString().trim()
+        if (text.isEmpty()) {
+            Toast.makeText(
+                this,
+                "نام آهنگ یا خواننده را وارد کنید",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
 
-replace_once(MAIN, '''                if (resultPages.isEmpty()) {
-                    status.text = "Google نتیجه قابل پردازشی برنگرداند"
-                    finishSearch()
-                } else {
-''', '''                if (resultPages.isEmpty()) {
-                    loadNextDiscoveryEngine()
-                } else {
-''')
+        searchGeneration++
+        cancelSearchCallbacks()
+        resultPages = emptyList()
+        resultPageIndex = 0
+        resultGeneration = searchGeneration
+        expectedPageUrl = ""
 
-replace_once(MAIN, '''        googleFallbackUsed = false
-        resultGeneration = generation
-''', '''        googleFallbackUsed = false
-        discoveryEngineIndex = 0
-        resultGeneration = generation
-''')
+        siteBatchIndex = 0
+        siteSearchQueries = MusicSitePool.googleQueries(text)
 
-text = MAIN.read_text(encoding="utf-8")
-start = text.index("    private fun loadGoogleFallback(text: String, generation: Int) {")
-end = text.index("\n    private fun cancelSearchCallbacks()", start)
-newblock = '''    private fun loadGoogleFallback(text: String, generation: Int) {
-        if (destroyed || generation != searchGeneration) return
-        discoveryEngineIndex = 0
-        loadNextDiscoveryEngine()
+        songs.clear()
+        currentIndex = -1
+        currentAudioUrl = ""
+        currentSong = null
+
+        resultsContainer.removeAllViews()
+        titleText.text = text
+        artistText.text = ""
+        status.text = ""
+        seekBar.progress = 0
+        currentTimeText.text = "00:00"
+        durationText.text = "00:00"
+        vinyl.clearCover()
+        vinyl.stopRotation()
+
+        loadNextSiteBatch()
     }
 
-    private fun loadNextDiscoveryEngine() {
-        val generation = searchGeneration
-        if (destroyed || generation <= 0 || generation != resultGeneration) return
-        if (discoveryEngineIndex >= discoveryEngines.size) {
+    private fun loadNextSiteBatch() {
+        if (destroyed || siteBatchIndex >= siteSearchQueries.size) {
             finishSearch()
             return
         }
 
-        val engine = discoveryEngines[discoveryEngineIndex++]
-        val raw = query.text.toString().trim()
-        val q = SearchEngine.buildGoogleQuery(raw)
-        val encoded = try { URLEncoder.encode(q, "UTF-8") } catch (_: Exception) { "" }
-        if (encoded.isBlank()) { loadNextDiscoveryEngine(); return }
-
-        val url = when (engine) {
-            "google" -> "https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1"
-            "bing" -> "https://www.bing.com/search?q=$encoded&count=50&setlang=en"
-            else -> "https://html.duckduckgo.com/html/?q=$encoded"
-        }
-
-        status.text = when (engine) {
-            "google" -> "در حال جستجوی Google..."
-            "bing" -> "Google نتیجه کافی نداد؛ در حال جستجوی Bing..."
-            else -> "Bing نتیجه کافی نداد؛ در حال جستجوی DuckDuckGo..."
-        }
+        pageTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        pageTimeoutRunnable = null
+        expectedPageUrl = ""
         resultPages = emptyList()
         resultPageIndex = 0
-        expectedPageUrl = ""
-        capturedRuntimeUrls.clear()
+
+        val generation = searchGeneration
+        val searchQuery = siteSearchQueries[siteBatchIndex++]
+        val encoded = try {
+            URLEncoder.encode(searchQuery, "UTF-8")
+        } catch (_: Exception) {
+            loadNextSiteBatch()
+            return
+        }
+
+        val url = "https://www.google.com/search?q=$encoded&num=50&hl=fa&gbv=1"
+
         try {
             web.stopLoading()
             web.loadUrl(url)
         } catch (_: Exception) {
-            loadNextDiscoveryEngine()
+            if (generation == searchGeneration) loadNextSiteBatch()
         }
     }
 '''
-MAIN.write_text(text[:start] + newblock + text[end:], encoding="utf-8")
+replace_regex(MAIN, r"    private fun searchMusic\(\) \{.*?\n    private fun cancelSearchCallbacks\(\)", search_method + "\n    private fun cancelSearchCallbacks()")
 
-replace_once(MAIN, '''                    if (
-                        url.contains(
-                            "google.com/search",
-                            true
-                        )
-                    ) {
-''', '''                    if (
-                        url.contains("google.com/search", true) ||
-                        url.contains("bing.com/search", true) ||
-                        url.contains("duckduckgo.com/html", true)
-                    ) {
-''')
+# Google results are already restricted by the query. Do not filter them again
+# against a tiny hard-coded list. Keep Google-owned navigation links out.
+extract_method = r'''    private fun extractGoogleResults() {
+        if (destroyed) return
+        if (searchGeneration <= 0) return
 
-text = MAIN.read_text(encoding="utf-8").replace(".parseAnchors(html, 30)", ".parseAnchors(html, 50)", 1)
-MAIN.write_text(text, encoding="utf-8")
-
-# Search-result redirect normalization.
-replace_once(GP, '''            if (host.contains("google.")) {
-                val query = parseQuery(resolved.rawQuery)
-                val target = listOf(query["q"], query["url"], query["u"], query["uddg"])
-                    .firstOrNull { !it.isNullOrBlank() }
-                    ?.trim()
-
-                if (!target.isNullOrBlank() && target.startsWith("http", true)) {
-                    return decodeUrlRepeatedly(target)
-                        .takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
-                }
-            }
-
-            resolved.toString().takeIf {
-                it.startsWith("http://", true) || it.startsWith("https://", true)
-            }
-''', '''            if (host.contains("google.") || host.contains("bing.com") || host.contains("duckduckgo.com") || host.contains("yahoo.com")) {
-                val query = parseQuery(resolved.rawQuery)
-                val target = listOf(query["q"], query["url"], query["u"], query["uddg"], query["r"], query["target"])
-                    .firstOrNull { !it.isNullOrBlank() && it.startsWith("http", true) }
-                    ?.trim()
-                if (!target.isNullOrBlank()) {
-                    return decodeUrlRepeatedly(target)
-                        .takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
-                }
-                if (host.contains("bing.com") || host.contains("duckduckgo.com") || host.contains("yahoo.com")) return null
-            }
-
-            resolved.toString().takeIf {
-                it.startsWith("http://", true) || it.startsWith("https://", true)
-            }
-''')
-
-# Page parser: domain-agnostic media extraction and embedded-player discovery.
-replace_once(MP, '''data class ParsedMusicPage(
-    val title: String,
-    val artist: String,
-    val cover: String,
-    val audioCandidates: List<String>
-)
-''', '''data class ParsedMusicPage(
-    val title: String,
-    val artist: String,
-    val cover: String,
-    val audioCandidates: List<String>,
-    val pageCandidates: List<String> = emptyList()
-)
-''')
-
-replace_once(MP, '''        val candidates = LinkedHashSet<String>()
-
-        // Standard HTML5 media plus preload/link hints.
-        val mediaTag = Regex(
-            "<(?:audio|video|source|a|link)\\\\b[^>]*>",
-            RegexOption.IGNORE_CASE
-        )
-''', '''        val candidates = LinkedHashSet<String>()
-        val pageCandidates = LinkedHashSet<String>()
-
-        // Standard HTML5 media, links, and embedded player frames.
-        val mediaTag = Regex(
-            "<(?:audio|video|source|a|link|iframe)\\\\b[^>]*>",
-            RegexOption.IGNORE_CASE
-        )
-''')
-
-replace_once(MP, '''        for (m in mediaTag.findAll(normalizedHtml)) {
-            collectAttributes(m.value, pageUrl, candidates)
-        }
-
-        // OpenGraph/Twitter audio metadata and other common meta names.
-''', '''        for (m in mediaTag.findAll(normalizedHtml)) {
-            val tag = m.value
-            val tagName = Regex("^<([a-zA-Z0-9]+)").find(tag)?.groupValues?.getOrNull(1)?.lowercase().orEmpty()
-            if (tagName == "iframe") {
-                val src = attrValue(tag, "src")
-                normalizeUrl(src, pageUrl)?.let { frame ->
-                    if (!ServerConfig.isObviousNonMediaUrl(frame)) pageCandidates += frame
-                }
-            } else {
-                collectAttributes(tag, pageUrl, candidates)
-            }
-        }
-
-        // Relative media URLs are common in player JavaScript and JSON.
-        val relativeMedia = Regex(
-            "(?:[\\\\\"'])(/(?:[^\\\\\"'<>\\\\\\\\ ]{1,500}(?:\\\\.(?:mp3|m4a|aac|ogg|oga|opus|wav|flac|webm)(?:[?#&][^\\\\\"'<>\\\\\\\\ ]*)?|/(?:download|dl|stream|audio|media)(?:/|[?#&]))))",
-            RegexOption.IGNORE_CASE
-        )
-        for (m in relativeMedia.findAll(normalizedHtml)) {
-            normalizeUrl(m.groupValues[1], pageUrl)?.let { candidate ->
-                if (!ServerConfig.isObviousNonMediaUrl(candidate)) candidates += candidate
-            }
-        }
-
-        // OpenGraph/Twitter audio metadata and other common meta names.
-''')
-
-replace_once(MP, '''        return ParsedMusicPage(
-            title.trim().take(300),
-            artist.trim().take(200),
-            cover.trim(),
-            candidates.take(80)
-        )
-''', '''        return ParsedMusicPage(
-            title.trim().take(300),
-            artist.trim().take(200),
-            cover.trim(),
-            candidates.take(100),
-            pageCandidates.distinct().take(6)
-        )
-''')
-
-# MainActivity: if a page embeds a separate player, add that player page to the same candidate queue.
-replace_once(MAIN, '''                val candidates = (parsed.audioCandidates + runtimeCandidates)
-                    .distinct()
-                    .take(160)
-                if (candidates.isEmpty()) {
-                    handler.postDelayed({
-                        if (!destroyed && resultGeneration == searchGeneration && expectedPageUrl.isNotBlank()) {
-                            extractMusicPage(expectedPageUrl)
-                        }
-                    }, 1200L)
-                    return@runOnUiThread
-                }
-
-                validateAndAddAudioCandidates(
-''', '''                val candidates = (parsed.audioCandidates + runtimeCandidates)
-                    .distinct()
-                    .take(160)
-
-                if (parsed.pageCandidates.isNotEmpty()) {
-                    val additions = parsed.pageCandidates
-                        .filter { ServerConfig.isAllowedPageUrl(it) }
-                        .map { "$it|||Embedded player" }
-                    resultPages = (resultPages + additions)
-                        .distinctBy { it.substringBefore("|||").substringBefore("#").trimEnd('/').lowercase() }
-                        .take(30)
-                }
-
-                if (candidates.isEmpty()) {
-                    if (parsed.pageCandidates.isNotEmpty()) {
-                        finishCurrentResultPage()
-                    } else {
-                        handler.postDelayed({
-                            if (!destroyed && resultGeneration == searchGeneration && expectedPageUrl.isNotBlank()) {
-                                extractMusicPage(expectedPageUrl)
-                            }
-                        }, 1200L)
+        val script = """
+            (function() {
+                try {
+                    var links = document.querySelectorAll("a");
+                    var found = [];
+                    var seen = {};
+                    for (var i = 0; i < links.length; i++) {
+                        var href = links[i].href || "";
+                        var text = links[i].innerText || "";
+                        if (!/^https?:\\/\\//i.test(href)) continue;
+                        var lower = href.toLowerCase();
+                        if (lower.indexOf("google.com/search") >= 0) continue;
+                        if (lower.indexOf("google.com/accounts") >= 0) continue;
+                        if (lower.indexOf("support.google.com") >= 0) continue;
+                        if (lower.indexOf("policies.google.com") >= 0) continue;
+                        if (lower.indexOf("youtube.com") >= 0 || lower.indexOf("youtu.be") >= 0) continue;
+                        if (seen[href]) continue;
+                        seen[href] = true;
+                        found.push(href + "|||" + text.replace(/[\\r\\n]+/g, " "));
+                        if (found.length >= 50) break;
                     }
+                    MusicFinder.results(found.join("###"));
+                } catch (e) {
+                    MusicFinder.results("");
+                }
+            })();
+        """.trimIndent()
+
+        try {
+            web.evaluateJavascript(script, null)
+        } catch (_: Exception) {
+            if (!destroyed) loadNextSiteBatch()
+        }
+    }
+'''
+replace_regex(MAIN, r"    private fun extractGoogleResults\(\) \{.*?\n    private fun extractMusicPage\(", extract_method + "\n    private fun extractMusicPage(")
+
+# If one Google batch has no usable result pages, immediately move to the next
+# batch instead of stopping the entire search.
+replace_literal(
+    MAIN,
+    '''                if (items.isEmpty()) {
+                    status.text =
+                        "نتیجه‌ای پیدا نشد"
+
                     return@runOnUiThread
                 }
 
-                validateAndAddAudioCandidates(
-''')
-
-# Any HTTP(S) page discovered by a search engine may be navigated to. Do not special-case Google only.
-replace_once(MAIN, '''                override fun shouldOverrideUrlLoading(
-                    view: WebView,
-                    request: WebResourceRequest
-                ): Boolean {
-                    val url =
-                        request.url.toString()
-
-                    return !(
-                        url.contains(
-                            "google.com",
-                            true
-                        ) ||
-                        ServerConfig.isAllowedPageUrl(
-                            url
-                        )
-                    )
+                status.text =
+                    "در حال بررسی نتایج..."
+''',
+    '''                if (items.isEmpty()) {
+                    loadNextSiteBatch()
+                    return@runOnUiThread
                 }
-''', '''                override fun shouldOverrideUrlLoading(
-                    view: WebView,
-                    request: WebResourceRequest
-                ): Boolean {
-                    val url = request.url.toString()
-                    return !ServerConfig.isAllowedPageUrl(url)
-                }
-''')
 
-# Query understanding: preserve the original query while allowing corrected/clean variants.
-replace_once(SE, '''    fun buildGoogleQuery(input: String): String {
-        val original = displayQuery(input)
-        if (original.isBlank()) return "music"
-        val corrected = correctedQuery(original)
-        if (corrected.isNotBlank() && corrected != normalizeQuery(original) && corrected != original) {
-            // Do not require either spelling to contain a music keyword. Google can
-            // then return lyric pages, artist pages and download pages alike.
-            return "($original OR $corrected)"
-        }
-        return original
-    }
-''', '''    fun buildGoogleQuery(input: String): String {
-        val original = displayQuery(input)
-        if (original.isBlank()) return "music"
-        val corrected = correctedQuery(original)
-        val normalized = normalizeQuery(original)
-        val variants = linkedSetOf<String>()
-        variants += original
-        if (corrected.isNotBlank() && corrected != normalized && corrected != original) {
-            variants += corrected
-        }
-        val clean = withoutSearchNoise(corrected)
-        if (clean.isNotBlank() && clean != normalized && clean != corrected) {
-            variants += clean
-        }
-        return when {
-            variants.size == 1 -> original
-            variants.size == 2 -> "(${variants.joinToString(" OR ")})"
-            else -> "(${variants.take(3).joinToString(" OR ")})"
-        }
-    }
-''')
+                status.text = ""
+'''
+)
 
-print("deep discovery/page-inspection repair applied")
+# When all pages from one batch are consumed, continue with the next site batch.
+replace_literal(
+    MAIN,
+    '''        if (
+            resultPageIndex >= resultPages.size
+        ) {
+
+            finishSearch()
+
+            return
+        }
+''',
+    '''        if (
+            resultPageIndex >= resultPages.size
+        ) {
+            loadNextSiteBatch()
+            return
+        }
+'''
+)
+
+# Never show result counts/status messages at the end of search.
+replace_regex(
+    MAIN,
+    r"    private fun finishSearch\(\) \{.*?\n    private fun addSong\(",
+    '''    private fun finishSearch() {
+        if (destroyed) return
+        cancelSearchCallbacks()
+        if (songs.isNotEmpty() && currentIndex == -1) {
+            currentIndex = 0
+        }
+        status.text = ""
+        saveSearchResults()
+    }
+
+    private fun addSong('''
+)
+
+# The first actually extracted audio result starts playback immediately.
+replace_literal(
+    MAIN,
+    '''        songs.add(song)
+        addSongView(
+            song,
+            songs.lastIndex
+        )
+''',
+    '''        songs.add(song)
+        val newIndex = songs.lastIndex
+        addSongView(song, newIndex)
+
+        if (currentIndex == -1) {
+            currentIndex = newIndex
+            playSong(song)
+        }
+'''
+)
+
+# Do not let the 12-second status timeout overwrite the clean UI.
+replace_regex(
+    MAIN,
+    r"        val generation =\n            searchGeneration\n\n        val timeout =\n            Runnable \{.*?\n        mainHandler\.postDelayed\(\n            timeout,\n            12000L\n        \)",
+    '''        val generation = searchGeneration
+        val timeout = Runnable {
+            if (!destroyed && generation == searchGeneration && songs.isEmpty()) {
+                status.text = ""
+            }
+        }
+        searchTimeoutRunnable = timeout
+        mainHandler.postDelayed(timeout, 12000L)'''
+)
+
+print("Music Finder search now uses 200+ domain Google batches with immediate first-result playback.")
