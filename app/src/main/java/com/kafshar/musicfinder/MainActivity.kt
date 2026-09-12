@@ -111,6 +111,8 @@ class MainActivity : Activity() {
     private var searchGeneration = 0
     private var siteBatchIndex = 0
     private var siteSearchQueries: List<String> = emptyList()
+    private var siteBatchIndex = 0
+    private var siteSearchQueries: List<String> = emptyList()
 
     private var googleFallbackUsed = false
     private var discoveryEngineIndex = 0
