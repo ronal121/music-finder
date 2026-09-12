@@ -97,21 +97,22 @@ def main():
         try { web.evaluateJavascript(script, null) } catch (_: Exception) { if (!destroyed) loadNextSiteBatch() }
     }''')
 
-    # The migration may have run several times in older CI revisions; collapse repeated Referer extras.
-    block = '''                putExtra(
-                    "referer",
-                    currentSong?.referer.orEmpty()
-                )'''
-    text = re.sub(r'(?:\s*' + re.escape(block) + r'){2,}', "\n" + block, text)
-    if block not in text:
-        marker = '''                putExtra(
+    referer = '''putExtra(\s*"referer"\s*,\s*currentSong\?\.referer\.orEmpty\(\)\s*)'''
+    matches = list(re.finditer(referer, text))
+    if len(matches) > 1:
+        first = matches[0]
+        first_block = text[first.start():first.end()]
+        text = text[:first.start()] + first_block + text[first.end():]
+        text = re.sub(r'(?:\s*putExtra\(\s*"referer"\s*,\s*currentSong\?\.referer\.orEmpty\(\)\s*\)){2,}', "", text)
+        if '"referer",\n                    currentSong?.referer.orEmpty()' not in text:
+            marker = '''                putExtra(
                     MusicService.EXTRA_COVER,
                     cover
                 )'''
-        text = text.replace(marker, marker + "\n\n" + block, 1)
+            text = text.replace(marker, marker + '\n\n                putExtra(\n                    "referer",\n                    currentSong?.referer.orEmpty()\n                )', 1)
 
     MAIN.write_text(text, encoding="utf-8")
-    print("Wired SearchProvider abstraction and normalized repeated playback metadata injection.")
+    print("Wired SearchProvider abstraction and normalized playback metadata injection.")
 
 if __name__ == "__main__":
     main()
