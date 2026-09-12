@@ -20,10 +20,9 @@
         android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true">
 
+        <activity android:name=".CategoryActivity" android:exported="false" />
         <activity android:name=".LibraryActivity" android:exported="false" />
-
         <activity android:name=".MainActivity" android:exported="false" />
-
         <activity android:name=".YouTubePlayerActivity" android:exported="false" />
 
         <activity android:name=".SplashActivity" android:exported="true">
