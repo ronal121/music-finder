@@ -109,10 +109,8 @@ class MainActivity : Activity() {
     private var receiverRegistered = false
 
     private var searchGeneration = 0
-    private var siteBatchIndex = 0
     private var siteSearchQueries: List<String> = emptyList()
     private var siteBatchIndex = 0
-    private var siteSearchQueries: List<String> = emptyList()
 
     private var googleFallbackUsed = false
     private var discoveryEngineIndex = 0
@@ -1045,6 +1043,13 @@ class MainActivity : Activity() {
                     for (var i = 0; i < links.length; i++) {
                         var href = links[i].href || "";
                         var text = links[i].innerText || "";
+                        try {
+                            var parsed = new URL(href);
+                            if ((parsed.hostname || "").toLowerCase().indexOf("google.com") >= 0 && parsed.pathname.indexOf("/url") === 0) {
+                                var target = parsed.searchParams.get("url") || parsed.searchParams.get("q");
+                                if (target) href = decodeURIComponent(target);
+                            }
+                        } catch (e) {}
                         if (!/^https?:\/\//i.test(href)) continue;
                         var lower = href.toLowerCase();
                         if (lower.indexOf("google.com/search") >= 0) continue;
@@ -1107,10 +1112,14 @@ class MainActivity : Activity() {
                     val song = SongResult(audio, title, artist, getSiteName(pageUrl), cover)
                     if (songs.none { it.url == song.url }) {
                         songs.add(song)
-                        addSongView(song, songs.lastIndex)
+                        val newIndex = songs.lastIndex
+                        addSongView(song, newIndex)
+                        if (currentIndex == -1) {
+                            currentIndex = newIndex
+                            playSong(song)
+                        }
                     }
                 }
-                if (songs.isNotEmpty()) status.text = "${songs.size} آهنگ قابل پخش پیدا شد"
                 finishCurrentResultPage()
             }
         }
@@ -1214,12 +1223,8 @@ class MainActivity : Activity() {
             return
         }
 
-        if (
-            resultPageIndex >=
-            resultPages.size
-        ) {
-
-            finishSearch()
+        if (resultPageIndex >= resultPages.size) {
+            loadNextSiteBatch()
             return
         }
 
