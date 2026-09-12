@@ -109,6 +109,8 @@ class MainActivity : Activity() {
     private var receiverRegistered = false
 
     private var searchGeneration = 0
+    private var siteBatchIndex = 0
+    private var siteSearchQueries: List<String> = emptyList()
 
     private var googleFallbackUsed = false
     private var discoveryEngineIndex = 0
@@ -940,81 +942,74 @@ class MainActivity : Activity() {
     }
 
     private fun searchMusic() {
-
         if (destroyed) return
+
         val text = query.text.toString().trim()
-        if (text.isBlank()) {
-            Toast.makeText(this, "نام آهنگ یا خواننده را وارد کنید", Toast.LENGTH_SHORT).show()
+        if (text.isEmpty()) {
+            Toast.makeText(
+                this,
+                "نام آهنگ یا خواننده را وارد کنید",
+                Toast.LENGTH_SHORT
+            ).show()
             return
         }
+
         searchGeneration++
-        val generation = searchGeneration
         cancelSearchCallbacks()
-        googleFallbackUsed = false
-        discoveryEngineIndex = 0
-        resultGeneration = generation
         resultPages = emptyList()
         resultPageIndex = 0
+        resultGeneration = searchGeneration
         expectedPageUrl = ""
-        capturedRuntimeUrls.clear()
+
+        siteBatchIndex = 0
+        siteSearchQueries = MusicSitePool.googleQueries(text)
+
         songs.clear()
         currentIndex = -1
         currentAudioUrl = ""
         currentSong = null
+
         resultsContainer.removeAllViews()
         titleText.text = text
-        artistText.text = "در حال جستجو..."
-        status.text = "در حال جستجوی منابع موسیقی..."
+        artistText.text = ""
+        status.text = ""
         seekBar.progress = 0
         currentTimeText.text = "00:00"
         durationText.text = "00:00"
         vinyl.clearCover()
         vinyl.stopRotation()
-        clearLyrics()
-        // Google is the only discovery source. No hard-coded music-site list is used.
-        loadGoogleFallback(text, generation)
+
+        loadNextSiteBatch()
     }
 
-    private fun loadGoogleFallback(text: String, generation: Int) {
-        if (destroyed || generation != searchGeneration) return
-        discoveryEngineIndex = 0
-        loadNextDiscoveryEngine()
-    }
-
-    private fun loadNextDiscoveryEngine() {
-        val generation = searchGeneration
-        if (destroyed || generation <= 0 || generation != resultGeneration) return
-        if (discoveryEngineIndex >= discoveryEngines.size) {
+    private fun loadNextSiteBatch() {
+        if (destroyed || siteBatchIndex >= siteSearchQueries.size) {
             finishSearch()
             return
         }
 
-        val engine = discoveryEngines[discoveryEngineIndex++]
-        val raw = query.text.toString().trim()
-        val q = SearchEngine.buildGoogleQuery(raw)
-        val encoded = try { URLEncoder.encode(q, "UTF-8") } catch (_: Exception) { "" }
-        if (encoded.isBlank()) { loadNextDiscoveryEngine(); return }
-
-        val url = when (engine) {
-            "google" -> "https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1"
-            "bing" -> "https://www.bing.com/search?q=$encoded&count=50&setlang=en"
-            else -> "https://html.duckduckgo.com/html/?q=$encoded"
-        }
-
-        status.text = when (engine) {
-            "google" -> "در حال جستجوی Google..."
-            "bing" -> "Google نتیجه کافی نداد؛ در حال جستجوی Bing..."
-            else -> "Bing نتیجه کافی نداد؛ در حال جستجوی DuckDuckGo..."
-        }
+        pageTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        pageTimeoutRunnable = null
+        expectedPageUrl = ""
         resultPages = emptyList()
         resultPageIndex = 0
-        expectedPageUrl = ""
-        capturedRuntimeUrls.clear()
+
+        val generation = searchGeneration
+        val searchQuery = siteSearchQueries[siteBatchIndex++]
+        val encoded = try {
+            URLEncoder.encode(searchQuery, "UTF-8")
+        } catch (_: Exception) {
+            loadNextSiteBatch()
+            return
+        }
+
+        val url = "https://www.google.com/search?q=$encoded&num=50&hl=fa&gbv=1"
+
         try {
             web.stopLoading()
             web.loadUrl(url)
         } catch (_: Exception) {
-            loadNextDiscoveryEngine()
+            if (generation == searchGeneration) loadNextSiteBatch()
         }
     }
 
@@ -1036,18 +1031,42 @@ class MainActivity : Activity() {
     }
 
     private fun extractGoogleResults() {
-        if (destroyed || searchGeneration <= 0) return
+        if (destroyed) return
+        if (searchGeneration <= 0) return
+
         val script = """
-            (function(){
-              try {
-                var html = document.documentElement ? document.documentElement.outerHTML : document.body.innerHTML;
-                MusicFinder.googleHtml(encodeURIComponent(html || ''));
-              } catch(e) {
-                MusicFinder.googleHtml('');
-              }
+            (function() {
+                try {
+                    var links = document.querySelectorAll("a");
+                    var found = [];
+                    var seen = {};
+                    for (var i = 0; i < links.length; i++) {
+                        var href = links[i].href || "";
+                        var text = links[i].innerText || "";
+                        if (!/^https?:\/\//i.test(href)) continue;
+                        var lower = href.toLowerCase();
+                        if (lower.indexOf("google.com/search") >= 0) continue;
+                        if (lower.indexOf("google.com/accounts") >= 0) continue;
+                        if (lower.indexOf("support.google.com") >= 0) continue;
+                        if (lower.indexOf("policies.google.com") >= 0) continue;
+                        if (lower.indexOf("youtube.com") >= 0 || lower.indexOf("youtu.be") >= 0) continue;
+                        if (seen[href]) continue;
+                        seen[href] = true;
+                        found.push(href + "|||" + text.replace(/[\r\n]+/g, " "));
+                        if (found.length >= 50) break;
+                    }
+                    MusicFinder.results(found.join("###"));
+                } catch (e) {
+                    MusicFinder.results("");
+                }
             })();
         """.trimIndent()
-        try { web.evaluateJavascript(script, null) } catch (_: Exception) { finishSearch() }
+
+        try {
+            web.evaluateJavascript(script, null)
+        } catch (_: Exception) {
+            if (!destroyed) loadNextSiteBatch()
+        }
     }
 
     private fun extractMusicPage(pageUrl: String) {
