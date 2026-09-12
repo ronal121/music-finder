@@ -1,10 +1,9 @@
 package com.kafshar.musicfinder
 
 /**
- * Search pool used by Google discovery.
- * The pool is deliberately domain-based: Google decides which page inside each
- * domain is relevant to the requested song, then the normal page/audio extractor
- * decides whether that page actually contains a playable media URL.
+ * Google discovery pool. Google remains the ranking/search engine; this list is
+ * only used to generate small site: batches so Google can search the known music
+ * ecosystem without creating an overlong query.
  */
 object MusicSitePool {
     val domains: List<String> = listOf(
@@ -61,10 +60,19 @@ object MusicSitePool {
         "musicchi.com", "musicisho.ir", "musicday.ir", "musicday.com", "musicup.ir", "musicup.com",
         "musicgo.ir", "musicgo.com", "musicbox.ir", "musicbox.com", "musicbaz.ir", "musicbaz.com",
 
+        // Additional active/category/lyrics sources
+        "nicmusic.net", "vmusic.ir", "sakhamusic.ir", "jenabmusic.com", "ganja2music.com",
+        "silamusic.ir", "pop-music.ir", "behmusic.com", "songsara.net", "farsiplayer.com",
+        "sorud.com", "matnmusic.com", "dtaraneh.net", "trackmelody.com", "biya2ahang.ir",
+        "songsun.ir", "rozsong.com", "sultanmusics.com", "musicaz.ir", "myspotify.ir",
+        "musickordi.com", "shomal-music.info", "7gahmusic.ir", "ahangtv.com", "peraoke.com",
+        "genius.com", "musixmatch.com", "lyrics.com", "azlyrics.com", "lyricfind.com",
+        "songlyrics.com", "lyricsmode.com", "metrolyrics.com", "songmeanings.com", "allmusic.com",
+
         // International / electronic / EDM / house / techno / trance / DnB
         "soundcloud.com", "bandcamp.com", "audiomack.com", "audius.co", "hearthis.at", "soundclick.com",
         "mixcloud.com", "jamendo.com", "freemusicarchive.org", "archive.org", "ccmixter.org",
-        "last.fm", "myspace.com", "reverbnation.com", "hearthis.at", "hypeddit.com", "toneden.io",
+        "last.fm", "myspace.com", "reverbnation.com", "hypeddit.com", "toneden.io",
         "beatport.com", "traxsource.com", "volumo.com", "beatsource.com", "digitaldjpool.com", "zipdj.com",
         "prodjbeat.com", "cdpool.com", "boomkat.com", "bleep.com", "hardwax.com", "clone.nl",
         "phonicarecords.com", "whatpeopleplay.com", "digital-tunes.net", "junorecords.com", "junodownload.com",
@@ -77,16 +85,18 @@ object MusicSitePool {
         "trancehub.com", "tranceattack.net", "trancefamily.com", "trancefix.nl", "trancemusicmastery.com",
         "trancepodium.com", "tranceproject.com", "techno-livesets.com", "techno-minimal.com", "technomusicnews.com",
         "techno-club.net", "technoarchive.org", "house-mixes.com", "housemusicwithlove.com", "houseplanet.dj",
-        "deepvibes.co.uk", "deepmix.ru", "mixesdb.com", "mixcrate.com", "mixupload.com", "hearthis.at",
+        "deepvibes.co.uk", "deepmix.ru", "mixesdb.com", "mixcrate.com", "mixupload.com",
         "globaldjmix.com", "djdownload.com", "digitalmusicpool.com", "myloops.net", "loopmasters.com",
         "splice.com", "samplemagic.com", "cymatics.fm", "ghosthack.de", "audiotool.com", "soundation.com",
         "bandlab.com", "musopen.org", "freepd.com", "pixabay.com", "uppbeat.io", "artlist.io",
         "epidemicsound.com", "premiumbeat.com", "pond5.com", "motionarray.com", "audiio.com",
         "beatstars.com", "traktrain.com", "airbit.com", "soundgasm.net", "drooble.com", "indabamusic.com",
-        "noisetrade.com", "datpiff.com", "audiomack.com", "musicbrainz.org", "rateyourmusic.com"
+        "noisetrade.com", "datpiff.com", "musicbrainz.org", "rateyourmusic.com"
     ).distinct()
 
-    private const val BATCH_SIZE = 28
+    // Google becomes unreliable when a query contains too many site: operators.
+    // Six domains keeps each query comfortably below Google's practical word limit.
+    private const val BATCH_SIZE = 6
 
     fun googleQueries(song: String): List<String> {
         val text = song.trim().replace(Regex("\\s+"), " ")
