@@ -2,7 +2,6 @@ package com.kafshar.musicfinder
 
 import java.io.BufferedInputStream
 import java.net.HttpURLConnection
-import java.net.URI
 import java.net.URL
 
 object MediaProbe {
@@ -21,12 +20,9 @@ object MediaProbe {
     fun probe(url: String, pageUrl: String? = null): Result {
         if (!ServerConfig.isAllowedMediaUrl(url, pageUrl)) return Result(url, url, Type.UNKNOWN, "", 0)
         val head = request(url, pageUrl, "HEAD")
-        if (head != null && isUseful(head)) return head
-        val range = request(url, pageUrl, "GET")
-        return range ?: Result(url, url, Type.UNKNOWN, "", 0)
+        if (head != null && head.type in setOf(Type.DIRECT_AUDIO, Type.HLS, Type.DASH) && head.mime != "application/octet-stream" && head.mime != "binary/octet-stream") return head
+        return request(url, pageUrl, "GET") ?: head ?: Result(url, url, Type.UNKNOWN, "", 0)
     }
-
-    private fun isUseful(result: Result): Boolean = result.playable || result.type == Type.HTML || result.type == Type.VIDEO
 
     private fun request(url: String, pageUrl: String?, method: String): Result? {
         var connection: HttpURLConnection? = null
@@ -51,9 +47,7 @@ object MediaProbe {
             val length = connection.contentLengthLong
             val sniff = if (method == "GET") sniff(connection) else ByteArray(0)
             classify(url, finalUrl, mime, sniff, code, length)
-        } catch (_: Exception) {
-            null
-        } finally {
+        } catch (_: Exception) { null } finally {
             try { connection?.disconnect() } catch (_: Exception) { }
         }
     }
@@ -77,12 +71,12 @@ object MediaProbe {
         if (hls) return Result(url, finalUrl, Type.HLS, m, status, length, true)
         val dash = m == "application/dash+xml" || finalUrl.substringBefore('?').endsWith(".mpd", true)
         if (dash) return Result(url, finalUrl, Type.DASH, m, status, length, true)
-        val video = m.startsWith("video/") || m == "application/x-mpegurl+video"
-        if (video) return Result(url, finalUrl, Type.VIDEO, m, status, length, false)
-        val audioMime = m.startsWith("audio/") || m == "application/octet-stream" || m == "binary/octet-stream"
+        if (m.startsWith("video/") || m == "application/x-mpegurl+video") return Result(url, finalUrl, Type.VIDEO, m, status, length, false)
+        val audioMime = m.startsWith("audio/")
         val signature = isAudioSignature(bytes)
         val extension = ServerConfig.hasAudioExtension(finalUrl)
         if (audioMime || signature || extension) return Result(url, finalUrl, Type.DIRECT_AUDIO, m, status, length, true)
+        if (m == "application/octet-stream" || m == "binary/octet-stream") return Result(url, finalUrl, Type.UNKNOWN, m, status, length, false)
         return Result(url, finalUrl, Type.UNKNOWN, m, status, length, false)
     }
 
