@@ -1,5 +1,6 @@
 package com.kafshar.musicfinder
 
+import java.net.InetAddress
 import java.net.URI
 
 data class MusicServer(
@@ -19,7 +20,6 @@ object ServerConfig {
     private val audioExtensions = setOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm")
     private val obviousPageExtensions = setOf(".html", ".htm", ".json", ".xml", ".css", ".js", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico")
 
-    // Discovery is intentionally not limited to a hard-coded music-site list.
     val SERVERS: List<MusicServer> = emptyList()
     val MUSIC_HOSTS: Set<String> get() = emptySet()
     val MUSIC_SITES: List<String> get() = emptyList()
@@ -30,25 +30,21 @@ object ServerConfig {
     fun isMusicHost(host: String?): Boolean = false
 
     fun isGoogleHost(host: String?): Boolean = hostMatchesDomain(normalizeHost(host).orEmpty(), GOOGLE_HOST)
-
     fun isYouTubeUrl(url: String?): Boolean = extractHttpHost(url)?.let(::isYouTubeHost) == true
-
     fun isYouTubeHost(host: String?): Boolean = youtubeDomains.any { hostMatchesDomain(normalizeHost(host).orEmpty(), it) }
 
-    /** Any normal HTTP(S) page discovered by the search engine may be inspected. */
-    fun isAllowedPageUrl(url: String): Boolean = extractHttpHost(url) != null
+    fun isAllowedPageUrl(url: String): Boolean = isPublicWebUrl(url)
 
-    /**
-     * Candidate URLs are intentionally permissive when they came from a page.
-     * Actual reachability/type checks belong to probeMediaUrl(). This prevents
-     * legitimate extensionless streams and application/octet-stream responses
-     * from being discarded before probing.
-     */
+    fun isPublicWebUrl(url: String): Boolean {
+        val host = extractHttpHost(url) ?: return false
+        return !isPrivateOrLocalHost(host)
+    }
+
     fun isAllowedMediaUrl(url: String, pageUrl: String? = null): Boolean {
         val host = extractHttpHost(url) ?: return false
-        if (isYouTubeHost(host)) return false
+        if (isPrivateOrLocalHost(host) || isYouTubeHost(host)) return false
         if (isObviousNonMediaUrl(url)) return false
-        if (pageUrl != null && extractHttpHost(pageUrl) != null) return true
+        if (pageUrl != null && isPublicWebUrl(pageUrl)) return true
         return looksLikeAudioUrl(url)
     }
 
@@ -66,7 +62,7 @@ object ServerConfig {
         val l = url.lowercase()
         return hasAudioExtension(url) || listOf(
             "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile",
-            ".mp4", "/stream", "/audio/", "/media/", "mime=audio", "type=audio"
+            "/stream", "/audio/", "/media/", "mime=audio", "type=audio", ".m3u8", ".mpd"
         ).any { l.contains(it) }
     }
 
@@ -103,5 +99,26 @@ object ServerConfig {
             return if (end > 1) a.substring(1, end) else null
         }
         return a.substringBeforeLast(':').takeIf { it.isNotBlank() }
+    }
+
+    private fun isPrivateOrLocalHost(host: String): Boolean {
+        val normalized = host.lowercase().trimEnd('.')
+        if (normalized == "localhost" || normalized.endsWith(".localhost") || normalized == "broadcasthost") return true
+        if (normalized == "0.0.0.0" || normalized == "::" || normalized == "[::1]" || normalized == "127.0.0.1") return true
+        return try {
+            InetAddress.getAllByName(normalized).any { address ->
+                address.isLoopbackAddress || address.isAnyLocalAddress || address.isLinkLocalAddress || address.isSiteLocalAddress || isPrivateIpv4(address.hostAddress)
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun isPrivateIpv4(value: String?): Boolean {
+        val parts = value?.split('.') ?: return false
+        if (parts.size != 4) return false
+        val a = parts.mapNotNull { it.toIntOrNull() }
+        if (a.size != 4) return false
+        return a[0] == 10 || (a[0] == 172 && a[1] in 16..31) || (a[0] == 192 && a[1] == 168) || (a[0] == 169 && a[1] == 254)
     }
 }
