@@ -584,12 +584,13 @@ class MainActivity : Activity() {
                     .mapNotNull { entry ->
                         val p = entry.split("|||", limit = 3)
                         val url = p.getOrNull(0)?.trim().orEmpty()
-                        if (!url.startsWith("http", true)) return@mapNotNull null
+                        if (!url.startsWith("http", true) || !ServerConfig.isAllowedPageUrl(url)) return@mapNotNull null
                         val title = decode(p.getOrNull(1)?.trim().orEmpty())
                         val isYouTube = p.getOrNull(2) == "1" || ServerConfig.isYouTubeUrl(url)
                         Triple(url, title, isYouTube)
                     }
                     .distinctBy { it.first.substringBefore("#").trimEnd('/').lowercase() }
+                    .sortedByDescending { SearchRanking.webScore(query.text.toString(), it.second, it.first, it.third) }
                     .take(15)
 
                 discovered.filter { it.third }.forEach { (url, title, _) ->
@@ -1605,6 +1606,11 @@ class MainActivity : Activity() {
                 putExtra(
                     MusicService.EXTRA_COVER,
                     cover
+                )
+
+                putExtra(
+                    "referer",
+                    currentSong?.referer.orEmpty()
                 )
 
                 putExtra(
