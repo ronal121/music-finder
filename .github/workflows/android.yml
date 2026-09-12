@@ -16,43 +16,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Repair current source and install large music search pool
+      - name: Apply source migrations
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          main = Path("app/src/main/java/com/kafshar/musicfinder/MainActivity.kt")
-          text = main.read_text(encoding="utf-8")
-          duplicate = '''    @Volatile private var capturedRuntimeUrls = java.util.Collections.synchronizedSet(mutableSetOf<String>())\n    // RUNTIME_SEARCH_FIX_V10\n    @Volatile private var capturedRuntimeUrls = java.util.Collections.synchronizedSet(mutableSetOf<String>())\n    // RUNTIME_SEARCH_FIX_V10\n'''
-          single = '''    @Volatile private var capturedRuntimeUrls = java.util.Collections.synchronizedSet(mutableSetOf<String>())\n    // RUNTIME_SEARCH_FIX_V10\n'''
-          if duplicate in text:
-              text = text.replace(duplicate, single, 1)
-          main.write_text(text, encoding="utf-8")
-
-          layout = Path("app/src/main/res/layout/activity_main.xml")
-          xml = layout.read_text(encoding="utf-8")
-          if "@+id/youtubeCornerPlayer" not in xml:
-              insertion = '''    <WebView\n        android:id="@+id/youtubeCornerPlayer"\n        android:layout_width="320dp"\n        android:layout_height="180dp"\n        android:layout_gravity="bottom|end"\n        android:layout_marginEnd="12dp"\n        android:layout_marginBottom="12dp"\n        android:visibility="gone"\n        android:background="@android:color/black" />\n    <TextView\n        android:id="@+id/youtubeCornerClose"\n        android:layout_width="40dp"\n        android:layout_height="40dp"\n        android:layout_gravity="bottom|end"\n        android:layout_marginEnd="12dp"\n        android:layout_marginBottom="152dp"\n        android:gravity="center"\n        android:text="×"\n        android:textColor="@android:color/white"\n        android:textSize="24sp"\n        android:background="@drawable/bg_secondary_button"\n        android:visibility="gone" />\n'''
-              xml = xml.replace("</FrameLayout>", insertion + "</FrameLayout>")
-              layout.write_text(xml, encoding="utf-8")
-          PY
           python3 tools/repair_search.py
+          python3 tools/wire_search_provider.py
 
-      - name: Persist repaired source on main
+      - name: Persist source migrations on main
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
         run: |
           set -euo pipefail
           if git diff --quiet; then
-            echo "No source repair changes needed."
+            echo "No source migration changes needed."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/src/main/java/com/kafshar/musicfinder/MainActivity.kt app/src/main/java/com/kafshar/musicfinder/SearchEngine.kt app/src/main/java/com/kafshar/musicfinder/GoogleResultParser.kt app/src/main/java/com/kafshar/musicfinder/MusicSitePool.kt tools/repair_search.py
-          git commit -m "Persist 200+ site music search repair [skip ci]"
+          git add app/src/main/java tools
+          git commit -m "Persist search architecture migration [skip ci]"
           git push
 
       - name: Set up JDK 17
@@ -95,3 +78,4 @@ jobs:
           name: music-finder-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 14
