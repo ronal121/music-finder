@@ -111,6 +111,8 @@ class MainActivity : Activity() {
     private var searchGeneration = 0
 
     private var googleFallbackUsed = false
+    private var discoveryEngineIndex = 0
+    private val discoveryEngines = listOf("google", "bing", "duckduckgo")
 
     private var resultPages: List<String> = emptyList()
     private var resultPageIndex = 0
@@ -601,7 +603,7 @@ class MainActivity : Activity() {
             runOnUiThread {
                 if (destroyed || resultGeneration != searchGeneration) return@runOnUiThread
                 val html = try { URLDecoder.decode(raw.orEmpty(), "UTF-8") } catch (_: Exception) { "" }
-                val parsed = GoogleResultParser.parseAnchors(html, 30)
+                val parsed = GoogleResultParser.parseAnchors(html, 50)
                 resultGeneration = searchGeneration
                 resultPageIndex = 0
 
@@ -613,8 +615,7 @@ class MainActivity : Activity() {
                     .map { "${it.url}|||${it.title}" }
 
                 if (resultPages.isEmpty()) {
-                    status.text = "Google نتیجه قابل پردازشی برنگرداند"
-                    finishSearch()
+                    loadNextDiscoveryEngine()
                 } else {
                     status.text = "${resultPages.size} صفحه پیدا شد؛ در حال بررسی آهنگ‌های قابل پخش..."
                     processNextResultPage()
@@ -768,10 +769,9 @@ class MainActivity : Activity() {
                     if (destroyed) return
 
                     if (
-                        url.contains(
-                            "google.com/search",
-                            true
-                        )
+                        url.contains("google.com/search", true) ||
+                        url.contains("bing.com/search", true) ||
+                        url.contains("duckduckgo.com/html", true)
                     ) {
 
                         handler.postDelayed(
@@ -951,6 +951,7 @@ class MainActivity : Activity() {
         val generation = searchGeneration
         cancelSearchCallbacks()
         googleFallbackUsed = false
+        discoveryEngineIndex = 0
         resultGeneration = generation
         resultPages = emptyList()
         resultPageIndex = 0
@@ -975,20 +976,45 @@ class MainActivity : Activity() {
     }
 
     private fun loadGoogleFallback(text: String, generation: Int) {
-        if (destroyed || generation != searchGeneration || googleFallbackUsed) return
-        googleFallbackUsed = true
-        resultGeneration = generation
-        resultPages = emptyList()
-        resultPageIndex = 0
-        val encoded = try { URLEncoder.encode(SearchEngine.buildGoogleQuery(text), "UTF-8") } catch (_: Exception) {
-            status.text = "خطا در آماده‌سازی جستجو"
+        if (destroyed || generation != searchGeneration) return
+        discoveryEngineIndex = 0
+        loadNextDiscoveryEngine()
+    }
+
+    private fun loadNextDiscoveryEngine() {
+        val generation = searchGeneration
+        if (destroyed || generation <= 0 || generation != resultGeneration) return
+        if (discoveryEngineIndex >= discoveryEngines.size) {
+            finishSearch()
             return
         }
+
+        val engine = discoveryEngines[discoveryEngineIndex++]
+        val raw = query.text.toString().trim()
+        val q = SearchEngine.buildGoogleQuery(raw)
+        val encoded = try { URLEncoder.encode(q, "UTF-8") } catch (_: Exception) { "" }
+        if (encoded.isBlank()) { loadNextDiscoveryEngine(); return }
+
+        val url = when (engine) {
+            "google" -> "https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1"
+            "bing" -> "https://www.bing.com/search?q=$encoded&count=50&setlang=en"
+            else -> "https://html.duckduckgo.com/html/?q=$encoded"
+        }
+
+        status.text = when (engine) {
+            "google" -> "در حال جستجوی Google..."
+            "bing" -> "Google نتیجه کافی نداد؛ در حال جستجوی Bing..."
+            else -> "Bing نتیجه کافی نداد؛ در حال جستجوی DuckDuckGo..."
+        }
+        resultPages = emptyList()
+        resultPageIndex = 0
+        expectedPageUrl = ""
+        capturedRuntimeUrls.clear()
         try {
             web.stopLoading()
-            web.loadUrl("https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1")
+            web.loadUrl(url)
         } catch (_: Exception) {
-            status.text = "جستجوی جایگزین در دسترس نیست"
+            loadNextDiscoveryEngine()
         }
     }
 

@@ -17,16 +17,16 @@ object GoogleResultParser {
             val resolved = URI(base).resolve(input)
             val host = resolved.host.orEmpty().lowercase()
 
-            if (host.contains("google.")) {
+            if (host.contains("google.") || host.contains("bing.com") || host.contains("duckduckgo.com") || host.contains("yahoo.com")) {
                 val query = parseQuery(resolved.rawQuery)
-                val target = listOf(query["q"], query["url"], query["u"], query["uddg"])
-                    .firstOrNull { !it.isNullOrBlank() }
+                val target = listOf(query["q"], query["url"], query["u"], query["uddg"], query["r"], query["target"])
+                    .firstOrNull { !it.isNullOrBlank() && it.startsWith("http", true) }
                     ?.trim()
-
-                if (!target.isNullOrBlank() && target.startsWith("http", true)) {
+                if (!target.isNullOrBlank()) {
                     return decodeUrlRepeatedly(target)
                         .takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
                 }
+                if (host.contains("bing.com") || host.contains("duckduckgo.com") || host.contains("yahoo.com")) return null
             }
 
             resolved.toString().takeIf {
