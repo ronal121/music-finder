@@ -277,12 +277,10 @@ def main():
 '''
         text = text.replace(anchor, helper + anchor, 1)
 
-    # Tighten WebView navigation policy without breaking search-engine pages.
     old = '''                    return !(\n                        url.contains(\n                            "google.com",\n                            true\n                        ) ||\n                        ServerConfig.isAllowedPageUrl(\n                            url\n                        )\n                    )'''
     new = '''                    return !(ServerConfig.isAllowedPageUrl(url) ||\n                        url.contains("google.com", true) ||\n                        url.contains("bing.com", true) ||\n                        url.contains("duckduckgo.com", true))'''
     text = text.replace(old, new, 1)
 
-    # Runtime page inspection must release its WebView slot after parsing.
     target = '''                validateAndAddAudioCandidates(\n                    parsed.title.ifBlank { "Music" },\n                    parsed.artist.ifBlank { "Unknown Artist" },\n                    parsed.cover,\n                    candidates,\n                    expectedPageUrl\n                )\n            }\n        }'''
     replacement = '''                validateAndAddAudioCandidates(\n                    parsed.title.ifBlank { "Music" },\n                    parsed.artist.ifBlank { "Unknown Artist" },\n                    parsed.cover,\n                    candidates,\n                    expectedPageUrl\n                )\n                finishCurrentResultPage()\n            }\n        }'''
     text = text.replace(target, replacement, 1)
@@ -310,9 +308,40 @@ def main():
         text = text.replace(anchor, helper + anchor, 1)
 
     text = text.replace("        cancelSearchCallbacks()\n\n        cancelDownloadRequested", "        cancelSearchCallbacks()\n        parallelPageInspector.shutdown()\n\n        cancelDownloadRequested", 1)
-
-    # Pass the discovered page as Referer to Media3.
     text = text.replace("                putExtra(\n                    MusicService.EXTRA_COVER,\n                    cover\n                )", "                putExtra(\n                    MusicService.EXTRA_COVER,\n                    cover\n                )\n\n                putExtra(\n                    \"referer\",\n                    currentSong?.referer.orEmpty()\n                )", 1)
+
+    # Apply result ranking after extraction; YouTube remains a separate presentation path.
+    old_block = '''                    found.push(href + "|||" + text.replace(/[\\r\\n]+/g, " "));
+                        if (found.length >= 50) break;'''
+    # Ranking is performed on the parsed native result list in Bridge.results below.
+    old_bridge = '''                val discovered = raw.orEmpty()
+                    .split("###")
+                    .map { it.trim() }
+                    .mapNotNull { entry ->
+                        val p = entry.split("|||", limit = 3)
+                        val url = p.getOrNull(0)?.trim().orEmpty()
+                        if (!url.startsWith("http", true)) return@mapNotNull null
+                        val title = decode(p.getOrNull(1)?.trim().orEmpty())
+                        val isYouTube = p.getOrNull(2) == "1" || ServerConfig.isYouTubeUrl(url)
+                        Triple(url, title, isYouTube)
+                    }
+                    .distinctBy { it.first.substringBefore("#").trimEnd('/').lowercase() }
+                    .take(15)'''
+    new_bridge = '''                val discovered = raw.orEmpty()
+                    .split("###")
+                    .map { it.trim() }
+                    .mapNotNull { entry ->
+                        val p = entry.split("|||", limit = 3)
+                        val url = p.getOrNull(0)?.trim().orEmpty()
+                        if (!url.startsWith("http", true) || !ServerConfig.isAllowedPageUrl(url)) return@mapNotNull null
+                        val title = decode(p.getOrNull(1)?.trim().orEmpty())
+                        val isYouTube = p.getOrNull(2) == "1" || ServerConfig.isYouTubeUrl(url)
+                        Triple(url, title, isYouTube)
+                    }
+                    .distinctBy { it.first.substringBefore("#").trimEnd('/').lowercase() }
+                    .sortedByDescending { SearchRanking.webScore(query.text.toString(), it.second, it.first, it.third) }
+                    .take(15)'''
+    text = text.replace(old_bridge, new_bridge, 1)
 
     MAIN.write_text(text, encoding="utf-8")
     print("Applied architecture-level search repair.")
