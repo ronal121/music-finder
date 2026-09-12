@@ -1,16 +1,14 @@
 from pathlib import Path
+import re
 
 MAIN = Path("app/src/main/java/com/kafshar/musicfinder/MainActivity.kt")
 
 
 def replace_method(text: str, signature: str, replacement: str) -> str:
     start = text.find(signature)
-    if start < 0:
-        raise SystemExit(f"missing method: {signature}")
+    if start < 0: raise SystemExit(f"missing method: {signature}")
     brace = text.find("{", start)
-    depth = 0
-    in_string = False
-    escaped = False
+    depth = 0; in_string = False; escaped = False
     for i in range(brace, len(text)):
         c = text[i]
         if in_string:
@@ -22,8 +20,7 @@ def replace_method(text: str, signature: str, replacement: str) -> str:
             elif c == '{': depth += 1
             elif c == '}':
                 depth -= 1
-                if depth == 0:
-                    return text[:start] + replacement.rstrip() + text[i + 1:]
+                if depth == 0: return text[:start] + replacement.rstrip() + text[i + 1:]
     raise SystemExit(f"unterminated method: {signature}")
 
 
@@ -99,8 +96,22 @@ def main():
         """.trimIndent()
         try { web.evaluateJavascript(script, null) } catch (_: Exception) { if (!destroyed) loadNextSiteBatch() }
     }''')
+
+    # The migration may have run several times in older CI revisions; collapse repeated Referer extras.
+    block = '''                putExtra(
+                    "referer",
+                    currentSong?.referer.orEmpty()
+                )'''
+    text = re.sub(r'(?:\s*' + re.escape(block) + r'){2,}', "\n" + block, text)
+    if block not in text:
+        marker = '''                putExtra(
+                    MusicService.EXTRA_COVER,
+                    cover
+                )'''
+        text = text.replace(marker, marker + "\n\n" + block, 1)
+
     MAIN.write_text(text, encoding="utf-8")
-    print("Wired SearchProvider abstraction into the Android search pipeline.")
+    print("Wired SearchProvider abstraction and normalized repeated playback metadata injection.")
 
 if __name__ == "__main__":
     main()
