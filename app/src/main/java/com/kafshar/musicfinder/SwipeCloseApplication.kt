@@ -11,21 +11,32 @@ import android.widget.FrameLayout
 import kotlin.math.abs
 
 class SwipeCloseApplication : Application() {
+    private val searchAutoPlayControllers = mutableMapOf<MainActivity, SearchAutoPlayController>()
+
     override fun onCreate() {
         super.onCreate()
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityPostCreated(activity: Activity, savedInstanceState: Bundle?) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && activity is MainActivity) {
                     installSwipeClose(activity)
+                    val controller = SearchAutoPlayController(activity)
+                    searchAutoPlayControllers[activity] = controller
+                    controller.start()
                 }
             }
+
+            override fun onActivityDestroyed(activity: Activity) {
+                if (activity is MainActivity) {
+                    searchAutoPlayControllers.remove(activity)?.stop()
+                }
+            }
+
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
             override fun onActivityStarted(activity: Activity) = Unit
             override fun onActivityResumed(activity: Activity) = Unit
             override fun onActivityPaused(activity: Activity) = Unit
             override fun onActivityStopped(activity: Activity) = Unit
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
-            override fun onActivityDestroyed(activity: Activity) = Unit
         })
     }
 
