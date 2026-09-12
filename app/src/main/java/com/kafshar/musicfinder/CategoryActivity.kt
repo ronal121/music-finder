@@ -1,13 +1,10 @@
 package com.kafshar.musicfinder
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
-import android.view.View
-import android.view.ViewGroup
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -15,25 +12,25 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import java.net.URLEncoder
+import java.util.concurrent.Executors
 
 class CategoryActivity : Activity() {
     private lateinit var categorySearch: EditText
     private lateinit var chips: LinearLayout
+    private lateinit var results: LinearLayout
     private lateinit var web: WebView
+    private val executor = Executors.newFixedThreadPool(4)
+    private var searchToken = 0
 
     private val categories = listOf(
-        "آهنگ جدید", "پاپ", "رپ", "راک", "سنتی", "شاد", "غمگین", "عاشقانه",
-        "قدیمی", "ریمیکس", "بی کلام", "موسیقی محلی", "مازندرانی", "کردی", "لری",
-        "ترکی", "آذربایجانی", "عربی", "افغانی", "انگلیسی", "هندی", "اسپانیایی",
-        "موسیقی الکترونیک", "هاوس", "تکنو", "ترنس", "جاز", "موسیقی فیلم", "نوحه", "دکلمه"
-    )
-
-    private val categorySites = listOf(
-        "shabamusic.com", "matnmusic.com", "biya2ahang.ir", "trackmelody.com",
-        "musicaz.ir", "hailymusic.ir", "songsun.ir", "rozsong.com", "sultanmusics.com",
-        "myspotify.ir", "behmusic.com", "music-fa.com", "upmusics.com", "rozmusic.com",
-        "sahand-music.ir", "musicdel.ir", "radiojavan.com", "behmusics.com"
+        "پاپ", "رپ", "راک", "سنتی", "شاد", "غمگین", "عاشقانه", "قدیمی", "ریمیکس",
+        "بی کلام", "محلی", "مازندرانی", "گیلکی", "کردی", "لری", "ترکی", "آذری", "عربی",
+        "افغانی", "انگلیسی", "هندی", "اسپانیایی", "الکترونیک", "Electro", "EDM", "House",
+        "Deep House", "Tech House", "Techno", "Trance", "Dubstep", "Drum & Bass", "Ambient",
+        "Jazz", "Blues", "Metal", "Punk", "موسیقی فیلم", "نوحه", "دکلمه",
+        "محسن چاوشی", "ابی", "محسن یگانه", "شادمهر", "معین", "داریوش", "گوگوش", "مهستی",
+        "ستار", "هایده", "فرهاد", "فریدون فروغی", "لیلا فروهر", "سیاوش قمیشی", "مرتضی پاشایی",
+        "رضا بهرام", "همایون شجریان", "علیرضا قربانی"
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,7 +38,6 @@ class CategoryActivity : Activity() {
         buildUi()
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
     private fun buildUi() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -58,7 +54,7 @@ class CategoryActivity : Activity() {
         root.addView(title, LinearLayout.LayoutParams(-1, -2))
 
         val subtitle = TextView(this).apply {
-            text = "جستجوی یکدست دسته‌بندی‌ها در سایت‌های موسیقی"
+            text = "هر دسته در تمام سایت‌های مرجع موسیقی جستجو می‌شود"
             setTextColor(Color.rgb(167, 167, 176))
             textSize = 12f
             setPadding(0, dp(5), 0, dp(12))
@@ -69,9 +65,8 @@ class CategoryActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-
         categorySearch = EditText(this).apply {
-            hint = "مثلاً رپ، شاد، مازندرانی..."
+            hint = "مثلاً EDM، ترنس، چاوشی، مازندرانی..."
             setSingleLine(true)
             setTextColor(Color.WHITE)
             setHintTextColor(Color.rgb(120, 120, 130))
@@ -79,29 +74,21 @@ class CategoryActivity : Activity() {
             setPadding(dp(12), 0, dp(12), 0)
         }
         searchRow.addView(categorySearch, LinearLayout.LayoutParams(0, dp(50), 1f))
-
         val searchButton = HarmonizedButton(this).apply {
             text = "جستجو"
             gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            setPadding(dp(14), 0, dp(14), 0)
             setOnClickListener { searchCategory(categorySearch.text.toString()) }
         }
-        searchRow.addView(searchButton, LinearLayout.LayoutParams(dp(92), dp(50)).apply {
-            marginStart = dp(8)
-        })
+        searchRow.addView(searchButton, LinearLayout.LayoutParams(dp(92), dp(50)).apply { marginStart = dp(8) })
         root.addView(searchRow)
 
-        chips = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        val chipScroll = android.widget.ScrollView(this).apply {
-            isFillViewport = false
-            addView(chips)
-        }
-        root.addView(chipScroll, LinearLayout.LayoutParams(-1, dp(210)).apply {
-            topMargin = dp(12)
-        })
+        chips = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val chipScroll = android.widget.ScrollView(this).apply { addView(chips) }
+        root.addView(chipScroll, LinearLayout.LayoutParams(-1, dp(220)).apply { topMargin = dp(12) })
+
+        results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val resultScroll = android.widget.ScrollView(this).apply { addView(results) }
+        root.addView(resultScroll, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(10) })
 
         web = WebView(this).apply {
             settings.javaScriptEnabled = true
@@ -111,9 +98,9 @@ class CategoryActivity : Activity() {
             webViewClient = WebViewClient()
             setBackgroundColor(Color.rgb(11, 11, 15))
         }
-        root.addView(web, LinearLayout.LayoutParams(-1, 0, 1f).apply {
-            topMargin = dp(10)
-        })
+        // Keep the actual page viewer hidden until a result is selected.
+        web.visibility = android.view.View.GONE
+        root.addView(web, LinearLayout.LayoutParams(-1, dp(1)))
 
         setContentView(root)
         renderCategories(categories)
@@ -131,7 +118,6 @@ class CategoryActivity : Activity() {
                 text = category
                 textSize = 12f
                 gravity = Gravity.CENTER
-                setTextColor(Color.WHITE)
                 setOnClickListener {
                     categorySearch.setText(category)
                     searchCategory(category)
@@ -152,14 +138,66 @@ class CategoryActivity : Activity() {
             return
         }
 
-        val sites = categorySites.joinToString(" OR ") { "site:$it" }
-        val query = "(\"$category\" OR \"$category music\" OR \"آهنگ $category\") ($sites)"
-        val url = "https://www.google.com/search?hl=fa&gbv=1&num=20&q=${URLEncoder.encode(query, "UTF-8")}"
-        web.loadUrl(url)
+        val token = ++searchToken
+        results.removeAllViews()
+        addStatus("در حال جستجوی Google در تمام سایت‌های مرجع...")
+        val queries = ReferenceSiteQueries.build(category)
+        val provider = SearchNetwork.providers.first()
+        val merged = LinkedHashMap<String, GoogleResultParser.Result>()
+
+        executor.execute {
+            queries.forEach { query ->
+                if (token != searchToken) return@execute
+                try {
+                    provider.search(query, 20).forEach { result ->
+                        val key = result.url.substringBefore('#').trimEnd('/').lowercase()
+                        if (key.isNotBlank()) synchronized(merged) { merged.putIfAbsent(key, result) }
+                    }
+                } catch (_: Exception) { }
+            }
+
+            val list = synchronized(merged) { merged.values.take(100).toList() }
+            runOnUiThread {
+                if (token != searchToken) return@runOnUiThread
+                results.removeAllViews()
+                if (list.isEmpty()) {
+                    addStatus("برای این دسته نتیجه‌ای از سایت‌های مرجع پیدا نشد")
+                    return@runOnUiThread
+                }
+                addStatus("${list.size} نتیجه از سایت‌های مرجع")
+                list.forEach { item ->
+                    val button = HarmonizedButton(this).apply {
+                        text = "${item.title.ifBlank { "نتیجه موسیقی" }}\n${item.url}"
+                        gravity = Gravity.CENTER_VERTICAL or Gravity.START
+                        textSize = 12f
+                        setPadding(dp(12), dp(8), dp(12), dp(8))
+                        setOnClickListener {
+                            web.visibility = android.view.View.VISIBLE
+                            web.loadUrl(item.url)
+                        }
+                    }
+                    results.addView(button, LinearLayout.LayoutParams(-1, dp(58)).apply { bottomMargin = dp(6) })
+                }
+            }
+        }
     }
 
-    override fun onBackPressed() {
-        if (web.canGoBack()) web.goBack() else super.onBackPressed()
+    private fun addStatus(text: String) {
+        val status = TextView(this).apply {
+            this.text = text
+            setTextColor(Color.rgb(167, 167, 176))
+            textSize = 12f
+            setPadding(dp(4), dp(5), dp(4), dp(8))
+        }
+        results.addView(status, 0)
+    }
+
+    override fun onDestroy() {
+        searchToken++
+        executor.shutdownNow()
+        web.stopLoading()
+        web.destroy()
+        super.onDestroy()
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
