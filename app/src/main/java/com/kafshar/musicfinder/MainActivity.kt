@@ -1622,6 +1622,11 @@ class MainActivity : Activity() {
                     "referer",
                     currentSong?.referer.orEmpty()
                 )
+
+                putExtra(
+                    "referer",
+                    currentSong?.referer.orEmpty()
+                )
             }
         )
     }
