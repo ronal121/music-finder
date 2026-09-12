@@ -6,19 +6,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
 class ParallelPageInspector(private val concurrency: Int = 4) {
-    data class Page(
-        val url: String,
-        val titleHint: String = ""
-    )
-
-    data class Inspection(
-        val page: Page,
-        val title: String,
-        val artist: String,
-        val cover: String,
-        val candidates: List<String>,
-        val needsWebView: Boolean
-    )
+    data class Page(val url: String, val titleHint: String = "")
+    data class Inspection(val page: Page, val title: String, val artist: String, val cover: String, val candidates: List<String>, val needsWebView: Boolean)
 
     private val executor = Executors.newFixedThreadPool(concurrency.coerceIn(2, 6))
     private val active = java.util.Collections.synchronizedSet(mutableSetOf<Future<*>>())
@@ -30,34 +19,22 @@ class ParallelPageInspector(private val concurrency: Int = 4) {
         onResult: (Inspection) -> Unit,
         onComplete: () -> Unit
     ) {
-        if (pages.isEmpty()) {
-            onComplete()
-            return
-        }
+        if (pages.isEmpty()) return onComplete()
         val remaining = java.util.concurrent.atomic.AtomicInteger(pages.size)
         pages.forEach { page ->
             val future = executor.submit {
                 try {
                     if (!isGenerationCurrent(generation)) return@submit
                     val html = fetch(page.url)
-                    if (html.isBlank()) {
-                        if (remaining.decrementAndGet() == 0) onComplete()
-                        return@submit
-                    }
+                    if (html.isBlank()) return@submit
                     val parsed = MusicPageParser.parse(html, page.url)
                     val candidates = parsed.audioCandidates
                         .filter { ServerConfig.isAllowedMediaUrl(it, page.url) }
                         .distinct()
                         .take(80)
-                    val inspection = Inspection(
-                        page,
-                        parsed.title.ifBlank { page.titleHint.ifBlank { "Music" } },
-                        parsed.artist.ifBlank { "Unknown Artist" },
-                        parsed.cover,
-                        candidates,
-                        candidates.isEmpty()
-                    )
-                    if (isGenerationCurrent(generation)) onResult(inspection)
+                    if (isGenerationCurrent(generation)) {
+                        onResult(Inspection(page, parsed.title.ifBlank { page.titleHint.ifBlank { "Music" } }, parsed.artist.ifBlank { "Unknown Artist" }, parsed.cover, candidates, candidates.isEmpty()))
+                    }
                 } finally {
                     if (remaining.decrementAndGet() == 0) onComplete()
                 }
@@ -81,9 +58,7 @@ class ParallelPageInspector(private val concurrency: Int = 4) {
             if (connection.responseCode !in 200..399) return ""
             if (!ServerConfig.isAllowedPageUrl(connection.url.toString())) return ""
             connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(1_500_000) }
-        } catch (_: Exception) {
-            ""
-        } finally {
+        } catch (_: Exception) { "" } finally {
             try { connection?.disconnect() } catch (_: Exception) { }
         }
     }
@@ -95,8 +70,5 @@ class ParallelPageInspector(private val concurrency: Int = 4) {
         }
     }
 
-    fun shutdown() {
-        cancel()
-        executor.shutdownNow()
-    }
+    fun shutdown() { cancel(); executor.shutdownNow() }
 }
