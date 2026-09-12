@@ -11,10 +11,12 @@ class HarmonizedButton @JvmOverloads constructor(
     defStyleAttr: Int = android.R.attr.textViewStyle
 ) : AppCompatTextView(context, attrs, defStyleAttr) {
     private val accent = 0xFF4B4268.toInt()
+    private val pressedGlass = 0x665E6A86
 
     init {
-        backgroundTintList = ColorStateList.valueOf(accent)
+        applyTwoStateTint()
         setTextColor(0xFFF3F1F7.toInt())
+        isAllCaps = false
 
         if (id == R.id.clearSearch) {
             setOnClickListener {
@@ -23,7 +25,22 @@ class HarmonizedButton @JvmOverloads constructor(
         }
     }
 
+    private fun applyTwoStateTint() {
+        backgroundTintList = ColorStateList(
+            arrayOf(
+                intArrayOf(android.R.attr.state_pressed),
+                intArrayOf(android.R.attr.state_focused),
+                intArrayOf()
+            ),
+            intArrayOf(
+                pressedGlass,
+                0xAA6A6184.toInt(),
+                accent
+            )
+        )
+    }
+
     override fun setBackgroundTintList(tint: ColorStateList?) {
-        super.setBackgroundTintList(ColorStateList.valueOf(accent))
+        applyTwoStateTint()
     }
 }
