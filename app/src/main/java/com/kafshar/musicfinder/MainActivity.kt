@@ -51,7 +51,8 @@ data class SongResult(
     val artist: String,
     val site: String,
     val cover: String = "",
-    val isYouTube: Boolean = false
+    val isYouTube: Boolean = false,
+    val referer: String = ""
 )
 
 class MainActivity : Activity() {
@@ -109,6 +110,12 @@ class MainActivity : Activity() {
     private var receiverRegistered = false
 
     private var searchGeneration = 0
+    private val parallelPageInspector = ParallelPageInspector(4)
+    private var parallelBatchRunning = false
+    private val dynamicPages = ArrayDeque<ParallelPageInspector.Page>()
+    private var dynamicPageBusy = false
+    private var dynamicSearchFinished = false
+    private val failedPlaybackUrls = mutableSetOf<String>()
     private var siteSearchQueries: List<String> = emptyList()
     private var siteBatchIndex = 0
 
@@ -192,6 +199,9 @@ class MainActivity : Activity() {
                 if (mediaUrl.isNotBlank()) {
                     updateActiveResultHighlight(mediaUrl)
                 }
+
+                val playbackError = intent.getStringExtra("error").orEmpty()
+                if (playbackError.isNotBlank()) handler.post { playNextValidatedAfterFailure(mediaUrl) }
             }
         }
     }
@@ -654,6 +664,7 @@ class MainActivity : Activity() {
                     candidates,
                     expectedPageUrl
                 )
+                finishCurrentResultPage()
             }
         }
 
@@ -747,15 +758,10 @@ class MainActivity : Activity() {
                     val url =
                         request.url.toString()
 
-                    return !(
-                        url.contains(
-                            "google.com",
-                            true
-                        ) ||
-                        ServerConfig.isAllowedPageUrl(
-                            url
-                        )
-                    )
+                    return !(ServerConfig.isAllowedPageUrl(url) ||
+                        url.contains("google.com", true) ||
+                        url.contains("bing.com", true) ||
+                        url.contains("duckduckgo.com", true))
                 }
 
                 override fun onPageFinished(
@@ -943,68 +949,83 @@ class MainActivity : Activity() {
 
     private fun searchMusic() {
         if (destroyed) return
-
         val text = query.text.toString().trim()
         if (text.isEmpty()) {
-            Toast.makeText(
-                this,
-                "نام آهنگ یا خواننده را وارد کنید",
-                Toast.LENGTH_SHORT
-            ).show()
+            Toast.makeText(this, "نام آهنگ یا خواننده را وارد کنید", Toast.LENGTH_SHORT).show()
             return
         }
-
         searchGeneration++
+        val generation = searchGeneration
         cancelSearchCallbacks()
+        parallelPageInspector.cancel()
+        parallelBatchRunning = false
+        dynamicPages.clear()
+        dynamicPageBusy = false
+        dynamicSearchFinished = false
+        failedPlaybackUrls.clear()
         resultPages = emptyList()
         resultPageIndex = 0
-        resultGeneration = searchGeneration
+        resultGeneration = generation
         expectedPageUrl = ""
-
         siteBatchIndex = 0
-        siteSearchQueries = MusicSitePool.googleQueries(text)
-
+        discoveryEngineIndex = 0
+        siteSearchQueries = SearchQueryPlanner.build(text)
         songs.clear()
         currentIndex = -1
         currentAudioUrl = ""
         currentSong = null
-
         resultsContainer.removeAllViews()
         titleText.text = text
         artistText.text = ""
-        status.text = ""
+        status.text = "در حال جستجو..."
         seekBar.progress = 0
         currentTimeText.text = "00:00"
         durationText.text = "00:00"
         vinyl.clearCover()
         vinyl.stopRotation()
-
+        val timeout = Runnable {
+            if (!destroyed && generation == searchGeneration) {
+                dynamicSearchFinished = true
+                status.text = if (songs.isEmpty()) "زمان جستجو تمام شد؛ آهنگ قابل پخش پیدا نشد" else "جستجوی منابع بیشتر متوقف شد"
+                saveSearchResults()
+            }
+        }
+        searchTimeout = timeout
+        handler.postDelayed(timeout, 45_000L)
         loadNextSiteBatch()
     }
 
     private fun loadNextSiteBatch() {
-        if (destroyed || siteBatchIndex >= siteSearchQueries.size) {
+        if (destroyed || siteSearchQueries.isEmpty() || discoveryEngineIndex >= discoveryEngines.size) {
+            dynamicSearchFinished = true
             finishSearch()
             return
         }
-
+        if (siteBatchIndex >= siteSearchQueries.size) {
+            discoveryEngineIndex++
+            siteBatchIndex = 0
+            if (discoveryEngineIndex >= discoveryEngines.size) {
+                dynamicSearchFinished = true
+                finishSearch()
+                return
+            }
+        }
         pageTimeout?.let { handler.removeCallbacks(it) }
         pageTimeout = null
         expectedPageUrl = ""
         resultPages = emptyList()
         resultPageIndex = 0
-
         val generation = searchGeneration
+        val provider = discoveryEngines[discoveryEngineIndex]
         val searchQuery = siteSearchQueries[siteBatchIndex++]
-        val encoded = try {
-            URLEncoder.encode(searchQuery, "UTF-8")
-        } catch (_: Exception) {
-            loadNextSiteBatch()
-            return
+        val encoded = try { URLEncoder.encode(searchQuery, "UTF-8") } catch (_: Exception) {
+            loadNextSiteBatch(); return
         }
-
-        val url = "https://www.google.com/search?q=$encoded&num=50&hl=fa&gbv=1"
-
+        val url = when (provider) {
+            "google" -> "https://www.google.com/search?q=$encoded&num=20&hl=fa&gbv=1"
+            "bing" -> "https://www.bing.com/search?q=$encoded&count=20&setlang=fa"
+            else -> "https://html.duckduckgo.com/html/?q=$encoded"
+        }
         try {
             web.stopLoading()
             web.loadUrl(url)
@@ -1014,13 +1035,17 @@ class MainActivity : Activity() {
     }
 
     private fun loadNextDiscoveryEngine() {
+        if (destroyed || searchGeneration <= 0) return
+        discoveryEngineIndex++
+        siteBatchIndex = 0
         loadNextSiteBatch()
     }
 
     private fun loadGoogleFallback(text: String, generation: Int) {
-        if (!destroyed && generation == searchGeneration) {
-            loadNextSiteBatch()
-        }
+        if (destroyed || generation != searchGeneration) return
+        discoveryEngineIndex = (discoveryEngineIndex + 1).coerceAtMost(discoveryEngines.lastIndex + 1)
+        siteBatchIndex = 0
+        loadNextSiteBatch()
     }
 
     private fun cancelSearchCallbacks() {
@@ -1137,68 +1162,31 @@ class MainActivity : Activity() {
         candidates: List<String>,
         pageUrl: String
     ) {
-        if (candidates.isEmpty()) { finishCurrentResultPage(); return }
+        if (candidates.isEmpty() || destroyed) return
         val generation = searchGeneration
-        io.execute {
-            val accepted = candidates.mapNotNull { url ->
-                if (!ServerConfig.isAllowedMediaUrl(url, pageUrl)) return@mapNotNull null
-                if (probeMediaUrl(url, pageUrl)) url else null
-            }.distinct()
-            runOnUiThread {
-                if (destroyed || generation != searchGeneration) return@runOnUiThread
-                accepted.forEach { audio ->
-                    val song = SongResult(audio, title, artist, getSiteName(pageUrl), cover)
-                    if (songs.none { it.url == song.url }) {
-                        songs.add(song)
-                        val newIndex = songs.lastIndex
-                        addSongView(song, newIndex)
-                        if (currentIndex == -1) {
-                            currentIndex = newIndex
-                            playSong(song)
-                        }
+        candidates.distinct().take(80).forEach { url ->
+            io.execute {
+                val validation = MediaProbe.probe(url, pageUrl)
+                if (!validation.playable) return@execute
+                val finalUrl = validation.finalUrl.ifBlank { url }
+                if (!ServerConfig.isAllowedMediaUrl(finalUrl, pageUrl)) return@execute
+                runOnUiThread {
+                    if (destroyed || generation != searchGeneration) return@runOnUiThread
+                    if (songs.any { it.url == finalUrl }) return@runOnUiThread
+                    val song = SongResult(finalUrl, title, artist, getSiteName(pageUrl), cover, false, pageUrl)
+                    songs.add(song)
+                    addSongView(song, songs.lastIndex)
+                    if (currentIndex == -1) {
+                        currentIndex = songs.lastIndex
+                        playSong(song)
                     }
                 }
-                finishCurrentResultPage()
             }
         }
     }
 
     private fun probeMediaUrl(url: String, pageUrl: String): Boolean {
-        if (!ServerConfig.isAllowedMediaUrl(url, pageUrl)) return false
-        val browserUa = "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36"
-
-        fun request(method: String): String? {
-            var c: HttpURLConnection? = null
-            return try {
-                c = URL(url).openConnection() as HttpURLConnection
-                c.requestMethod = method
-                c.instanceFollowRedirects = true
-                c.connectTimeout = 5000
-                c.readTimeout = 5000
-                c.useCaches = false
-                c.setRequestProperty("User-Agent", browserUa)
-                c.setRequestProperty("Referer", pageUrl)
-                c.setRequestProperty("Accept", "audio/*,video/*,application/octet-stream,application/vnd.apple.mpegurl,*/*;q=0.5")
-                val cookie = android.webkit.CookieManager.getInstance().getCookie(url)
-                if (!cookie.isNullOrBlank()) c.setRequestProperty("Cookie", cookie)
-                if (method == "GET") c.setRequestProperty("Range", "bytes=0-1")
-                c.connect()
-                val type = c.contentType?.lowercase(Locale.US)?.substringBefore(';')?.trim()
-                val code = c.responseCode
-                if (code in 200..399) type else null
-            } catch (_: Exception) {
-                null
-            } finally {
-                try { c?.disconnect() } catch (_: Exception) {}
-            }
-        }
-
-        val type = request("HEAD") ?: request("GET")
-        val mediaMime = type?.startsWith("audio/") == true ||
-            type == "application/vnd.apple.mpegurl" ||
-            type == "application/x-mpegurl" ||
-            type == "application/octet-stream"
-        return mediaMime || ServerConfig.looksLikeAudioUrl(url)
+        return MediaProbe.probe(url, pageUrl).playable
     }
 
     private fun addYouTubeView(url: String, title: String) {
@@ -1252,262 +1240,94 @@ class MainActivity : Activity() {
     }
 
     private fun processNextResultPage() {
-
-        if (
-            destroyed ||
-            resultGeneration !=
-            searchGeneration
-        ) {
-            return
-        }
-
+        if (destroyed || resultGeneration != searchGeneration || parallelBatchRunning) return
         if (resultPageIndex >= resultPages.size) {
             loadNextSiteBatch()
             return
         }
-
-        val url =
-            resultPages[
-                resultPageIndex
-            ]
-                .substringBefore("|||")
-                .trim()
-
-        resultPageIndex++
-
-        if (
-            url.isBlank() ||
-            !ServerConfig.isAllowedPageUrl(
-                url
-            )
-        ) {
-
-            processNextResultPage()
-            return
+        val generation = searchGeneration
+        val start = resultPageIndex
+        val end = minOf(resultPageIndex + 10, resultPages.size)
+        resultPageIndex = end
+        val pages = resultPages.subList(start, end).mapNotNull { raw ->
+            val parts = raw.split("|||", limit = 2)
+            val url = parts.getOrNull(0).orEmpty().trim()
+            if (!ServerConfig.isAllowedPageUrl(url)) null else ParallelPageInspector.Page(url, parts.getOrNull(1).orEmpty())
         }
-
-        expectedPageUrl = url
-        capturedRuntimeUrls.clear()
-
-        pageTimeout?.let {
-            handler.removeCallbacks(it)
-        }
-
-        val generation =
-            searchGeneration
-
-        val timeout =
-            Runnable {
-
-                if (
-                    !destroyed &&
-                    generation ==
-                    searchGeneration
-                ) {
-                    processNextResultPage()
+        if (pages.isEmpty()) return processNextResultPage()
+        parallelBatchRunning = true
+        status.text = "در حال بررسی ${pages.size} منبع..."
+        parallelPageInspector.inspect(
+            generation,
+            pages,
+            { it == searchGeneration && !destroyed },
+            { inspection ->
+                runOnUiThread {
+                    if (destroyed || generation != searchGeneration) return@runOnUiThread
+                    if (inspection.candidates.isNotEmpty()) {
+                        validateAndAddAudioCandidates(inspection.title, inspection.artist, inspection.cover, inspection.candidates, inspection.page.url)
+                    } else if (dynamicPages.none { it.url == inspection.page.url }) {
+                        dynamicPages.addLast(inspection.page)
+                    }
+                }
+            },
+            {
+                runOnUiThread {
+                    if (destroyed || generation != searchGeneration) return@runOnUiThread
+                    parallelBatchRunning = false
+                    startNextDynamicPage()
+                    if (resultPageIndex < resultPages.size) processNextResultPage() else loadNextSiteBatch()
                 }
             }
-
-        pageTimeout = timeout
-
-        handler.postDelayed(
-            timeout,
-            7500L
         )
+    }
 
-        try {
-
-            web.loadUrl(url)
-
-        } catch (_: Exception) {
-
-            finishCurrentResultPage()
+    private fun startNextDynamicPage() {
+        if (destroyed || dynamicPageBusy) return
+        val next = dynamicPages.removeFirstOrNull()
+        if (next == null) {
+            if (dynamicSearchFinished && !parallelBatchRunning) finishSearch()
+            return
         }
+        dynamicPageBusy = true
+        expectedPageUrl = next.url
+        capturedRuntimeUrls.clear()
+        pageTimeout?.let { handler.removeCallbacks(it) }
+        val generation = searchGeneration
+        val timeout = Runnable { if (!destroyed && generation == searchGeneration) finishCurrentResultPage() }
+        pageTimeout = timeout
+        handler.postDelayed(timeout, 7500L)
+        try { web.loadUrl(next.url) } catch (_: Exception) { finishCurrentResultPage() }
     }
 
     private fun finishCurrentResultPage() {
-
-        pageTimeout?.let {
-            handler.removeCallbacks(it)
-        }
-
+        pageTimeout?.let { handler.removeCallbacks(it) }
         pageTimeout = null
-
-        if (
-            !destroyed &&
-            resultGeneration ==
-            searchGeneration
-        ) {
-            processNextResultPage()
-        }
+        dynamicPageBusy = false
+        startNextDynamicPage()
     }
 
     private fun finishSearch() {
-
-        if (destroyed) return
-
-        cancelSearchCallbacks()
-
-        if (songs.isEmpty() && !googleFallbackUsed && resultGeneration == searchGeneration) {
-            status.text = "در منابع مستقیم آهنگ قابل پخش پیدا نشد؛ در حال جستجوی Google..."
-            loadGoogleFallback(query.text.toString(), searchGeneration)
+        if (destroyed || !dynamicSearchFinished || parallelBatchRunning) return
+        if (dynamicPages.isNotEmpty() || dynamicPageBusy) {
+            startNextDynamicPage()
             return
         }
-
-        status.text =
-            if (songs.isEmpty()) {
-                "آهنگ قابل پخش پیدا نشد"
-            } else {
-                "${songs.size} آهنگ قابل پخش پیدا شد"
-            }
-
-        if (
-            songs.isNotEmpty() &&
-            currentIndex < 0
-        ) {
-            currentIndex = 0
-        }
-
+        cancelSearchCallbacks()
+        status.text = if (songs.isEmpty()) "آهنگ قابل پخش پیدا نشد" else "${songs.size} آهنگ قابل پخش پیدا شد"
+        if (songs.isNotEmpty() && currentIndex < 0) currentIndex = 0
         saveSearchResults()
     }
 
     private fun saveSearchResults() {
-
-        if (destroyed) return
-
-        val prefs =
-            getSharedPreferences(
-                "search_results",
-                MODE_PRIVATE
-            )
-
-        val old =
-            prefs.getString(
-                "songs",
-                ""
-            ).orEmpty()
-
-        val merged =
-            ArrayList<SongResult>()
-
-        old.split("\n")
-            .forEach { line ->
-
-                val p =
-                    line.split(
-                        "|||",
-                        limit = 5
-                    )
-
-                if (
-                    p.size == 5 &&
-                    p[0].isNotBlank() &&
-                    merged.none {
-                        it.url == p[0]
-                    }
-                ) {
-
-                    merged.add(
-                        SongResult(
-                            p[0],
-                            p[1],
-                            p[2],
-                            p[3],
-                            p[4]
-                        )
-                    )
-                }
-            }
-
-        songs.forEach {
-
-            if (
-                merged.none {
-                    x -> x.url == it.url
-                }
-            ) {
-                merged.add(it)
-            }
-        }
-
-        prefs.edit()
-            .putString(
-                "songs",
-                merged
-                    .take(200)
-                    .joinToString("\n") {
-                        listOf(
-                            it.url,
-                            it.title,
-                            it.artist,
-                            it.site,
-                            it.cover
-                        ).joinToString("|||")
-                    }
-            )
-            .apply()
+        if (!destroyed) SongResultStore.save(this, songs)
     }
 
     private fun restoreSearchResults() {
-
-        val data =
-            getSharedPreferences(
-                "search_results",
-                MODE_PRIVATE
-            )
-                .getString(
-                    "songs",
-                    ""
-                )
-                .orEmpty()
-
-        if (data.isBlank()) return
-
         songs.clear()
-
-        data.split("\n")
-            .take(60)
-            .forEach { line ->
-
-                val p =
-                    line.split(
-                        "|||",
-                        limit = 5
-                    )
-
-                if (
-                    p.size == 5 &&
-                    p[0].isNotBlank()
-                ) {
-
-                    songs.add(
-                        SongResult(
-                            p[0],
-                            p[1],
-                            p[2],
-                            p[3],
-                            p[4]
-                        )
-                    )
-                }
-            }
-
-        songs.forEachIndexed {
-            index,
-            song ->
-            addSongView(
-                song,
-                index
-            )
-        }
-
-        if (songs.isNotEmpty()) {
-
-            currentIndex = 0
-
-            status.text =
-                "${songs.size} نتیجه ذخیره شده"
-        }
+        songs.addAll(SongResultStore.restore(this).filter { it.isYouTube || ServerConfig.isAllowedMediaUrl(it.url, it.referer.ifBlank { null }) })
+        songs.forEachIndexed { index, song -> addSongView(song, index) }
+        if (songs.isNotEmpty()) currentIndex = 0
     }
 
     private fun addSongView(
@@ -1786,6 +1606,11 @@ class MainActivity : Activity() {
                     MusicService.EXTRA_COVER,
                     cover
                 )
+
+                putExtra(
+                    "referer",
+                    currentSong?.referer.orEmpty()
+                )
             }
         )
     }
@@ -1912,6 +1737,21 @@ class MainActivity : Activity() {
         playSong(
             songs[currentIndex]
         )
+    }
+
+    private fun playNextValidatedAfterFailure(failedUrl: String) {
+        if (failedUrl.isBlank() || failedPlaybackUrls.contains(failedUrl) || songs.isEmpty()) return
+        failedPlaybackUrls += failedUrl
+        val start = currentIndex.coerceAtLeast(0)
+        for (offset in 1..songs.size) {
+            val index = (start + offset) % songs.size
+            val candidate = songs[index]
+            if (!candidate.isYouTube && !failedPlaybackUrls.contains(candidate.url)) {
+                currentIndex = index
+                playSong(candidate)
+                return
+            }
+        }
     }
 
     private fun updatePlayerProgress(
@@ -2907,6 +2747,7 @@ class MainActivity : Activity() {
         destroyed = true
 
         cancelSearchCallbacks()
+        parallelPageInspector.shutdown()
 
         cancelDownloadRequested = true
         pauseDownloadRequested = false
