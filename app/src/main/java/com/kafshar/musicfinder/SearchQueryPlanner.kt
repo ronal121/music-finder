@@ -1,17 +1,20 @@
 package com.kafshar.musicfinder
 
 /**
- * Builds the single unrestricted Google discovery query used by the app.
+ * Builds search text for the configured music sources.
  *
- * Google is responsible for discovering and ranking the web. This class only
- * normalizes/corrects the user's text and must never enumerate music domains.
+ * There are no Google/site: operators here. SearchProvider sends this text
+ * directly to MusicSitePool.
  */
 object SearchQueryPlanner {
     fun build(input: String): List<String> {
-        val original = SearchEngine.displayQuery(input)
+        val original = SearchEngine.displayQuery(input).trim()
         if (original.isBlank()) return emptyList()
 
-        val googleQuery = SearchEngine.buildGoogleQuery(original).trim()
-        return listOf(googleQuery.ifBlank { original })
+        val corrected = SearchEngine.correctedQuery(original).trim()
+        return linkedSetOf(
+            original,
+            corrected
+        ).filter { it.isNotBlank() }
     }
 }
