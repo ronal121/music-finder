@@ -5,11 +5,11 @@ import java.net.URL
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 
-class ParallelPageInspector(private val concurrency: Int = 4) {
+class ParallelPageInspector(private val concurrency: Int = 8) {
     data class Page(val url: String, val titleHint: String = "")
     data class Inspection(val page: Page, val title: String, val artist: String, val cover: String, val candidates: List<String>, val needsWebView: Boolean)
 
-    private val executor = Executors.newFixedThreadPool(concurrency.coerceIn(2, 6))
+    private val executor = Executors.newFixedThreadPool(concurrency.coerceIn(4, 10))
     private val active = java.util.Collections.synchronizedSet(mutableSetOf<Future<*>>())
 
     fun inspect(
@@ -49,15 +49,15 @@ class ParallelPageInspector(private val concurrency: Int = 4) {
         return try {
             connection = URL(url).openConnection() as HttpURLConnection
             connection.instanceFollowRedirects = true
-            connection.connectTimeout = 4500
-            connection.readTimeout = 6500
+            connection.connectTimeout = 1800
+            connection.readTimeout = 3000
             connection.useCaches = false
             connection.setRequestProperty("User-Agent", SearchNetwork.USER_AGENT)
             connection.setRequestProperty("Accept-Language", "fa-IR,fa;q=0.9,en;q=0.8")
             connection.setRequestProperty("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5")
             if (connection.responseCode !in 200..399) return ""
             if (!ServerConfig.isAllowedPageUrl(connection.url.toString())) return ""
-            connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(1_500_000) }
+            connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(1_000_000) }
         } catch (_: Exception) { "" } finally {
             try { connection?.disconnect() } catch (_: Exception) { }
         }
