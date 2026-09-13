@@ -80,6 +80,7 @@ object ParallelSearchEngine {
         if (!directFuture.isDone) directFuture.cancel(true)
 
         val merged = LinkedHashMap<String, RankedResult>()
+        val directDomains = HashSet<String>()
 
         // Preserve Google's actual ordering. This is important for semantic/fuzzy
         // queries where our local token similarity can be very wrong.
@@ -90,13 +91,17 @@ object ParallelSearchEngine {
             )
         }
 
-        // Direct-site results are useful coverage, but must not outrank a Google
-        // result merely because a URL contains words like "music" or "download".
+        // Direct-site results are only coverage. One domain gets one fallback slot
+        // so a site's generic search page cannot flood the result list with several
+        // near-identical tracks and push relevant Google results out.
         direct.forEachIndexed { index, result ->
-            merged.putIfAbsent(
-                canonicalKey(result.url),
-                RankedResult(result, sourceBonus = 0, discoveryRank = index)
-            )
+            if (merged.size >= limit) return@forEachIndexed
+            if (!result.url.startsWith("http", true) || !ServerConfig.isAllowedPageUrl(result.url)) return@forEachIndexed
+            val key = canonicalKey(result.url)
+            if (merged.containsKey(key)) return@forEachIndexed
+            val domain = hostKey(result.url)
+            if (domain.isBlank() || !directDomains.add(domain)) return@forEachIndexed
+            merged[key] = RankedResult(result, sourceBonus = 0, discoveryRank = index)
         }
 
         return merged.values
@@ -112,6 +117,12 @@ object ParallelSearchEngine {
             )
             .map { it.result }
             .take(limit)
+    }
+
+    private fun hostKey(url: String): String = try {
+        URI(url).host.orEmpty().removePrefix("www.").lowercase()
+    } catch (_: Exception) {
+        ""
     }
 
     fun toCandidate(result: GoogleResultParser.Result): Candidate {
