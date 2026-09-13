@@ -16,13 +16,26 @@ class SearchArchitectureTest {
         assertTrue(variants.none { it.contains("google", ignoreCase = true) })
     }
 
-    @Test fun searchNetworkUsesOnlyConfiguredMusicSources() {
+    @Test fun searchNetworkUsesTheCompleteConfiguredMusicPool() {
         assertEquals(1, SearchNetwork.providers.size)
         assertEquals("Music sites", SearchNetwork.providers.single().name)
         assertTrue(MusicSitePool.domains.isNotEmpty())
         assertTrue(MusicSitePool.domains.size >= 400)
         assertTrue(MusicSitePool.domains.size <= 500)
         assertTrue(MusicSitePool.domains.all { !it.contains("google.") })
+    }
+
+    @Test fun directEngineIsNotTheOldEmptyStub() {
+        val candidate = ParallelSearchEngine.toCandidate(
+            GoogleResultParser.Result(
+                url = "https://rozmusic.com/music/test",
+                title = "Test Song",
+                isYouTube = false
+            )
+        )
+        assertEquals("https://rozmusic.com/music/test", candidate.url)
+        assertEquals("Test Song", candidate.title)
+        assertEquals("rozmusic.com", candidate.site)
     }
 
     @Test fun arabicAndPersianCharactersNormalizeEqually() {

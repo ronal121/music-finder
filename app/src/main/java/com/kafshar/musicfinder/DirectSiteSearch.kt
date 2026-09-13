@@ -16,45 +16,35 @@ import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 
 /**
- * Direct search against the configured music-site universe.
+ * Adaptive direct search over the complete MusicSitePool.
  *
- * A domain is not assumed to use one global search convention. We first try
- * common URL families, then inspect the site's own HTML search form and use
- * its action + input name. This makes the 428-domain pool an actual resolver
- * rather than a passive list of host names.
+ * Each domain is isolated in its own task. A failed/slow domain only loses its
+ * own result; the rest of the pool continues until the bounded search deadline.
  */
-class DirectSiteSearchProvider : SearchProvider {
+class DirectSiteSearchProvider(
+    private val domains: List<String> = MusicSitePool.domains,
+    concurrency: Int = 12
+) : SearchProvider {
     override val name: String = "Music sites"
 
-    private val executor: ExecutorService = Executors.newFixedThreadPool(20)
-    private val recentSearches = ConcurrentHashMap<String, Long>()
+    private val executor: ExecutorService = Executors.newFixedThreadPool(concurrency.coerceIn(4, 16))
+    private val domainSet = domains.map { it.lowercase(Locale.ROOT).removePrefix("www.") }.toSet()
 
     override fun search(query: String, limit: Int): List<GoogleResultParser.Result> {
-        if (query.isBlank() || limit <= 0) return emptyList()
-
+        if (query.isBlank() || limit <= 0 || domains.isEmpty()) return emptyList()
         val text = extractQuery(query)
         if (text.isBlank()) return emptyList()
 
-        // MainActivity sends several query variants. Direct search fans out once;
-        // repeated variants are handled by the existing discovery pipeline.
-        val cacheKey = SearchEngine.normalizeQuery(text)
-        val now = System.currentTimeMillis()
-        val previous = recentSearches.put(cacheKey, now)
-        if (previous != null && now - previous < 20_000L) return emptyList()
-        val expired = recentSearches.entries.filter { now - it.value > 120_000L }
-        expired.forEach { recentSearches.remove(it.key, it.value) }
-
-        val completion: CompletionService<List<GoogleResultParser.Result>> =
-            ExecutorCompletionService(executor)
-        val futures = ArrayList<Future<List<GoogleResultParser.Result>>>(MusicSitePool.domains.size)
-        MusicSitePool.domains.forEach { domain ->
+        val completion: CompletionService<List<GoogleResultParser.Result>> = ExecutorCompletionService(executor)
+        val futures = ArrayList<Future<List<GoogleResultParser.Result>>>(domains.size)
+        domains.distinct().forEach { domain ->
             futures += completion.submit(Callable { searchDomain(domain, text, limit) })
         }
 
         val merged = LinkedHashMap<String, GoogleResultParser.Result>()
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(8_000L)
         var completed = 0
-        while (completed < MusicSitePool.domains.size && System.nanoTime() < deadline) {
+        while (completed < futures.size && System.nanoTime() < deadline) {
             val remaining = deadline - System.nanoTime()
             val future = try {
                 completion.poll(remaining, TimeUnit.NANOSECONDS)
@@ -66,60 +56,49 @@ class DirectSiteSearchProvider : SearchProvider {
             completed++
             try {
                 future.get().forEach { result ->
-                    if (merged.size < limit * 4) {
-                        merged.putIfAbsent(result.url, result)
-                    }
+                    val key = canonicalKey(result.url)
+                    if (key.isNotBlank()) merged.putIfAbsent(key, result)
                 }
             } catch (_: Exception) {
-                // One unavailable site must never abort the complete search.
+                // A single site must never abort the complete search.
             }
         }
         futures.forEach { if (!it.isDone) it.cancel(true) }
 
         return merged.values
-            .sortedByDescending { SearchRanking.webScore(text, it.title, it.url, it.url.contains("youtube.com")) }
+            .sortedWith(
+                compareByDescending<GoogleResultParser.Result> {
+                    SearchRanking.webScore(text, it.title, it.url, it.isYouTube)
+                }.thenBy { canonicalKey(it.url) }
+            )
             .take(limit)
     }
 
     private fun extractQuery(raw: String): String {
         val quoted = Regex("[\\\"']([^\\\"']+)[\\\"']").find(raw)?.groupValues?.getOrNull(1)
-        val source = quoted ?: raw
-        return source
+        return (quoted ?: raw)
             .replace(Regex("\\bsite:[^\\s]+", RegexOption.IGNORE_CASE), " ")
             .replace(Regex("\\s+"), " ")
             .trim()
     }
 
     private fun searchDomain(domain: String, query: String, limit: Int): List<GoogleResultParser.Result> {
-        val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.toString())
-        val candidates = listOf(
-            "https://$domain/?s=$encoded",
-            "https://$domain/search?q=$encoded",
-            "https://$domain/search?query=$encoded",
-            "https://$domain/search?s=$encoded",
-            "https://$domain/?q=$encoded",
-            "https://$domain/find?q=$encoded",
-            "https://$domain/?search=$encoded",
-            "https://$domain/?keyword=$encoded",
-            "https://$domain/search?keyword=$encoded",
-            "https://$domain/search?keywords=$encoded",
-            "https://$domain/search?search=$encoded",
-            "https://$domain/search?searchword=$encoded",
-            "https://$domain/search?term=$encoded",
-            "https://$domain/search?queryString=$encoded"
-        )
-
         val collected = LinkedHashMap<String, GoogleResultParser.Result>()
-        candidates.forEach { url ->
-            fetchAndParse(url, domain, query, limit).forEach { collected.putIfAbsent(it.url, it) }
-            if (collected.size >= limit) return@forEach
+        val homepage = fetchHtml("https://$domain/")
+
+        // The site's own search form is the strongest signal of its actual endpoint.
+        if (!homepage.isNullOrBlank()) {
+            DirectSearchPatterns.fromSearchForms(homepage, "https://$domain/", query)
+                .forEach { url ->
+                    fetchAndParse(url, domain, query, limit).forEach { collected.putIfAbsent(canonicalKey(it.url), it) }
+                    if (collected.size >= limit) return@forEach
+                }
         }
 
-        if (collected.size < limit) {
-            discoverSearchUrls(domain, query).forEach { url ->
-                fetchAndParse(url, domain, query, limit).forEach { collected.putIfAbsent(it.url, it) }
-                if (collected.size >= limit) return@forEach
-            }
+        // Then try common CMS conventions. Stop as soon as enough real result pages exist.
+        for (url in DirectSearchPatterns.templates(domain, query)) {
+            if (collected.size >= limit) break
+            fetchAndParse(url, domain, query, limit).forEach { collected.putIfAbsent(canonicalKey(it.url), it) }
         }
 
         return collected.values.take(limit)
@@ -132,98 +111,92 @@ class DirectSiteSearchProvider : SearchProvider {
         limit: Int
     ): List<GoogleResultParser.Result> {
         return try {
-            val connection = URL(url).openConnection() as HttpURLConnection
-            connection.connectTimeout = 1_200
-            connection.readTimeout = 1_800
-            connection.instanceFollowRedirects = true
-            connection.setRequestProperty("User-Agent", SearchNetwork.USER_AGENT)
-            connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
-            connection.connect()
-            if (connection.responseCode !in 200..399) return emptyList()
-            val html = connection.inputStream.bufferedReader().use { it.readText() }
+            val html = fetchHtml(url) ?: return emptyList()
             parseResultLinks(html, domain, query).take(limit)
         } catch (_: Exception) {
             emptyList()
         }
     }
 
-    private fun discoverSearchUrls(domain: String, query: String): List<String> {
-        return try {
-            val homepage = fetchHtml("https://$domain/") ?: return emptyList()
-            val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.toString())
-            val urls = LinkedHashSet<String>()
-
-            Regex("(?is)<form\\b[^>]*action=[\\\"']([^\\\"']+)[\\\"'][^>]*>(.*?)</form>")
-                .findAll(homepage)
-                .forEach { match ->
-                    val action = match.groupValues[1]
-                    val body = match.groupValues[2]
-                    val input = Regex("(?is)<input\\b[^>]*(?:name=[\\\"']([^\\\"']+)[\\\"'])[^>]*>")
-                        .findAll(body)
-                        .map { it.groupValues[1] }
-                        .firstOrNull { name ->
-                            name.lowercase(Locale.ROOT) in setOf("q", "query", "s", "search", "keyword", "keywords", "searchword", "term", "title", "song", "text")
-                        }
-                    if (input != null) {
-                        val base = if (action.startsWith("http", true)) action else "https://$domain/${action.trimStart('/')}"
-                        urls += if (base.contains("?")) "$base&$input=$encoded" else "$base?$input=$encoded"
-                    }
-                }
-
-            Regex("(?i)href=[\\\"']([^\\\"']*(?:search|find)[^\\\"']*)[\\\"']")
-                .findAll(homepage)
-                .forEach { match ->
-                    val href = match.groupValues[1]
-                    if (href.startsWith("/")) {
-                        val base = "https://$domain${href}"
-                        urls += if (base.contains("?")) "$base&query=$encoded" else "$base?query=$encoded"
-                    }
-                }
-            urls.take(6)
-        } catch (_: Exception) {
-            emptyList()
-        }
-    }
-
     private fun fetchHtml(url: String): String? {
+        if (!ServerConfig.isAllowedPageUrl(url)) return null
+        var connection: HttpURLConnection? = null
         return try {
-            val connection = URL(url).openConnection() as HttpURLConnection
+            connection = URL(url).openConnection() as HttpURLConnection
             connection.connectTimeout = 1_200
             connection.readTimeout = 1_800
             connection.instanceFollowRedirects = true
+            connection.useCaches = false
             connection.setRequestProperty("User-Agent", SearchNetwork.USER_AGENT)
-            connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
+            connection.setRequestProperty("Accept-Language", "fa-IR,fa;q=0.9,en;q=0.8")
+            connection.setRequestProperty("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5")
             connection.connect()
             if (connection.responseCode !in 200..399) return null
-            connection.inputStream.bufferedReader().use { it.readText() }
+            if (!ServerConfig.isAllowedPageUrl(connection.url.toString())) return null
+            connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(1_000_000) }
         } catch (_: Exception) {
             null
+        } finally {
+            try { connection?.disconnect() } catch (_: Exception) { }
         }
     }
 
     private fun parseResultLinks(html: String, domain: String, query: String): List<GoogleResultParser.Result> {
-        val results = ArrayList<GoogleResultParser.Result>()
-        Regex("(?is)<a\\b[^>]*href=[\\\"']([^\\\"']+)[\\\"'][^>]*>(.*?)</a>")
-            .findAll(html)
-            .forEach { match ->
-                val href = match.groupValues[1].trim()
-                val title = match.groupValues[2]
-                    .replace(Regex("<[^>]+>"), " ")
-                    .replace(Regex("\\s+"), " ")
-                    .trim()
-                if (title.length < 2 || !isSameDomain(href, domain)) return@forEach
-                if (href.contains("/search", true) || href.contains("?s=", true) || href.contains("?q=", true)) return@forEach
-                results += GoogleResultParser.Result(href, title, ServerConfig.isYouTubeUrl(href))
-            }
-        return results.distinctBy { it.url }
+        val results = LinkedHashMap<String, GoogleResultParser.Result>()
+        val base = "https://$domain/"
+        val anchorRegex = Regex("(?is)<a\\b[^>]*href=[\\\"']([^\\\"']+)[\\\"'][^>]*>(.*?)</a>")
+        anchorRegex.findAll(html).forEach { match ->
+            val href = DirectSearchPatterns.normalize(match.groupValues[1], base) ?: return@forEach
+            if (!isSameDomain(href, domain)) return@forEach
+            if (isNonSongPage(href)) return@forEach
+            if (ServerConfig.hasAudioExtension(href)) return@forEach
+
+            val title = cleanTitle(match.groupValues[2])
+            if (title.length < 2) return@forEach
+            val result = GoogleResultParser.Result(href, title.take(300), ServerConfig.isYouTubeUrl(href))
+            results.putIfAbsent(canonicalKey(href), result)
+        }
+        return results.values
+            .sortedWith(compareByDescending<GoogleResultParser.Result> {
+                SearchRanking.webScore(query, it.title, it.url, it.isYouTube)
+            })
+    }
+
+    private fun cleanTitle(raw: String): String =
+        raw.replace(Regex("<[^>]+>"), " ")
+            .replace("&amp;", "&", true)
+            .replace("&quot;", "\"", true)
+            .replace("&#39;", "'", true)
+            .replace("&nbsp;", " ", true)
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+    private fun isNonSongPage(url: String): Boolean {
+        return try {
+            val uri = URI(url)
+            val path = uri.path.orEmpty().lowercase(Locale.ROOT)
+            val query = uri.rawQuery.orEmpty().lowercase(Locale.ROOT)
+            path == "/" ||
+                path.contains("/search") ||
+                path.contains("/category/") ||
+                path.contains("/tag/") ||
+                path.contains("/author/") ||
+                path.contains("/page/") ||
+                query.startsWith("s=") || query.startsWith("q=") || query.startsWith("search=")
+        } catch (_: Exception) {
+            true
+        }
     }
 
     private fun isSameDomain(url: String, domain: String): Boolean {
         return try {
-            val host = URI(url).host?.lowercase(Locale.ROOT) ?: return false
-            host == domain.lowercase(Locale.ROOT) || host.endsWith(".$domain")
+            val host = URI(url).host?.lowercase(Locale.ROOT)?.removePrefix("www.") ?: return false
+            host == domain.lowercase(Locale.ROOT).removePrefix("www.") || host.endsWith(".${domain.lowercase(Locale.ROOT).removePrefix("www.")}")
         } catch (_: Exception) {
             false
         }
     }
+
+    private fun canonicalKey(url: String): String =
+        url.substringBefore('#').trimEnd('/').lowercase(Locale.ROOT)
 }
