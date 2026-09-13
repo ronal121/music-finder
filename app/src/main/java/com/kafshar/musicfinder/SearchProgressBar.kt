@@ -34,7 +34,6 @@ class SearchProgressBar @JvmOverloads constructor(
     init {
         setWillNotDraw(false)
         visibility = GONE
-        paint.color = 0xFFF44336.toInt()
         paint.style = Paint.Style.FILL
     }
 
@@ -50,8 +49,7 @@ class SearchProgressBar @JvmOverloads constructor(
     }
 
     private fun updateFromStatus() {
-        val root = rootView ?: return
-        val status = root.findViewById<TextView>(R.id.status)?.text?.toString().orEmpty()
+        val status = rootView.findViewById<TextView>(R.id.status)?.text?.toString().orEmpty()
 
         val finished = status.contains("آهنگ قابل پخش پیدا نشد") ||
             status.contains("آهنگ قابل پخش پیدا شد") ||
@@ -77,6 +75,7 @@ class SearchProgressBar @JvmOverloads constructor(
 
         if (!searching) return
 
+        if (!active && displayed >= 0.98f) displayed = 0f
         active = true
         visibility = VISIBLE
         target = when {
@@ -94,9 +93,7 @@ class SearchProgressBar @JvmOverloads constructor(
         if (width <= 0f || height <= 0f) return
 
         displayed += (target - displayed) * 0.18f
-        if (active) {
-            displayed = max(displayed, 0.04f)
-        }
+        if (active) displayed = max(displayed, 0.04f)
         displayed = min(displayed, 1f)
 
         paint.color = 0x22F44336.toInt()
