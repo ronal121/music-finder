@@ -12,9 +12,7 @@ class HarmonizedButton @JvmOverloads constructor(
     defStyleAttr: Int = android.R.attr.textViewStyle
 ) : AppCompatTextView(context, attrs, defStyleAttr) {
 
-    private val defaultNormal = 0xFF20C9C9.toInt()
-    private val defaultPressed = 0xFF119B9B.toInt()
-    private val defaultFocused = 0xFF18B4B4.toInt()
+    private val defaultNormal = 0xFF2196F3.toInt()
 
     init {
         setButtonTint(defaultNormal)
@@ -24,14 +22,9 @@ class HarmonizedButton @JvmOverloads constructor(
         isFocusable = true
     }
 
-    /**
-     * MainActivity applies a normal tint to keep the UI turquoise. Intercept it
-     * and preserve the pressed/focused states instead of flattening the button
-     * into one visual state.
-     */
+    /** Keep the new blue visual language even when legacy Activity code applies its old tint. */
     override fun setBackgroundTintList(tint: ColorStateList?) {
-        val normal = tint?.defaultColor ?: defaultNormal
-        setButtonTint(normal)
+        setButtonTint(defaultNormal)
     }
 
     private fun setButtonTint(normal: Int) {
