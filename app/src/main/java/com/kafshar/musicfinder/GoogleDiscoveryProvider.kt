@@ -7,12 +7,8 @@ import java.nio.charset.StandardCharsets
 import java.net.URI
 
 /**
- * Google is the only semantic discovery engine.
- *
- * One logical user search is expanded internally into a few Google variants,
- * while every request is constrained to the MusicSitePool universe. This keeps
- * Google's semantic ranking but prevents weak variants from becoming separate
- * UI search batches.
+ * Google is the semantic discovery engine. The configured reference pool is a
+ * source boundary, not a replacement for Google's ranking.
  */
 class GoogleDiscoveryProvider {
     fun search(query: String, limit: Int = 20): List<GoogleResultParser.Result> {
@@ -23,46 +19,53 @@ class GoogleDiscoveryProvider {
 
         val corrected = SearchEngine.correctedQuery(original).trim()
         val clean = SearchEngine.withoutSearchNoise(original).trim()
-        val variants = linkedSetOf<String>().apply {
+        val semanticVariants = linkedSetOf<String>().apply {
             add(original)
-            add("\"$original\"")
+            if (corrected.isNotBlank()) add(corrected)
+            if (clean.isNotBlank()) add(clean)
             add("$original آهنگ")
-            add("$original \"متن آهنگ\"")
-            if (corrected.isNotBlank() && !corrected.equals(original, ignoreCase = true)) {
-                add(corrected)
-                add("\"$corrected\"")
-            }
-            if (clean.isNotBlank() && !clean.equals(original, ignoreCase = true)) {
-                add("\"$clean\" \"متن آهنگ\"")
-            }
-        }.take(6)
+            add("$original متن آهنگ")
+        }.take(5)
 
         val target = limit.coerceIn(10, 20)
         val merged = LinkedHashMap<String, RankedResult>()
 
-        for ((variantIndex, variant) in variants.withIndex()) {
-            val constrainedQueries = ReferenceSiteQueries.build(variant)
-            for ((batchIndex, constrainedQuery) in constrainedQueries.withIndex()) {
-                fetch(constrainedQuery, 40).forEachIndexed { resultIndex, result ->
-                    if (!isEligibleReferenceResult(result.url)) return@forEachIndexed
-                    val key = canonicalKey(result.url)
-                    val candidate = RankedResult(
-                        result = result,
-                        variantIndex = variantIndex,
-                        batchIndex = batchIndex,
-                        resultIndex = resultIndex
-                    )
-                    val previous = merged[key]
-                    if (previous == null || candidate.discoveryScore < previous.discoveryScore) {
-                        merged[key] = candidate
-                    }
-                }
-
-                // The first logical variant is authoritative. Later variants only
-                // provide coverage if the first one did not yield enough candidates.
-                if (merged.size >= target * 2) break
+        // First ask Google normally. This is important for typo/lyric/semantic
+        // searches such as a misspelled lyric that Google can map to the actual
+        // song. We still discard every result outside the reference-site bank.
+        for ((variantIndex, variant) in semanticVariants.withIndex()) {
+            fetch(variant, 40).forEachIndexed { resultIndex, result ->
+                if (!isEligibleReferenceResult(result.url)) return@forEachIndexed
+                putBest(
+                    merged,
+                    result,
+                    variantIndex,
+                    batchIndex = -1,
+                    resultIndex = resultIndex
+                )
             }
             if (merged.size >= target * 2) break
+        }
+
+        // If Google's broad result page did not contain enough configured music
+        // sources, retry with explicit site groups. Only a bounded number of
+        // category/site queries is used so a 400+ domain bank cannot turn one
+        // search into hundreds of serial HTTP requests.
+        if (merged.size < target) {
+            val constrainedQueries = ReferenceSiteQueries.build(original).take(18)
+            for ((index, constrainedQuery) in constrainedQueries.withIndex()) {
+                fetch(constrainedQuery, 40).forEachIndexed { resultIndex, result ->
+                    if (!isEligibleReferenceResult(result.url)) return@forEachIndexed
+                    putBest(
+                        merged,
+                        result,
+                        variantIndex = 10 + index,
+                        batchIndex = index,
+                        resultIndex = resultIndex
+                    )
+                }
+                if (merged.size >= target * 2) break
+            }
         }
 
         return merged.values
@@ -73,36 +76,60 @@ class GoogleDiscoveryProvider {
             }
     }
 
+    private fun putBest(
+        merged: LinkedHashMap<String, RankedResult>,
+        result: GoogleResultParser.Result,
+        variantIndex: Int,
+        batchIndex: Int,
+        resultIndex: Int
+    ) {
+        val key = canonicalKey(result.url)
+        val candidate = RankedResult(result, variantIndex, batchIndex, resultIndex)
+        val previous = merged[key]
+        if (previous == null || candidate.discoveryScore < previous.discoveryScore) {
+            merged[key] = candidate
+        }
+    }
+
     private fun fetch(query: String, limit: Int): List<GoogleResultParser.Result> {
         val googleQuery = SearchEngine.displayQuery(query).trim()
         if (googleQuery.isBlank()) return emptyList()
 
         val encoded = URLEncoder.encode(googleQuery, StandardCharsets.UTF_8.toString())
-        val url = "https://www.google.com/search?q=$encoded&hl=fa&num=${limit.coerceIn(20, 40)}&filter=0"
+        val urls = listOf(
+            "https://www.google.com/search?gbv=1&q=$encoded&hl=fa&num=${limit.coerceIn(20, 40)}&filter=0",
+            "https://www.google.com/search?q=$encoded&hl=fa&num=${limit.coerceIn(20, 40)}&filter=0"
+        )
 
-        return try {
-            val connection = URL(url).openConnection() as HttpURLConnection
-            connection.connectTimeout = 2200
-            connection.readTimeout = 4000
-            connection.instanceFollowRedirects = true
-            connection.useCaches = false
-            connection.setRequestProperty("User-Agent", SearchNetwork.USER_AGENT)
-            connection.setRequestProperty("Accept-Language", "fa-IR,fa;q=0.9,en;q=0.8")
-            connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
-            connection.connect()
-            if (connection.responseCode !in 200..399) return emptyList()
-
-            val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use {
-                it.readText().take(2_500_000)
-            }
-
-            GoogleResultParser.parseAnchors(html, 200)
-                .filter { !it.url.contains("google.", true) }
-                .filter { !isSearchEngineUtilityUrl(it.url) }
-                .distinctBy { canonicalKey(it.url) }
-        } catch (_: Exception) {
-            emptyList()
+        for (requestUrl in urls) {
+            val parsed = fetchUrl(requestUrl)
+            if (parsed.isNotEmpty()) return parsed
         }
+        return emptyList()
+    }
+
+    private fun fetchUrl(requestUrl: String): List<GoogleResultParser.Result> = try {
+        val connection = URL(requestUrl).openConnection() as HttpURLConnection
+        connection.connectTimeout = 3500
+        connection.readTimeout = 5500
+        connection.instanceFollowRedirects = true
+        connection.useCaches = false
+        connection.setRequestProperty("User-Agent", SearchNetwork.USER_AGENT)
+        connection.setRequestProperty("Accept-Language", "fa-IR,fa;q=0.9,en;q=0.8")
+        connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
+        connection.connect()
+        if (connection.responseCode !in 200..399) return emptyList()
+
+        val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use {
+            it.readText().take(2_500_000)
+        }
+
+        GoogleResultParser.parseAnchors(html, 200)
+            .filter { !it.url.contains("google.", true) }
+            .filter { !isSearchEngineUtilityUrl(it.url) }
+            .distinctBy { canonicalKey(it.url) }
+    } catch (_: Exception) {
+        emptyList()
     }
 
     private fun isEligibleReferenceResult(url: String): Boolean {
@@ -140,7 +167,7 @@ class GoogleDiscoveryProvider {
         val resultIndex: Int
     ) {
         val discoveryScore: Int
-            get() = variantIndex * 1_000_000 + batchIndex * 1_000 + resultIndex
+            get() = variantIndex * 1_000_000 + (batchIndex + 1).coerceAtLeast(0) * 1_000 + resultIndex
     }
 
     private fun addDiscoveryRank(url: String, rank: Int): String =
