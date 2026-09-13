@@ -11,8 +11,8 @@ import java.util.concurrent.atomic.AtomicReference
  * Runtime bridge between discovery and the real direct-site search pipeline.
  *
  * Google is the primary discovery/ranking source because it already understands
- * the web-wide relevance of a music query. Direct-site discovery runs in parallel
- * as a fallback/coverage layer over MusicSitePool.
+ * web-wide relevance, spelling mistakes and semantic intent. Direct-site discovery
+ * runs in parallel as a fallback/coverage layer over MusicSitePool.
  */
 object ParallelSearchEngine {
     private val executor = Executors.newFixedThreadPool(2)
@@ -80,23 +80,34 @@ object ParallelSearchEngine {
         if (!directFuture.isDone) directFuture.cancel(true)
 
         val merged = LinkedHashMap<String, RankedResult>()
-        google.forEach { result ->
-            merged.putIfAbsent(canonicalKey(result.url), RankedResult(result, 18))
+
+        // Preserve Google's actual ordering. This is important for semantic/fuzzy
+        // queries where our local token similarity can be very wrong.
+        google.forEachIndexed { index, result ->
+            merged.putIfAbsent(
+                canonicalKey(result.url),
+                RankedResult(result, sourceBonus = 1000, discoveryRank = index)
+            )
         }
-        direct.forEach { result ->
-            merged.putIfAbsent(canonicalKey(result.url), RankedResult(result, 0))
+
+        // Direct-site results are useful coverage, but must not outrank a Google
+        // result merely because a URL contains words like "music" or "download".
+        direct.forEachIndexed { index, result ->
+            merged.putIfAbsent(
+                canonicalKey(result.url),
+                RankedResult(result, sourceBonus = 0, discoveryRank = index)
+            )
         }
 
         return merged.values
             .filter { it.result.url.startsWith("http", true) && ServerConfig.isAllowedPageUrl(it.result.url) }
             .sortedWith(
                 compareByDescending<RankedResult> {
-                    SearchRanking.webScore(
-                        query,
-                        it.result.title,
-                        it.result.url,
-                        it.result.isYouTube
-                    ) + it.sourceBonus
+                    if (it.sourceBonus > 0) {
+                        10_000 - it.discoveryRank
+                    } else {
+                        SearchRanking.webScore(query, it.result.title, it.result.url, it.result.isYouTube)
+                    }
                 }.thenBy { canonicalKey(it.result.url) }
             )
             .map { it.result }
@@ -130,7 +141,8 @@ object ParallelSearchEngine {
 
     private data class RankedResult(
         val result: GoogleResultParser.Result,
-        val sourceBonus: Int
+        val sourceBonus: Int,
+        val discoveryRank: Int
     )
 
     private fun canonicalKey(url: String): String =
