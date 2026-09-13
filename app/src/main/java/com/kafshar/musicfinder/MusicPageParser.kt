@@ -18,11 +18,16 @@ object MusicPageParser {
         "file", "url", "audio", "audio_url", "audioUrl", "mp3",
         "mp3_url", "mp3Url", "download", "download_url", "downloadUrl",
         "stream", "stream_url", "streamUrl", "source", "source_url", "sourceUrl",
-        "content", "data-content"
+        "content", "data-content", "data-player", "data-play", "data-track"
     )
 
     private val audioExtensions = Regex(
         "\\.(?:mp3|m4a|aac|ogg|oga|opus|wav|flac|webm)(?:$|[?#&])",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val mp3Extension = Regex(
+        "\\.mp3(?:$|[?#&])",
         RegexOption.IGNORE_CASE
     )
 
@@ -46,9 +51,11 @@ object MusicPageParser {
         val cover = firstMeta(normalizedHtml, "og:image").ifBlank { firstMeta(normalizedHtml, "twitter:image") }
         val candidates = LinkedHashSet<String>()
 
-        // Standard HTML5 media plus preload/link hints.
+        // Standard HTML5 media plus preload/link hints. This catches the common
+        // WordPress music-page layout used by Iranian music sites, including direct
+        // MP3 links exposed through <audio>, <source>, <a> and data-* attributes.
         val mediaTag = Regex(
-            "<(?:audio|video|source|a|link)\\b[^>]*>",
+            "<(?:audio|video|source|a|link|button)\\b[^>]*>",
             RegexOption.IGNORE_CASE
         )
         for (m in mediaTag.findAll(normalizedHtml)) {
@@ -75,9 +82,9 @@ object MusicPageParser {
         }
 
         // JSON/player configuration. Do not require an audio extension: many CDNs use
-        // extensionless endpoints and the caller validates the response MIME type.
+        // extensionless endpoints and MediaProbe validates the actual response.
         val jsonValue = Regex(
-            "[\\\"']([A-Za-z0-9:_-]*(?:audio|mp3|stream|download|media|source|file|url)[A-Za-z0-9:_-]*)[\\\"']\\s*[:=]\\s*[\\\"']([^\\\"']+)[\\\"']",
+            "[\\\"']([A-Za-z0-9:_-]*(?:audio|mp3|stream|download|media|source|file|url|player)[A-Za-z0-9:_-]*)[\\\"']\\s*[:=]\\s*[\\\"']([^\\\"']+)[\\\"']",
             RegexOption.IGNORE_CASE
         )
         for (m in jsonValue.findAll(normalizedHtml)) {
@@ -98,11 +105,23 @@ object MusicPageParser {
             if (!ServerConfig.isObviousNonMediaUrl(candidate)) candidates += candidate
         }
 
+        // MP3 is the preferred target for this app: Iranian music sites commonly
+        // expose both streaming players and 128/320 kbps download links as MP3.
+        // Keep every discovered MP3 candidate first so MediaProbe reaches the actual
+        // song files before spending network time on lower-confidence formats.
+        val ordered = candidates
+            .distinct()
+            .sortedWith(
+                compareByDescending<String> { mp3Extension.containsMatchIn(it) }
+                    .thenByDescending { looksLikeMedia(it) }
+            )
+            .take(80)
+
         return ParsedMusicPage(
             title.trim().take(300),
             artist.trim().take(200),
             cover.trim(),
-            candidates.take(80)
+            ordered
         )
     }
 
