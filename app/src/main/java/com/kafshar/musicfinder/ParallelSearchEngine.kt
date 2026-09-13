@@ -83,17 +83,18 @@ object ParallelSearchEngine {
         val directDomains = HashSet<String>()
 
         // Preserve Google's actual ordering. This is important for semantic/fuzzy
-        // queries where our local token similarity can be very wrong.
+        // queries where our local token similarity can be very wrong. The marker
+        // lets the UI's later local scorer preserve that same ordering.
         google.forEachIndexed { index, result ->
+            val marked = result.copy(url = withGoogleRankMarker(result.url, index))
             merged.putIfAbsent(
                 canonicalKey(result.url),
-                RankedResult(result, sourceBonus = 1000, discoveryRank = index)
+                RankedResult(marked, sourceBonus = 1000, discoveryRank = index)
             )
         }
 
         // Direct-site results are only coverage. One domain gets one fallback slot
-        // so a site's generic search page cannot flood the result list with several
-        // near-identical tracks and push relevant Google results out.
+        // so a generic site search cannot flood the result list.
         direct.forEachIndexed { index, result ->
             if (merged.size >= limit) return@forEachIndexed
             if (!result.url.startsWith("http", true) || !ServerConfig.isAllowedPageUrl(result.url)) return@forEachIndexed
@@ -118,6 +119,9 @@ object ParallelSearchEngine {
             .map { it.result }
             .take(limit)
     }
+
+    private fun withGoogleRankMarker(url: String, rank: Int): String =
+        url.substringBefore('#') + "#mf-google-rank=$rank"
 
     private fun hostKey(url: String): String = try {
         URI(url).host.orEmpty().removePrefix("www.").lowercase()
