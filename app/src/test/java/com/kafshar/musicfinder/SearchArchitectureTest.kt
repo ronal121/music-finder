@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SearchArchitectureTest {
-    @Test fun persianVariantsStayBoundedAndUnrestricted() {
+    @Test fun persianVariantsStayBoundedAndDoNotUseSearchEngines() {
         val query = "کاش که به شهر شما سفر نمیکردم"
         val variants = SearchQueryPlanner.build(query)
 
@@ -14,16 +14,15 @@ class SearchArchitectureTest {
         assertTrue(variants.size <= 3)
         assertTrue(variants.any { it.contains(query) })
         assertTrue(variants.none { it.contains("site:", ignoreCase = true) })
-        assertTrue(variants.none { it.contains("MusicSitePool", ignoreCase = true) })
+        assertTrue(variants.none { it.contains("google", ignoreCase = true) })
     }
 
-    @Test fun googlePlannerDoesNotDependOnReferenceSitePool() {
-        val variants = SearchQueryPlanner.build("ابی گل یخ")
-
-        assertTrue(variants.isNotEmpty())
-        assertTrue(variants.size <= 3)
-        assertFalse(variants.any { it.contains("site:") })
-        assertTrue(variants.any { it.contains("ابی گل یخ") })
+    @Test fun searchNetworkUsesOnlyConfiguredMusicSources() {
+        assertEquals(1, SearchNetwork.providers.size)
+        assertEquals("Music sites", SearchNetwork.providers.single().name)
+        assertTrue(MusicSitePool.domains.isNotEmpty())
+        assertTrue(MusicSitePool.domains.size <= 10)
+        assertTrue(MusicSitePool.domains.all { !it.contains("google.") })
     }
 
     @Test fun arabicAndPersianCharactersNormalizeEqually() {
