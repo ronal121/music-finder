@@ -1,10 +1,10 @@
 package com.kafshar.musicfinder
 
 /**
- * Keeps discovery close to a Google-style search: one clean user query is sent
- * to the combined Google + direct-site discovery engine. GoogleDiscoveryProvider
- * itself adds the typo-corrected OR form, so issuing the same search twice here
- * only adds latency and dilutes ranking.
+ * Keeps discovery close to a Google-style search: send one clean user query
+ * to the combined Google + direct-site discovery engine. Google itself handles
+ * spelling, lyric fragments and semantic intent better than our small local
+ * correction dictionary, so the original query must remain intact.
  */
 object SearchQueryPlanner {
     fun build(input: String): List<String> {
