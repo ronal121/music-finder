@@ -54,7 +54,7 @@ class CategoryActivity : Activity() {
         root.addView(title, LinearLayout.LayoutParams(-1, -2))
 
         val subtitle = TextView(this).apply {
-            text = "هر دسته در تمام سایت‌های مرجع موسیقی جستجو می‌شود"
+            text = "جستجو مستقیماً با Google انجام می‌شود"
             setTextColor(Color.rgb(167, 167, 176))
             textSize = 12f
             setPadding(0, dp(5), 0, dp(12))
@@ -98,7 +98,6 @@ class CategoryActivity : Activity() {
             webViewClient = WebViewClient()
             setBackgroundColor(Color.rgb(11, 11, 15))
         }
-        // Keep the actual page viewer hidden until a result is selected.
         web.visibility = android.view.View.GONE
         root.addView(web, LinearLayout.LayoutParams(-1, dp(1)))
 
@@ -140,31 +139,31 @@ class CategoryActivity : Activity() {
 
         val token = ++searchToken
         results.removeAllViews()
-        addStatus("در حال جستجوی Google در تمام سایت‌های مرجع...")
-        val queries = ReferenceSiteQueries.build(category)
-        val provider = SearchNetwork.providers.first()
-        val merged = LinkedHashMap<String, GoogleResultParser.Result>()
+        addStatus("در حال جستجو با Google...")
+        val query = SearchEngine.buildGoogleQuery(category)
+        val provider = SearchNetwork.providers.firstOrNull()
+        if (provider == null) {
+            addStatus("موتور جستجو در دسترس نیست")
+            return
+        }
 
         executor.execute {
-            queries.forEach { query ->
-                if (token != searchToken) return@execute
-                try {
-                    provider.search(query, 20).forEach { result ->
-                        val key = result.url.substringBefore('#').trimEnd('/').lowercase()
-                        if (key.isNotBlank()) synchronized(merged) { merged.putIfAbsent(key, result) }
-                    }
-                } catch (_: Exception) { }
+            val list = try {
+                provider.search(query, 20)
+                    .distinctBy { it.url.substringBefore('#').trimEnd('/').lowercase() }
+                    .take(15)
+            } catch (_: Exception) {
+                emptyList()
             }
 
-            val list = synchronized(merged) { merged.values.take(100).toList() }
             runOnUiThread {
                 if (token != searchToken) return@runOnUiThread
                 results.removeAllViews()
                 if (list.isEmpty()) {
-                    addStatus("برای این دسته نتیجه‌ای از سایت‌های مرجع پیدا نشد")
+                    addStatus("برای این دسته نتیجه‌ای از Google پیدا نشد")
                     return@runOnUiThread
                 }
-                addStatus("${list.size} نتیجه از سایت‌های مرجع")
+                addStatus("${list.size} نتیجه از Google")
                 list.forEach { item ->
                     val button = HarmonizedButton(this).apply {
                         text = "${item.title.ifBlank { "نتیجه موسیقی" }}\n${item.url}"
