@@ -1,7 +1,6 @@
 package com.kafshar.musicfinder
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -21,7 +20,8 @@ class SearchArchitectureTest {
         assertEquals(1, SearchNetwork.providers.size)
         assertEquals("Music sites", SearchNetwork.providers.single().name)
         assertTrue(MusicSitePool.domains.isNotEmpty())
-        assertTrue(MusicSitePool.domains.size <= 10)
+        assertTrue(MusicSitePool.domains.size >= 400)
+        assertTrue(MusicSitePool.domains.size <= 500)
         assertTrue(MusicSitePool.domains.all { !it.contains("google.") })
     }
 
