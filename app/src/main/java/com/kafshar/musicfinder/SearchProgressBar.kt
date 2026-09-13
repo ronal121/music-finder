@@ -11,8 +11,7 @@ import kotlin.math.min
 
 /**
  * Thin search progress indicator driven by the real status text emitted by the
- * search pipeline. It starts when discovery begins, advances by search stage,
- * and reaches 100% only when the search actually finishes.
+ * search pipeline. It is visually positioned immediately above the search bar.
  */
 class SearchProgressBar @JvmOverloads constructor(
     context: Context,
@@ -35,6 +34,9 @@ class SearchProgressBar @JvmOverloads constructor(
         setWillNotDraw(false)
         visibility = GONE
         paint.style = Paint.Style.FILL
+        // The XML keeps the progress view after the search row for compatibility.
+        // Translate it upward so the visible red line sits directly above that row.
+        translationY = -61f * resources.displayMetrics.density
     }
 
     override fun onAttachedToWindow() {
