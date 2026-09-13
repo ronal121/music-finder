@@ -1,28 +1,29 @@
 package com.kafshar.musicfinder
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SearchArchitectureTest {
-    @Test fun persianVariantsStayBounded() {
+    @Test fun persianVariantsStayBoundedAndUnrestricted() {
         val query = "کاش که به شهر شما سفر نمیکردم"
         val variants = SearchQueryPlanner.build(query)
 
         assertTrue(variants.isNotEmpty())
+        assertTrue(variants.size <= 3)
         assertTrue(variants.any { it.contains(query) })
-        assertEquals(
-            (MusicSitePool.domains.size + 11) / 12,
-            variants.size
-        )
-        assertTrue(variants.all { it.contains("site:") })
+        assertTrue(variants.none { it.contains("site:", ignoreCase = true) })
+        assertTrue(variants.none { it.contains("MusicSitePool", ignoreCase = true) })
+    }
 
-        MusicSitePool.domains.forEach { domain ->
-            assertTrue(
-                "Missing reference domain in generated Google queries: $domain",
-                variants.any { it.contains("site:$domain") }
-            )
-        }
+    @Test fun googlePlannerDoesNotDependOnReferenceSitePool() {
+        val variants = SearchQueryPlanner.build("ابی گل یخ")
+
+        assertTrue(variants.isNotEmpty())
+        assertTrue(variants.size <= 3)
+        assertFalse(variants.any { it.contains("site:") })
+        assertTrue(variants.any { it.contains("ابی گل یخ") })
     }
 
     @Test fun arabicAndPersianCharactersNormalizeEqually() {
