@@ -29,8 +29,8 @@ class ServerConfigTest {
 
     @Test fun acceptsCrossHostDirectAudioDiscoveredFromGoogle() {
         // Google may discover a page on one host whose actual media file is
-        // served by a CDN/download host. The search engine is intentionally
-        // not restricted to the manually configured server list.
+        // served by a CDN/download host. The media pipeline intentionally
+        // allows the discovered direct audio URL after page inspection.
         assertTrue(
             ServerConfig.isAllowedMediaUrl(
                 "https://cdn.example.net/song.mp3",
@@ -39,8 +39,10 @@ class ServerConfigTest {
         )
     }
 
-    @Test fun acceptsGoogleSearchPage() {
-        assertTrue(ServerConfig.isAllowedPageUrl("https://www.google.com/search?q=music"))
+    @Test fun rejectsGoogleSearchPageAsUserFacingPage() {
+        // Google is used only as an internal discovery engine. Its result page
+        // must never enter the app's page-inspection/navigation pipeline.
+        assertFalse(ServerConfig.isAllowedPageUrl("https://www.google.com/search?q=music"))
     }
 
     @Test fun acceptsYouTubePage() {
