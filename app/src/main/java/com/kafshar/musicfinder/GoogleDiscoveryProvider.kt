@@ -11,11 +11,11 @@ class GoogleDiscoveryProvider {
         if (query.isBlank() || limit <= 0) return emptyList()
         val googleQuery = SearchEngine.buildGoogleQuery(query)
         val encoded = URLEncoder.encode(googleQuery, StandardCharsets.UTF_8.toString())
-        val url = "https://www.google.com/search?q=$encoded&hl=fa&num=${limit.coerceIn(10, 20)}"
+        val url = "https://www.google.com/search?q=$encoded&hl=fa&num=${limit.coerceIn(10, 20)}&filter=0"
         return try {
             val connection = URL(url).openConnection() as HttpURLConnection
-            connection.connectTimeout = 1800
-            connection.readTimeout = 3000
+            connection.connectTimeout = 2500
+            connection.readTimeout = 4000
             connection.instanceFollowRedirects = true
             connection.useCaches = false
             connection.setRequestProperty("User-Agent", SearchNetwork.USER_AGENT)
@@ -24,8 +24,9 @@ class GoogleDiscoveryProvider {
             connection.connect()
             if (connection.responseCode !in 200..399) return emptyList()
             val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(2_000_000) }
-            GoogleResultParser.parseAnchors(html, limit * 3)
+            GoogleResultParser.parseAnchors(html, (limit * 8).coerceAtMost(160))
                 .filter { !it.url.contains("google.", true) }
+                .filter { !isSearchEngineUtilityUrl(it.url) }
                 .distinctBy { it.url.substringBefore('#').trimEnd('/').lowercase() }
                 .sortedByDescending { SearchRanking.webScore(query, it.title, it.url, it.isYouTube) }
                 .take(limit)
@@ -33,4 +34,13 @@ class GoogleDiscoveryProvider {
             emptyList()
         }
     }
+
+    private fun isSearchEngineUtilityUrl(url: String): Boolean = try {
+        val host = java.net.URI(url).host.orEmpty().lowercase()
+        val path = java.net.URI(url).path.orEmpty().lowercase()
+        host == "webcache.googleusercontent.com" ||
+            path.startsWith("/search") ||
+            path.startsWith("/preferences") ||
+            path.startsWith("/advanced_search")
+    } catch (_: Exception) { true }
 }
