@@ -5,7 +5,7 @@ import java.net.URLEncoder
 import java.net.URL
 import java.nio.charset.StandardCharsets
 
-/** Lightweight Google HTML discovery. Failure is non-fatal; direct site search remains authoritative fallback. */
+/** Lightweight Google HTML discovery. Google order is treated as the primary relevance signal. */
 class GoogleDiscoveryProvider {
     fun search(query: String, limit: Int = 20): List<GoogleResultParser.Result> {
         if (query.isBlank() || limit <= 0) return emptyList()
@@ -24,12 +24,33 @@ class GoogleDiscoveryProvider {
             connection.connect()
             if (connection.responseCode !in 200..399) return emptyList()
             val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText().take(2_000_000) }
-            GoogleResultParser.parseAnchors(html, (limit * 8).coerceAtMost(160))
+
+            // Do NOT re-rank Google's results with our small local similarity model.
+            // Google can understand misspellings/semantic intent such as
+            // "وجودم اشو لاشه" -> "چنگیز چاوشی" much better than token matching.
+            // Keep Google's result order and only remove noise/duplicates.
+            val results = GoogleResultParser.parseAnchors(html, (limit * 8).coerceAtMost(160))
                 .filter { !it.url.contains("google.", true) }
                 .filter { !isSearchEngineUtilityUrl(it.url) }
                 .distinctBy { it.url.substringBefore('#').trimEnd('/').lowercase() }
-                .sortedByDescending { SearchRanking.webScore(query, it.title, it.url, it.isYouTube) }
-                .take(limit)
+
+            // Avoid filling the app with near-identical results from one domain while
+            // retaining enough coverage for sites that have several useful qualities.
+            val perHost = HashMap<String, Int>()
+            val diversified = ArrayList<GoogleResultParser.Result>(limit)
+            for (result in results) {
+                val host = try {
+                    java.net.URI(result.url).host.orEmpty().removePrefix("www.").lowercase()
+                } catch (_: Exception) {
+                    ""
+                }
+                val count = perHost[host] ?: 0
+                if (host.isNotBlank() && count >= 2) continue
+                if (host.isNotBlank()) perHost[host] = count + 1
+                diversified += result
+                if (diversified.size >= limit) break
+            }
+            diversified
         } catch (_: Exception) {
             emptyList()
         }
