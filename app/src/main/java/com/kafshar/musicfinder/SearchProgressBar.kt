@@ -11,7 +11,9 @@ import kotlin.math.min
 
 /**
  * Thin search progress indicator driven by the real status text emitted by the
- * search pipeline. It is visually positioned immediately above the search bar.
+ * search pipeline. The view is already placed directly above the search row in
+ * activity_main.xml, so it must not be translated or participate in scrolling
+ * through a second coordinate system.
  */
 class SearchProgressBar @JvmOverloads constructor(
     context: Context,
@@ -26,7 +28,7 @@ class SearchProgressBar @JvmOverloads constructor(
     private val poll = object : Runnable {
         override fun run() {
             updateFromStatus()
-            if (isAttachedToWindow) postDelayed(this, 80L)
+            if (isAttachedToWindow) postDelayed(this, 120L)
         }
     }
 
@@ -34,9 +36,9 @@ class SearchProgressBar @JvmOverloads constructor(
         setWillNotDraw(false)
         visibility = GONE
         paint.style = Paint.Style.FILL
-        // The XML keeps the progress view after the search row for compatibility.
-        // Translate it upward so the visible red line sits directly above that row.
-        translationY = -61f * resources.displayMetrics.density
+        // Do not use translationY here. The progress view is a normal child of
+        // the same scrolling column as the search bar; translating it caused
+        // occasional scroll/layout jitter while the ScrollView was moving.
     }
 
     override fun onAttachedToWindow() {
@@ -56,8 +58,8 @@ class SearchProgressBar @JvmOverloads constructor(
         val finished = status.contains("آهنگ قابل پخش پیدا نشد") ||
             status.contains("آهنگ قابل پخش پیدا شد") ||
             status.contains("زمان جستجو تمام شد") ||
-            status.contains("جستجو موقتاً در دسترس نیست") ||
-            status.contains("جستجوی منابع بیشتر متوقف شد")
+            status.contains("جستجوی منابع بیشتر متوقف شد") ||
+            status.contains("جستجو موقتاً در دسترس نیست")
 
         if (finished) {
             active = false
@@ -104,6 +106,6 @@ class SearchProgressBar @JvmOverloads constructor(
         paint.color = 0xFFF44336.toInt()
         canvas.drawRect(0f, 0f, width * displayed, height, paint)
 
-        if (active) postInvalidateDelayed(16L)
+        if (active) postInvalidateDelayed(32L)
     }
 }
