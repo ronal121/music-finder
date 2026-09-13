@@ -40,6 +40,12 @@ class GoogleDiscoveryProvider {
         }
 
         return diversifyDomains(merged.values.toList(), limit)
+            .mapIndexed { index, result ->
+                // Fragment is never sent to the server. It gives the existing
+                // MainActivity/SearchRanking path a stable way to preserve Google's
+                // semantic discovery order through its final local sort.
+                result.copy(url = addDiscoveryRank(result.url, index))
+            }
     }
 
     private fun fetch(query: String, limit: Int): List<GoogleResultParser.Result> {
@@ -94,6 +100,9 @@ class GoogleDiscoveryProvider {
         }
         return selected
     }
+
+    private fun addDiscoveryRank(url: String, rank: Int): String =
+        url.substringBefore("#") + "#mf-google-rank=$rank"
 
     private fun hostKey(url: String): String = try {
         URI(url).host.orEmpty().lowercase().removePrefix("www.")
