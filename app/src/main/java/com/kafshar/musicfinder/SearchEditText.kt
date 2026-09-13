@@ -13,6 +13,20 @@ class SearchEditText @JvmOverloads constructor(
     defStyleAttr: Int = android.R.attr.editTextStyle
 ) : AppCompatEditText(context, attrs, defStyleAttr) {
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        try {
+            (parent as? android.view.ViewGroup)
+                ?.findViewById<android.view.View>(R.id.clearSearch)
+                ?.setOnClickListener {
+                    setText("")
+                    requestFocus()
+                    setSelection(0)
+                }
+        } catch (_: Exception) {
+        }
+    }
+
     private fun hideKeyboard() {
         val imm = getContext().getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
         imm?.hideSoftInputFromWindow(windowToken, 0)
