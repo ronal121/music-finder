@@ -20,20 +20,30 @@ object ServerConfig {
     private val audioExtensions = setOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm")
     private val obviousPageExtensions = setOf(".html", ".htm", ".json", ".xml", ".css", ".js", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico")
 
-    val SERVERS: List<MusicServer> = emptyList()
-    val MUSIC_HOSTS: Set<String> get() = emptySet()
-    val MUSIC_SITES: List<String> get() = emptyList()
-    val PRIMARY_SEARCH_SITES: List<String> get() = emptyList()
+    /** The complete configured reference-site universe used by Google discovery. */
+    val MUSIC_HOSTS: Set<String> get() = MusicSitePool.domains.toSet()
+    val MUSIC_SITES: List<String> get() = MusicSitePool.domains
+    val PRIMARY_SEARCH_SITES: List<String> get() = MusicSitePool.domains
+    val SERVERS: List<MusicServer> get() = MusicSitePool.domains.mapIndexed { index, domain -> MusicServer(domain, index) }
 
-    fun serverFor(host: String?): MusicServer? = null
-    fun serverForUrl(url: String?): MusicServer? = null
-    fun isMusicHost(host: String?): Boolean = false
+    fun serverFor(host: String?): MusicServer? = MusicSitePool.domains.firstOrNull { hostMatchesDomain(host.orEmpty(), it) }?.let {
+        MusicServer(it, MusicSitePool.domains.indexOf(it))
+    }
+
+    fun serverForUrl(url: String?): MusicServer? = extractHttpHost(url)?.let(::serverFor)
+
+    fun isMusicHost(host: String?): Boolean = host != null && MusicSitePool.domains.any { hostMatchesDomain(host, it) }
 
     fun isGoogleHost(host: String?): Boolean = hostMatchesDomain(normalizeHost(host).orEmpty(), GOOGLE_HOST)
     fun isYouTubeUrl(url: String?): Boolean = extractHttpHost(url)?.let(::isYouTubeHost) == true
     fun isYouTubeHost(host: String?): Boolean = youtubeDomains.any { hostMatchesDomain(normalizeHost(host).orEmpty(), it) }
 
-    fun isAllowedPageUrl(url: String): Boolean = isPublicWebUrl(url)
+    /** Only configured music references (plus YouTube) may enter the search pipeline. */
+    fun isAllowedPageUrl(url: String): Boolean {
+        if (!isPublicWebUrl(url)) return false
+        val host = extractHttpHost(url) ?: return false
+        return isYouTubeHost(host) || isMusicHost(host)
+    }
 
     fun isPublicWebUrl(url: String): Boolean {
         val host = extractHttpHost(url) ?: return false
@@ -44,7 +54,7 @@ object ServerConfig {
         val host = extractHttpHost(url) ?: return false
         if (isPrivateOrLocalHost(host) || isYouTubeHost(host)) return false
         if (isObviousNonMediaUrl(url)) return false
-        if (pageUrl != null && isPublicWebUrl(pageUrl)) return true
+        if (pageUrl != null && isAllowedPageUrl(pageUrl)) return true
         return looksLikeAudioUrl(url)
     }
 
