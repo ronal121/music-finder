@@ -213,7 +213,7 @@ class DirectSiteSearchProvider : SearchProvider {
                     .trim()
                 if (title.length < 2 || !isSameDomain(href, domain)) return@forEach
                 if (href.contains("/search", true) || href.contains("?s=", true) || href.contains("?q=", true)) return@forEach
-                results += GoogleResultParser.Result(title, href, null)
+                results += GoogleResultParser.Result(href, title, ServerConfig.isYouTubeUrl(href))
             }
         return results.distinctBy { it.url }
     }
