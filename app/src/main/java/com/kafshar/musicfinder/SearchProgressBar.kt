@@ -11,9 +11,8 @@ import kotlin.math.min
 
 /**
  * Thin search progress indicator driven by the real status text emitted by the
- * search pipeline. The view is already placed directly above the search row in
- * activity_main.xml, so it must not be translated or participate in scrolling
- * through a second coordinate system.
+ * search pipeline. Its layout slot is always reserved so showing/hiding the
+ * line can never move the ScrollView contents.
  */
 class SearchProgressBar @JvmOverloads constructor(
     context: Context,
@@ -34,11 +33,10 @@ class SearchProgressBar @JvmOverloads constructor(
 
     init {
         setWillNotDraw(false)
-        visibility = GONE
+        visibility = INVISIBLE
         paint.style = Paint.Style.FILL
-        // Do not use translationY here. The progress view is a normal child of
-        // the same scrolling column as the search bar; translating it caused
-        // occasional scroll/layout jitter while the ScrollView was moving.
+        // No translationY: this view is already directly above the search row.
+        // INVISIBLE keeps its 3dp slot reserved and prevents ScrollView jumps.
     }
 
     override fun onAttachedToWindow() {
@@ -64,11 +62,8 @@ class SearchProgressBar @JvmOverloads constructor(
         if (finished) {
             active = false
             target = 1f
-            visibility = VISIBLE
+            visibility = INVISIBLE
             invalidate()
-            postDelayed({
-                if (!active) visibility = GONE
-            }, 220L)
             return
         }
 
@@ -77,7 +72,11 @@ class SearchProgressBar @JvmOverloads constructor(
             status.contains("صفحه پیدا شد") ||
             status.contains("منبع")
 
-        if (!searching) return
+        if (!searching) {
+            active = false
+            visibility = INVISIBLE
+            return
+        }
 
         if (!active && displayed >= 0.98f) displayed = 0f
         active = true
