@@ -10,11 +10,13 @@ import java.util.concurrent.atomic.AtomicReference
 /**
  * Runtime bridge between discovery and the real direct-site search pipeline.
  *
- * Google discovery is complementary. Direct search always runs against the full
- * MusicSitePool, and both result sets are normalized, deduplicated and ranked.
+ * Google discovery and direct-site discovery are independent sources, so they are
+ * executed concurrently. Results are normalized, deduplicated and ranked before
+ * they reach the page-inspection/playability pipeline.
  */
 object ParallelSearchEngine {
     private val executor = Executors.newFixedThreadPool(2)
+    private val discoveryExecutor = Executors.newFixedThreadPool(2)
     private val directProvider = DirectSiteSearchProvider()
     private val googleProvider = GoogleDiscoveryProvider()
 
@@ -38,7 +40,7 @@ object ParallelSearchEngine {
         }
     }
 
-    /** Synchronous bridge for the legacy SearchProvider interface. It still executes searchDirect(). */
+    /** Synchronous bridge for the legacy SearchProvider interface. */
     fun searchDirectBlocking(query: String, limit: Int = 20): List<GoogleResultParser.Result> {
         if (query.isBlank() || limit <= 0) return emptyList()
         val result = AtomicReference<List<GoogleResultParser.Result>>(emptyList())
@@ -65,17 +67,21 @@ object ParallelSearchEngine {
     ): Future<*> = searchDirect(query, generation, callback)
 
     private fun searchCombined(query: String, limit: Int): List<GoogleResultParser.Result> {
+        val googleFuture = discoveryExecutor.submit<List<GoogleResultParser.Result>> {
+            try { googleProvider.search(query, limit) } catch (_: Exception) { emptyList() }
+        }
+        val directFuture = discoveryExecutor.submit<List<GoogleResultParser.Result>> {
+            try { directProvider.search(query, limit * 2) } catch (_: Exception) { emptyList() }
+        }
+
+        val google = try { googleFuture.get(7L, TimeUnit.SECONDS) } catch (_: Exception) { emptyList() }
+        val direct = try { directFuture.get(8L, TimeUnit.SECONDS) } catch (_: Exception) { emptyList() }
+        if (!googleFuture.isDone) googleFuture.cancel(true)
+        if (!directFuture.isDone) directFuture.cancel(true)
+
         val merged = LinkedHashMap<String, GoogleResultParser.Result>()
-
-        try {
-            googleProvider.search(query, limit).forEach { merged.putIfAbsent(canonicalKey(it.url), it) }
-        } catch (_: Exception) {
-        }
-
-        try {
-            directProvider.search(query, limit * 2).forEach { merged.putIfAbsent(canonicalKey(it.url), it) }
-        } catch (_: Exception) {
-        }
+        google.forEach { merged.putIfAbsent(canonicalKey(it.url), it) }
+        direct.forEach { merged.putIfAbsent(canonicalKey(it.url), it) }
 
         return merged.values
             .filter { it.url.startsWith("http", true) && ServerConfig.isAllowedPageUrl(it.url) }
