@@ -19,13 +19,37 @@ object MediaProbe {
     )
 
     fun probe(url: String, pageUrl: String? = null): Result {
-        if (!ServerConfig.isAllowedMediaUrl(url, pageUrl)) return Result(url, url, Type.UNKNOWN, "", 0)
-        val head = request(url, pageUrl, "HEAD")
-        if (head != null && head.type in setOf(Type.DIRECT_AUDIO, Type.HLS, Type.DASH) && head.mime != "application/octet-stream" && head.mime != "binary/octet-stream") return head
-        return request(url, pageUrl, "GET") ?: head ?: Result(url, url, Type.UNKNOWN, "", 0)
+        if (!ServerConfig.isAllowedMediaUrl(url, pageUrl)) {
+            return Result(url, url, Type.UNKNOWN, "", 0)
+        }
+
+        // HEAD is cheap, but many CDNs either reject it or return a generic MIME.
+        // Never treat a failed/ambiguous HEAD as proof that the media is unusable.
+        val head = request(url, pageUrl, "HEAD", ranged = false)
+        if (head?.playable == true) return head
+
+        // Prefer a small ranged GET so extensionless CDN URLs can be identified by
+        // their MIME/signature without downloading the whole file.
+        val ranged = request(url, pageUrl, "GET", ranged = true)
+        if (ranged?.playable == true) return ranged
+
+        // Some origins reject Range requests (416/405) even though normal playback
+        // works. Retry once without Range before declaring the candidate unusable.
+        val full = request(url, pageUrl, "GET", ranged = false)
+        return when {
+            full?.playable == true -> full
+            ranged != null -> ranged
+            head != null -> head
+            else -> full ?: Result(url, url, Type.UNKNOWN, "", 0)
+        }
     }
 
-    private fun request(url: String, pageUrl: String?, method: String): Result? {
+    private fun request(
+        url: String,
+        pageUrl: String?,
+        method: String,
+        ranged: Boolean
+    ): Result? {
         var currentUrl = url
         repeat(5) {
             if (!ServerConfig.isAllowedMediaUrl(currentUrl, pageUrl)) return null
@@ -34,29 +58,45 @@ object MediaProbe {
                 connection = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
                     requestMethod = method
                     instanceFollowRedirects = false
-                    connectTimeout = 4000
-                    readTimeout = 5000
+                    connectTimeout = 4500
+                    readTimeout = 7000
                     useCaches = false
                     setRequestProperty("User-Agent", SearchNetwork.USER_AGENT)
-                    setRequestProperty("Accept", "audio/*,application/vnd.apple.mpegurl,application/dash+xml,application/octet-stream,*/*;q=0.4")
+                    setRequestProperty(
+                        "Accept",
+                        "audio/*,application/vnd.apple.mpegurl,application/dash+xml,application/octet-stream,*/*;q=0.4"
+                    )
                     pageUrl?.takeIf { it.isNotBlank() }?.let { setRequestProperty("Referer", it) }
-                    android.webkit.CookieManager.getInstance().getCookie(currentUrl)?.takeIf { it.isNotBlank() }?.let { setRequestProperty("Cookie", it) }
-                    if (method == "GET") setRequestProperty("Range", "bytes=0-4095")
+                    android.webkit.CookieManager.getInstance().getCookie(currentUrl)
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { setRequestProperty("Cookie", it) }
+                    if (method == "GET" && ranged) {
+                        setRequestProperty("Range", "bytes=0-8191")
+                    }
                 }
 
                 val code = connection.responseCode
                 if (code in 300..399) {
                     val location = connection.getHeaderField("Location") ?: return null
-                    val next = try { URI(currentUrl).resolve(location).toString() } catch (_: Exception) { return null }
+                    val next = try {
+                        URI(currentUrl).resolve(location).toString()
+                    } catch (_: Exception) {
+                        return null
+                    }
                     if (!ServerConfig.isAllowedMediaUrl(next, pageUrl)) return null
                     currentUrl = next
                     return@repeat
                 }
-                if (code !in 200..299) return null
+                if (code !in 200..299 && code != HttpURLConnection.HTTP_PARTIAL) return null
 
                 val finalUrl = connection.url?.toString().orEmpty().ifBlank { currentUrl }
                 if (!ServerConfig.isAllowedMediaUrl(finalUrl, pageUrl)) return null
-                val mime = connection.contentType?.substringBefore(';')?.trim()?.lowercase().orEmpty()
+
+                val mime = connection.contentType
+                    ?.substringBefore(';')
+                    ?.trim()
+                    ?.lowercase()
+                    .orEmpty()
                 val length = connection.contentLengthLong
                 val sniff = if (method == "GET") sniff(connection) else ByteArray(0)
                 return classify(url, finalUrl, mime, sniff, code, length)
@@ -72,28 +112,47 @@ object MediaProbe {
     private fun sniff(connection: HttpURLConnection): ByteArray {
         return try {
             BufferedInputStream(connection.inputStream).use { input ->
-                val buffer = ByteArray(4096)
+                val buffer = ByteArray(8192)
                 val count = input.read(buffer)
                 if (count <= 0) ByteArray(0) else buffer.copyOf(count)
             }
-        } catch (_: Exception) { ByteArray(0) }
+        } catch (_: Exception) {
+            ByteArray(0)
+        }
     }
 
-    private fun classify(url: String, finalUrl: String, mime: String, bytes: ByteArray, status: Int, length: Long): Result {
+    private fun classify(
+        url: String,
+        finalUrl: String,
+        mime: String,
+        bytes: ByteArray,
+        status: Int,
+        length: Long
+    ): Result {
         val m = mime.lowercase()
         val text = bytes.toString(Charsets.UTF_8).trimStart().lowercase()
-        val html = m == "text/html" || m.contains("xhtml") || text.startsWith("<!doctype html") || text.startsWith("<html") || text.startsWith("<head")
+        val html = m == "text/html" || m.contains("xhtml") ||
+            text.startsWith("<!doctype html") || text.startsWith("<html") || text.startsWith("<head")
         if (html) return Result(url, finalUrl, Type.HTML, m, status, length, false)
-        val hls = m == "application/vnd.apple.mpegurl" || m == "application/x-mpegurl" || text.startsWith("#extm3u")
+
+        val hls = m == "application/vnd.apple.mpegurl" ||
+            m == "application/x-mpegurl" || text.startsWith("#extm3u")
         if (hls) return Result(url, finalUrl, Type.HLS, m, status, length, true)
+
         val dash = m == "application/dash+xml" || finalUrl.substringBefore('?').endsWith(".mpd", true)
         if (dash) return Result(url, finalUrl, Type.DASH, m, status, length, true)
-        if (m.startsWith("video/") || m == "application/x-mpegurl+video") return Result(url, finalUrl, Type.VIDEO, m, status, length, false)
+
+        if (m.startsWith("video/") || m == "application/x-mpegurl+video") {
+            return Result(url, finalUrl, Type.VIDEO, m, status, length, false)
+        }
+
         val audioMime = m.startsWith("audio/")
         val signature = isAudioSignature(bytes)
         val extension = ServerConfig.hasAudioExtension(finalUrl)
-        if (audioMime || signature || extension) return Result(url, finalUrl, Type.DIRECT_AUDIO, m, status, length, true)
-        if (m == "application/octet-stream" || m == "binary/octet-stream") return Result(url, finalUrl, Type.UNKNOWN, m, status, length, false)
+        if (audioMime || signature || extension) {
+            return Result(url, finalUrl, Type.DIRECT_AUDIO, m, status, length, true)
+        }
+
         return Result(url, finalUrl, Type.UNKNOWN, m, status, length, false)
     }
 
