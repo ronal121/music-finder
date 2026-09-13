@@ -9,35 +9,59 @@ import java.net.URI
 /**
  * Google is the only semantic discovery engine.
  *
- * Google searches normally so its ranking remains global and meaningful. The
- * app then applies MusicSitePool as the source boundary: only reference-site
- * pages (plus YouTube) can enter the music candidate pipeline.
+ * One logical user search is expanded internally into a few Google variants,
+ * while every request is constrained to the MusicSitePool universe. This keeps
+ * Google's semantic ranking but prevents weak variants from becoming separate
+ * UI search batches.
  */
 class GoogleDiscoveryProvider {
     fun search(query: String, limit: Int = 20): List<GoogleResultParser.Result> {
         if (query.isBlank() || limit <= 0) return emptyList()
 
-        val variants = SearchQueryPlanner.build(query)
-        if (variants.isEmpty()) return emptyList()
+        val original = SearchEngine.displayQuery(query).trim()
+        if (original.isBlank()) return emptyList()
+
+        val corrected = SearchEngine.correctedQuery(original).trim()
+        val clean = SearchEngine.withoutSearchNoise(original).trim()
+        val variants = linkedSetOf<String>().apply {
+            add(original)
+            add("\"$original\"")
+            add("$original آهنگ")
+            add("$original \"متن آهنگ\"")
+            if (corrected.isNotBlank() && !corrected.equals(original, ignoreCase = true)) {
+                add(corrected)
+                add("\"$corrected\"")
+            }
+            if (clean.isNotBlank() && !clean.equals(original, ignoreCase = true)) {
+                add("\"$clean\" \"متن آهنگ\"")
+            }
+        }.take(6)
 
         val target = limit.coerceIn(10, 20)
         val merged = LinkedHashMap<String, RankedResult>()
 
-        // Google handles semantic/phonetic correction. Start with the strongest
-        // user query and only use contextual variants when necessary.
         for ((variantIndex, variant) in variants.withIndex()) {
-            fetch(variant, 100).forEachIndexed { resultIndex, result ->
-                if (!isEligibleReferenceResult(result.url)) return@forEachIndexed
-                val key = canonicalKey(result.url)
-                val candidate = RankedResult(result, variantIndex, resultIndex)
-                val previous = merged[key]
-                if (previous == null || candidate.discoveryScore < previous.discoveryScore) {
-                    merged[key] = candidate
+            val constrainedQueries = ReferenceSiteQueries.build(variant)
+            for ((batchIndex, constrainedQuery) in constrainedQueries.withIndex()) {
+                fetch(constrainedQuery, 40).forEachIndexed { resultIndex, result ->
+                    if (!isEligibleReferenceResult(result.url)) return@forEachIndexed
+                    val key = canonicalKey(result.url)
+                    val candidate = RankedResult(
+                        result = result,
+                        variantIndex = variantIndex,
+                        batchIndex = batchIndex,
+                        resultIndex = resultIndex
+                    )
+                    val previous = merged[key]
+                    if (previous == null || candidate.discoveryScore < previous.discoveryScore) {
+                        merged[key] = candidate
+                    }
                 }
-            }
 
-            // Keep Google's first-page relevance dominant. Context variants are
-            // only a coverage mechanism, never a competing direct-site engine.
+                // The first logical variant is authoritative. Later variants only
+                // provide coverage if the first one did not yield enough candidates.
+                if (merged.size >= target * 2) break
+            }
             if (merged.size >= target * 2) break
         }
 
@@ -54,12 +78,12 @@ class GoogleDiscoveryProvider {
         if (googleQuery.isBlank()) return emptyList()
 
         val encoded = URLEncoder.encode(googleQuery, StandardCharsets.UTF_8.toString())
-        val url = "https://www.google.com/search?q=$encoded&hl=fa&num=${limit.coerceIn(20, 100)}&filter=0"
+        val url = "https://www.google.com/search?q=$encoded&hl=fa&num=${limit.coerceIn(20, 40)}&filter=0"
 
         return try {
             val connection = URL(url).openConnection() as HttpURLConnection
-            connection.connectTimeout = 1800
-            connection.readTimeout = 3500
+            connection.connectTimeout = 2200
+            connection.readTimeout = 4000
             connection.instanceFollowRedirects = true
             connection.useCaches = false
             connection.setRequestProperty("User-Agent", SearchNetwork.USER_AGENT)
@@ -69,10 +93,10 @@ class GoogleDiscoveryProvider {
             if (connection.responseCode !in 200..399) return emptyList()
 
             val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use {
-                it.readText().take(5_000_000)
+                it.readText().take(2_500_000)
             }
 
-            GoogleResultParser.parseAnchors(html, 500)
+            GoogleResultParser.parseAnchors(html, 200)
                 .filter { !it.url.contains("google.", true) }
                 .filter { !isSearchEngineUtilityUrl(it.url) }
                 .distinctBy { canonicalKey(it.url) }
@@ -112,9 +136,11 @@ class GoogleDiscoveryProvider {
     private data class RankedResult(
         val result: GoogleResultParser.Result,
         val variantIndex: Int,
+        val batchIndex: Int,
         val resultIndex: Int
     ) {
-        val discoveryScore: Int get() = variantIndex * 1000 + resultIndex
+        val discoveryScore: Int
+            get() = variantIndex * 1_000_000 + batchIndex * 1_000 + resultIndex
     }
 
     private fun addDiscoveryRank(url: String, rank: Int): String =
