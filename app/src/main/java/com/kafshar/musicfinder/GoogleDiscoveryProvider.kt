@@ -15,8 +15,36 @@ class GoogleDiscoveryProvider {
     fun search(query: String, limit: Int = 20): List<GoogleResultParser.Result> {
         if (query.isBlank() || limit <= 0) return emptyList()
 
-        // Send the user's actual query. Do not replace it with our small typo
-        // dictionary: Google is much better at semantic lyric/song correction.
+        val original = SearchEngine.displayQuery(query).trim()
+        if (original.isBlank()) return emptyList()
+
+        // Google remains the authority for semantic correction. For lyric fragments,
+        // adding music-context variants helps when the raw fragment is ambiguous.
+        val queries = linkedSetOf<String>().apply {
+            add(original)
+            add("$original آهنگ")
+            add("$original متن آهنگ")
+            val normalized = SearchEngine.normalizeQuery(original)
+            if (normalized.isNotBlank() && !normalized.equals(original, ignoreCase = true)) {
+                add(normalized)
+            }
+        }
+
+        val perQuery = limit.coerceIn(10, 20)
+        val merged = LinkedHashMap<String, GoogleResultParser.Result>()
+        for (searchQuery in queries) {
+            fetch(searchQuery, perQuery).forEach { result ->
+                merged.putIfAbsent(canonicalKey(result.url), result)
+            }
+            if (merged.size >= limit * 5) break
+        }
+
+        return diversifyDomains(merged.values.toList(), limit)
+    }
+
+    private fun fetch(query: String, limit: Int): List<GoogleResultParser.Result> {
+        // Do not pass a locally "corrected" query here. The point of this layer is
+        // to let Google resolve typo/phonetic/semantic intent itself.
         val googleQuery = SearchEngine.displayQuery(query)
         val encoded = URLEncoder.encode(googleQuery, StandardCharsets.UTF_8.toString())
         val url = "https://www.google.com/search?q=$encoded&hl=fa&num=${limit.coerceIn(10, 20)}&filter=0"
@@ -37,15 +65,10 @@ class GoogleDiscoveryProvider {
                 it.readText().take(2_000_000)
             }
 
-            val parsed = GoogleResultParser.parseAnchors(
-                html,
-                (limit * 10).coerceAtMost(200)
-            )
+            GoogleResultParser.parseAnchors(html, (limit * 10).coerceAtMost(200))
                 .filter { !it.url.contains("google.", true) }
                 .filter { !isSearchEngineUtilityUrl(it.url) }
                 .distinctBy { canonicalKey(it.url) }
-
-            diversifyDomains(parsed, limit)
         } catch (_: Exception) {
             emptyList()
         }
@@ -57,24 +80,17 @@ class GoogleDiscoveryProvider {
         limit: Int
     ): List<GoogleResultParser.Result> {
         val selected = ArrayList<GoogleResultParser.Result>(limit)
-        val usedDomains = HashSet<String>()
+        val domainCounts = HashMap<String, Int>()
 
-        // First pass: one result per domain. This gives the app the same broad
-        // coverage as the web search instead of ten pages from one music site.
+        // Hard cap: at most two pages from one domain in the discovery result set.
         for (result in results) {
             if (selected.size >= limit) break
             val domain = hostKey(result.url)
-            if (domain.isBlank() || usedDomains.add(domain)) selected += result
-        }
-
-        // If Google returned fewer unique domains, fill the remaining slots in
-        // Google's original order, allowing a second/third result from a domain.
-        if (selected.size < limit) {
-            val selectedKeys = selected.mapTo(HashSet()) { canonicalKey(it.url) }
-            for (result in results) {
-                if (selected.size >= limit) break
-                if (selectedKeys.add(canonicalKey(result.url))) selected += result
-            }
+            if (domain.isBlank()) continue
+            val count = domainCounts[domain] ?: 0
+            if (count >= 2) continue
+            domainCounts[domain] = count + 1
+            selected += result
         }
         return selected
     }
