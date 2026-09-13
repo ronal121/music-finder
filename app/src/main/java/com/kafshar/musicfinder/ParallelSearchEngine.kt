@@ -8,16 +8,15 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Runtime bridge between discovery and the real direct-site search pipeline.
+ * Google-only discovery bridge.
  *
- * Google is the primary discovery/ranking source because it already understands
- * web-wide relevance, spelling mistakes and semantic intent. Direct-site discovery
- * runs in parallel as a fallback/coverage layer over MusicSitePool.
+ * Google is the only engine allowed to decide which pages are relevant. The
+ * reference-site pool is applied inside GoogleDiscoveryProvider as a boundary;
+ * direct-site search is deliberately not merged into the candidate list because
+ * it can flood the UI with low-relevance pages from one domain.
  */
 object ParallelSearchEngine {
     private val executor = Executors.newFixedThreadPool(2)
-    private val discoveryExecutor = Executors.newFixedThreadPool(2)
-    private val directProvider = DirectSiteSearchProvider()
     private val googleProvider = GoogleDiscoveryProvider()
 
     fun searchDirect(
@@ -32,7 +31,7 @@ object ParallelSearchEngine {
 
         return executor.submit {
             val candidates = try {
-                searchCombined(query, 30).map(::toCandidate)
+                googleProvider.search(query, 30).map(::toCandidate)
             } catch (_: Exception) {
                 emptyList()
             }
@@ -40,7 +39,7 @@ object ParallelSearchEngine {
         }
     }
 
-    /** Synchronous bridge for the legacy SearchProvider interface. */
+    /** Compatibility bridge for the existing SearchProvider interface. */
     fun searchDirectBlocking(query: String, limit: Int = 20): List<GoogleResultParser.Result> {
         if (query.isBlank() || limit <= 0) return emptyList()
         val result = AtomicReference<List<GoogleResultParser.Result>>(emptyList())
@@ -66,69 +65,6 @@ object ParallelSearchEngine {
         callback: (Int, List<Candidate>) -> Unit
     ): Future<*> = searchDirect(query, generation, callback)
 
-    private fun searchCombined(query: String, limit: Int): List<GoogleResultParser.Result> {
-        val googleFuture = discoveryExecutor.submit<List<GoogleResultParser.Result>> {
-            try { googleProvider.search(query, limit) } catch (_: Exception) { emptyList() }
-        }
-        val directFuture = discoveryExecutor.submit<List<GoogleResultParser.Result>> {
-            try { directProvider.search(query, limit * 2) } catch (_: Exception) { emptyList() }
-        }
-
-        val google = try { googleFuture.get(7L, TimeUnit.SECONDS) } catch (_: Exception) { emptyList() }
-        val direct = try { directFuture.get(8L, TimeUnit.SECONDS) } catch (_: Exception) { emptyList() }
-        if (!googleFuture.isDone) googleFuture.cancel(true)
-        if (!directFuture.isDone) directFuture.cancel(true)
-
-        val merged = LinkedHashMap<String, RankedResult>()
-        val directDomains = HashSet<String>()
-
-        // Preserve Google's actual ordering. This is important for semantic/fuzzy
-        // queries where our local token similarity can be very wrong. The marker
-        // lets the UI's later local scorer preserve that same ordering.
-        google.forEachIndexed { index, result ->
-            val marked = result.copy(url = withGoogleRankMarker(result.url, index))
-            merged.putIfAbsent(
-                canonicalKey(result.url),
-                RankedResult(marked, sourceBonus = 1000, discoveryRank = index)
-            )
-        }
-
-        // Direct-site results are only coverage. One domain gets one fallback slot
-        // so a generic site search cannot flood the result list.
-        direct.forEachIndexed { index, result ->
-            if (merged.size >= limit) return@forEachIndexed
-            if (!result.url.startsWith("http", true) || !ServerConfig.isAllowedPageUrl(result.url)) return@forEachIndexed
-            val key = canonicalKey(result.url)
-            if (merged.containsKey(key)) return@forEachIndexed
-            val domain = hostKey(result.url)
-            if (domain.isBlank() || !directDomains.add(domain)) return@forEachIndexed
-            merged[key] = RankedResult(result, sourceBonus = 0, discoveryRank = index)
-        }
-
-        return merged.values
-            .filter { it.result.url.startsWith("http", true) && ServerConfig.isAllowedPageUrl(it.result.url) }
-            .sortedWith(
-                compareByDescending<RankedResult> {
-                    if (it.sourceBonus > 0) {
-                        10_000 - it.discoveryRank
-                    } else {
-                        SearchRanking.webScore(query, it.result.title, it.result.url, it.result.isYouTube)
-                    }
-                }.thenBy { canonicalKey(it.result.url) }
-            )
-            .map { it.result }
-            .take(limit)
-    }
-
-    private fun withGoogleRankMarker(url: String, rank: Int): String =
-        url.substringBefore('#') + "#mf-google-rank=$rank"
-
-    private fun hostKey(url: String): String = try {
-        URI(url).host.orEmpty().removePrefix("www.").lowercase()
-    } catch (_: Exception) {
-        ""
-    }
-
     fun toCandidate(result: GoogleResultParser.Result): Candidate {
         val site = try {
             URI(result.url).host.orEmpty().removePrefix("www.")
@@ -153,15 +89,6 @@ object ParallelSearchEngine {
         val cover: String = "",
         val score: Int = 0
     )
-
-    private data class RankedResult(
-        val result: GoogleResultParser.Result,
-        val sourceBonus: Int,
-        val discoveryRank: Int
-    )
-
-    private fun canonicalKey(url: String): String =
-        url.substringBefore('#').trimEnd('/').lowercase()
 
     private object CompletedFuture : Future<Any?> {
         override fun cancel(mayInterruptIfRunning: Boolean) = false
