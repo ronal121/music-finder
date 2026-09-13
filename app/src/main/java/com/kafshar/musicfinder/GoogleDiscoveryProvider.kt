@@ -5,53 +5,39 @@ import java.net.URLEncoder
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.net.URI
-import java.util.concurrent.Callable
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 /**
- * Google is the only discovery engine. Every Google request is constrained to
- * MusicSitePool, so Google's semantic ranking is used without unrestricted-web noise.
+ * Google is the only semantic discovery engine.
+ *
+ * Google searches normally so its ranking remains global and meaningful. The
+ * app then applies MusicSitePool as the source boundary: only reference-site
+ * pages (plus YouTube) can enter the music candidate pipeline.
  */
 class GoogleDiscoveryProvider {
-    private val executor = Executors.newFixedThreadPool(4)
-
     fun search(query: String, limit: Int = 20): List<GoogleResultParser.Result> {
         if (query.isBlank() || limit <= 0) return emptyList()
+
         val variants = SearchQueryPlanner.build(query)
         if (variants.isEmpty()) return emptyList()
 
         val target = limit.coerceIn(10, 20)
         val merged = LinkedHashMap<String, RankedResult>()
 
-        // The original query has priority. We only spend time on weaker variants
-        // when the reference-site universe has not yielded enough candidates.
+        // Google handles semantic/phonetic correction. Start with the strongest
+        // user query and only use contextual variants when necessary.
         for ((variantIndex, variant) in variants.withIndex()) {
-            val constrainedQueries = ReferenceSiteQueries.build(variant)
-            val jobs = constrainedQueries.map { constrained ->
-                Callable {
-                    fetch(constrained, target).mapIndexed { resultIndex, result ->
-                        RankedResult(result, variantIndex, resultIndex)
-                    }
+            fetch(variant, 100).forEachIndexed { resultIndex, result ->
+                if (!isEligibleReferenceResult(result.url)) return@forEachIndexed
+                val key = canonicalKey(result.url)
+                val candidate = RankedResult(result, variantIndex, resultIndex)
+                val previous = merged[key]
+                if (previous == null || candidate.discoveryScore < previous.discoveryScore) {
+                    merged[key] = candidate
                 }
             }
 
-            val futures = jobs.map { executor.submit(it) }
-            futures.forEach { future ->
-                try {
-                    future.get(6L, TimeUnit.SECONDS).forEach { candidate ->
-                        if (!ServerConfig.isAllowedPageUrl(candidate.result.url)) return@forEach
-                        val key = canonicalKey(candidate.result.url)
-                        val previous = merged[key]
-                        if (previous == null || candidate.discoveryScore < previous.discoveryScore) {
-                            merged[key] = candidate
-                        }
-                    }
-                } catch (_: Exception) {
-                    // A failed domain batch must not cancel the other reference sites.
-                }
-            }
-
+            // Keep Google's first-page relevance dominant. Context variants are
+            // only a coverage mechanism, never a competing direct-site engine.
             if (merged.size >= target * 2) break
         }
 
@@ -64,10 +50,11 @@ class GoogleDiscoveryProvider {
     }
 
     private fun fetch(query: String, limit: Int): List<GoogleResultParser.Result> {
-        val googleQuery = SearchEngine.displayQuery(query)
+        val googleQuery = SearchEngine.displayQuery(query).trim()
         if (googleQuery.isBlank()) return emptyList()
+
         val encoded = URLEncoder.encode(googleQuery, StandardCharsets.UTF_8.toString())
-        val url = "https://www.google.com/search?q=$encoded&hl=fa&num=${limit.coerceIn(10, 20)}&filter=0"
+        val url = "https://www.google.com/search?q=$encoded&hl=fa&num=${limit.coerceIn(20, 100)}&filter=0"
 
         return try {
             val connection = URL(url).openConnection() as HttpURLConnection
@@ -80,15 +67,27 @@ class GoogleDiscoveryProvider {
             connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
             connection.connect()
             if (connection.responseCode !in 200..399) return emptyList()
+
             val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use {
-                it.readText().take(2_000_000)
+                it.readText().take(5_000_000)
             }
-            GoogleResultParser.parseAnchors(html, (limit * 10).coerceAtMost(200))
+
+            GoogleResultParser.parseAnchors(html, 500)
                 .filter { !it.url.contains("google.", true) }
                 .filter { !isSearchEngineUtilityUrl(it.url) }
                 .distinctBy { canonicalKey(it.url) }
         } catch (_: Exception) {
             emptyList()
+        }
+    }
+
+    private fun isEligibleReferenceResult(url: String): Boolean {
+        if (ServerConfig.isYouTubeUrl(url)) return true
+        val host = hostKey(url)
+        if (host.isBlank()) return false
+        return MusicSitePool.domains.any { domain ->
+            val normalized = domain.lowercase().removePrefix("www.")
+            host == normalized || host.endsWith(".$normalized")
         }
     }
 
