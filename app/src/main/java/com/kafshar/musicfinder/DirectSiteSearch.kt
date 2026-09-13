@@ -12,15 +12,16 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorCompletionService
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 
 /**
  * Direct search against the configured music-site universe.
  *
- * The important part is that a domain is not assumed to use one global search
- * convention. We first try cheap URL templates, then inspect the site's own
- * HTML search form and use its action + input name. This lets WordPress, custom
- * /search routes and sites using query/keyword/searchword/etc. coexist.
+ * A domain is not assumed to use one global search convention. We first try
+ * common URL families, then inspect the site's own HTML search form and use
+ * its action + input name. This makes the 428-domain pool an actual resolver
+ * rather than a passive list of host names.
  */
 class DirectSiteSearchProvider : SearchProvider {
     override val name: String = "Direct Search"
@@ -34,18 +35,20 @@ class DirectSiteSearchProvider : SearchProvider {
         val text = extractQuery(query)
         if (text.isBlank()) return emptyList()
 
-        // MainActivity sends several query variants. Direct search only needs to
-        // fan out once; Google still receives all of the planner's variants later.
+        // MainActivity sends several query variants. Direct search fans out once;
+        // repeated variants are handled by the existing discovery pipeline.
         val cacheKey = SearchEngine.normalizeQuery(text)
         val now = System.currentTimeMillis()
         val previous = recentSearches.put(cacheKey, now)
         if (previous != null && now - previous < 20_000L) return emptyList()
-        recentSearches.entries.removeIf { now - it.value > 120_000L }
+        val expired = recentSearches.entries.filter { now - it.value > 120_000L }
+        expired.forEach { recentSearches.remove(it.key, it.value) }
 
         val completion: CompletionService<List<GoogleResultParser.Result>> =
             ExecutorCompletionService(executor)
+        val futures = ArrayList<Future<List<GoogleResultParser.Result>>>(MusicSitePool.domains.size)
         MusicSitePool.domains.forEach { domain ->
-            completion.submit(Callable { searchDomain(domain, text, limit) })
+            futures += completion.submit(Callable { searchDomain(domain, text, limit) })
         }
 
         val merged = LinkedHashMap<String, GoogleResultParser.Result>()
@@ -69,6 +72,11 @@ class DirectSiteSearchProvider : SearchProvider {
             if (merged.size >= limit * 3) break
         }
 
+        // Do not leave the remaining 428-domain batch running after the UI search
+        // has returned. This is critical on Android where a large abandoned fanout
+        // would otherwise steal the IO threads from the next search.
+        futures.forEach { future -> if (!future.isDone) future.cancel(true) }
+
         return merged.values
             .sortedByDescending { SearchRanking.webScore(text, it.title, it.url, it.isYouTube) }
             .take(limit)
@@ -76,20 +84,20 @@ class DirectSiteSearchProvider : SearchProvider {
 
     private fun searchDomain(domain: String, query: String, limit: Int): List<GoogleResultParser.Result> {
         val base = "https://$domain/"
-        val directUrls = DirectSearchPatterns.templates(domain, query)
-        for (candidate in directUrls) {
+        for (candidate in DirectSearchPatterns.templates(domain, query)) {
+            if (Thread.currentThread().isInterrupted) return emptyList()
             val html = fetch(candidate) ?: continue
-            val results = parseSameSiteResults(html, base, domain, limit)
+            val results = parseSameSiteResults(html, domain, limit)
             if (results.isNotEmpty()) return results
         }
 
-        // If the common URL families did not work, inspect the homepage. This is
-        // the part that makes the 428-domain pool useful for non-standard sites.
+        if (Thread.currentThread().isInterrupted) return emptyList()
+        // Non-standard sites are resolved from their own search form/links.
         val home = fetch(base) ?: return emptyList()
-        val discovered = DirectSearchPatterns.fromSearchForms(home, base, query)
-        for (candidate in discovered) {
+        for (candidate in DirectSearchPatterns.fromSearchForms(home, base, query)) {
+            if (Thread.currentThread().isInterrupted) return emptyList()
             val html = fetch(candidate) ?: continue
-            val results = parseSameSiteResults(html, base, domain, limit)
+            val results = parseSameSiteResults(html, domain, limit)
             if (results.isNotEmpty()) return results
         }
         return emptyList()
@@ -101,8 +109,8 @@ class DirectSiteSearchProvider : SearchProvider {
         return try {
             connection = URL(url).openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
-            connection.connectTimeout = 1800
-            connection.readTimeout = 2800
+            connection.connectTimeout = 1400
+            connection.readTimeout = 2200
             connection.instanceFollowRedirects = true
             connection.useCaches = true
             connection.setRequestProperty("User-Agent", SearchNetwork.USER_AGENT)
@@ -119,7 +127,6 @@ class DirectSiteSearchProvider : SearchProvider {
 
     private fun parseSameSiteResults(
         html: String,
-        base: String,
         domain: String,
         limit: Int
     ): List<GoogleResultParser.Result> {
@@ -133,11 +140,10 @@ class DirectSiteSearchProvider : SearchProvider {
             }
             .filter { result ->
                 val lowerUrl = result.url.lowercase(Locale.ROOT)
-                val lowerTitle = result.title.lowercase(Locale.ROOT)
-                !lowerUrl.contains("/search?") &&
+                result.title.length >= 2 &&
+                    !lowerUrl.contains("/search?") &&
                     !lowerUrl.endsWith("/search") &&
-                    !lowerUrl.contains("/page/") &&
-                    lowerTitle.length >= 2
+                    !lowerUrl.contains("/page/")
             }
             .distinctBy { it.url.substringBefore('#').trimEnd('/').lowercase(Locale.ROOT) }
             .take(limit)
@@ -160,7 +166,7 @@ class DirectSiteSearchProvider : SearchProvider {
     }
 }
 
-/** URL families shared by the direct-search resolver. */
+/** URL families shared by the adaptive direct-search resolver. */
 object DirectSearchPatterns {
     private val parameterNames = listOf(
         "q", "query", "s", "search", "searchword", "keyword", "keywords", "term", "terms", "searchtext", "text"
@@ -209,8 +215,7 @@ object DirectSearchPatterns {
             if (method == "post") continue
 
             val inputRegex = Regex("<input\\b[^>]*>", RegexOption.IGNORE_CASE)
-            val inputs = inputRegex.findAll(whole).map { it.value }.toList()
-            val input = inputs.firstOrNull { tag ->
+            val input = inputRegex.findAll(whole).map { it.value }.firstOrNull { tag ->
                 val type = attr(tag, "type").lowercase(Locale.ROOT)
                 val name = attr(tag, "name").lowercase(Locale.ROOT)
                 val placeholder = attr(tag, "placeholder").lowercase(Locale.ROOT)
@@ -221,8 +226,14 @@ object DirectSearchPatterns {
                     placeholder.contains("جست") ||
                     placeholder.contains("آهنگ")
             } ?: continue
-            val name = attr(input, "name").ifBlank { continue }
-            val actionUrl = try { URI(base).resolve(action.ifBlank { "/" }).toString() } catch (_: Exception) { continue }
+
+            val name = attr(input, "name")
+            if (name.isBlank()) continue
+            val actionUrl = try {
+                URI(base).resolve(action.ifBlank { "/" }).toString()
+            } catch (_: Exception) {
+                continue
+            }
             if (!ServerConfig.isPublicWebUrl(actionUrl)) continue
             val separator = if (actionUrl.contains('?')) '&' else '?'
             val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
@@ -230,22 +241,19 @@ object DirectSearchPatterns {
             if (output.size >= 4) break
         }
 
-        // Search boxes are sometimes rendered without a form. Look for a nearby
-        // search URL in anchors as a lightweight second discovery mechanism.
+        // Some sites expose the search endpoint as a link rather than a <form>.
         val hrefRegex = Regex("(?:href|data-href)\\s*=\\s*([\\\"'])(.*?)\\1", RegexOption.IGNORE_CASE)
         for (match in hrefRegex.findAll(html)) {
             val href = match.groupValues[2]
             if (!href.contains("search", true) && !href.contains("find", true)) continue
             val resolved = try { URI(base).resolve(href).toString() } catch (_: Exception) { continue }
             if (!ServerConfig.isPublicWebUrl(resolved)) continue
-            for (parameter in parameterNames) {
-                if (Regex("[?&]$parameter=", RegexOption.IGNORE_CASE).containsMatchIn(resolved)) {
-                    val prefix = resolved.substringBefore(Regex("[?&]$parameter=", RegexOption.IGNORE_CASE).find(resolved)!!.range.first + 1)
-                    val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
-                    output += "$prefix$parameter=$encoded"
-                    break
-                }
-            }
+            val parameter = parameterNames.firstOrNull { name ->
+                Regex("[?&]$name=", RegexOption.IGNORE_CASE).containsMatchIn(resolved)
+            } ?: continue
+            val marker = Regex("[?&]$parameter=", RegexOption.IGNORE_CASE).find(resolved) ?: continue
+            val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
+            output += resolved.substring(0, marker.range.last + 1) + encoded
             if (output.size >= 6) break
         }
         return output.toList()
