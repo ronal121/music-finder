@@ -5,19 +5,20 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Future
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Google-only discovery bridge.
+ * Google discovery -> parallel page inspection -> media probing.
  *
- * Google is the only engine allowed to decide which pages are relevant. The
- * reference-site pool is applied inside GoogleDiscoveryProvider as a boundary;
- * direct-site search is deliberately not merged into the candidate list because
- * it can flood the UI with low-relevance pages from one domain.
+ * searchDirect() is the real native playable-search path. The compatibility
+ * page-discovery path is kept separate because MainActivity still performs its
+ * WebView fallback for pages whose audio is generated at runtime.
  */
 object ParallelSearchEngine {
-    private val executor = Executors.newFixedThreadPool(2)
+    private val executor = Executors.newFixedThreadPool(4)
     private val googleProvider = GoogleDiscoveryProvider()
+    private val pageInspector = ParallelPageInspector(8)
 
     fun searchDirect(
         query: String,
@@ -30,34 +31,86 @@ object ParallelSearchEngine {
         }
 
         return executor.submit {
-            val candidates = try {
-                googleProvider.search(query, 30).map(::toCandidate)
+            val pages = try {
+                googleProvider.search(query, 15)
+                    .filterNot { it.isYouTube }
+                    .map { ParallelPageInspector.Page(it.url, it.title) }
             } catch (_: Exception) {
                 emptyList()
             }
-            callback(generation, candidates)
+
+            if (pages.isEmpty()) {
+                callback(generation, emptyList())
+                return@submit
+            }
+
+            val candidates = java.util.Collections.synchronizedList(mutableListOf<Candidate>())
+            val done = CountDownLatch(1)
+            val currentGeneration = AtomicReference(generation)
+
+            pageInspector.inspect(
+                generation = generation,
+                pages = pages,
+                isGenerationCurrent = { it == currentGeneration.get() },
+                onResult = { inspection ->
+                    if (inspection.candidates.isEmpty()) return@inspect
+                    inspection.candidates
+                        .asSequence()
+                        .distinct()
+                        .take(8)
+                        .forEach { mediaUrl ->
+                            val validation = try {
+                                MediaProbe.probe(mediaUrl, inspection.page.url)
+                            } catch (_: Exception) {
+                                null
+                            }
+                            if (validation?.playable != true) return@forEach
+                            val finalUrl = validation.finalUrl.ifBlank { mediaUrl }
+                            if (!ServerConfig.isAllowedMediaUrl(finalUrl, inspection.page.url)) return@forEach
+                            candidates += Candidate(
+                                url = finalUrl,
+                                title = inspection.title,
+                                artist = inspection.artist,
+                                site = hostName(inspection.page.url),
+                                cover = inspection.cover,
+                                score = SearchRanking.webScore(query, inspection.title, inspection.page.url, false)
+                            )
+                        }
+                },
+                onComplete = { done.countDown() }
+            )
+
+            try {
+                done.await(45L, TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+
+            val ranked = candidates
+                .distinctBy { it.url.substringBefore('#').trimEnd('/').lowercase() }
+                .sortedWith(compareByDescending<Candidate> { it.score }.thenBy { it.title.lowercase() })
+                .take(30)
+            callback(generation, ranked)
         }
     }
 
-    /** Compatibility bridge for the existing SearchProvider interface. */
-    fun searchDirectBlocking(query: String, limit: Int = 20): List<GoogleResultParser.Result> {
+    /**
+     * Returns Google-discovered page URLs for the existing MainActivity/WebView
+     * pipeline. This deliberately does not return media URLs.
+     */
+    fun discoverPagesBlocking(query: String, limit: Int = 20): List<GoogleResultParser.Result> {
         if (query.isBlank() || limit <= 0) return emptyList()
-        val result = AtomicReference<List<GoogleResultParser.Result>>(emptyList())
-        val latch = CountDownLatch(1)
-        val future = searchDirect(query, 0) { _, candidates ->
-            result.set(candidates.map {
-                GoogleResultParser.Result(it.url, it.title, ServerConfig.isYouTubeUrl(it.url))
-            }.take(limit))
-            latch.countDown()
-        }
         return try {
-            if (latch.await(45L, TimeUnit.SECONDS)) result.get() else emptyList()
-        } catch (_: InterruptedException) {
-            future.cancel(true)
-            Thread.currentThread().interrupt()
+            googleProvider.search(query, limit)
+                .take(limit)
+        } catch (_: Exception) {
             emptyList()
         }
     }
+
+    /** Compatibility bridge for SearchProvider callers. */
+    fun searchDirectBlocking(query: String, limit: Int = 20): List<GoogleResultParser.Result> =
+        discoverPagesBlocking(query, limit)
 
     fun search(
         query: String,
@@ -66,19 +119,20 @@ object ParallelSearchEngine {
     ): Future<*> = searchDirect(query, generation, callback)
 
     fun toCandidate(result: GoogleResultParser.Result): Candidate {
-        val site = try {
-            URI(result.url).host.orEmpty().removePrefix("www.")
-        } catch (_: Exception) {
-            "Music"
-        }
         return Candidate(
             url = result.url,
             title = result.title,
             artist = "Unknown Artist",
-            site = site.ifBlank { "Music" },
+            site = hostName(result.url),
             cover = "",
             score = SearchRanking.webScore("", result.title, result.url, result.isYouTube)
         )
+    }
+
+    private fun hostName(url: String): String = try {
+        URI(url).host.orEmpty().removePrefix("www.").ifBlank { "Music" }
+    } catch (_: Exception) {
+        "Music"
     }
 
     data class Candidate(
