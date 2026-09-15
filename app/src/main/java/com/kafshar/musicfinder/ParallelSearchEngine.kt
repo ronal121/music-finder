@@ -5,7 +5,6 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Future
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -53,7 +52,7 @@ object ParallelSearchEngine {
                 pages = pages,
                 isGenerationCurrent = { it == currentGeneration.get() },
                 onResult = { inspection ->
-                    if (inspection.candidates.isEmpty()) return@inspect
+                    if (inspection.candidates.isEmpty()) return@onResult
                     inspection.candidates
                         .asSequence()
                         .distinct()
@@ -101,8 +100,7 @@ object ParallelSearchEngine {
     fun discoverPagesBlocking(query: String, limit: Int = 20): List<GoogleResultParser.Result> {
         if (query.isBlank() || limit <= 0) return emptyList()
         return try {
-            googleProvider.search(query, limit)
-                .take(limit)
+            googleProvider.search(query, limit).take(limit)
         } catch (_: Exception) {
             emptyList()
         }
