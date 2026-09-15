@@ -27,18 +27,18 @@ class GoogleDiscoveryProvider {
         val target = limit.coerceIn(10, 20)
         val merged = LinkedHashMap<String, RankedResult>()
 
-        // The first query is the authoritative Google result order. Variants are
-        // fallback discovery only and never outrank an exact original-query hit.
+        // The first query is authoritative. Variants are fallback discovery and
+        // can only contribute URLs not already found by an earlier query.
         for ((variantIndex, variant) in variants.withIndex()) {
             fetch(variant, 40).forEachIndexed { resultIndex, result ->
                 if (!isEligibleResult(result.url)) return@forEachIndexed
-                putBest(merged, result, variantIndex, resultIndex)
+                putBest(merged, result, variantIndex, resultIndex, original)
             }
             if (merged.size >= target * 3) break
         }
 
         return merged.values
-            .sortedWith(compareBy<RankedResult> { it.discoveryScore }.thenByDescending { it.relevanceScore })
+            .sortedBy { it.discoveryScore }
             .let { diversifyDomains(it, target) }
             .mapIndexed { index, ranked ->
                 ranked.result.copy(url = addDiscoveryRank(ranked.result.url, index))
@@ -49,9 +49,15 @@ class GoogleDiscoveryProvider {
         merged: LinkedHashMap<String, RankedResult>,
         result: GoogleResultParser.Result,
         variantIndex: Int,
-        resultIndex: Int
+        resultIndex: Int,
+        query: String
     ) {
-        val candidate = RankedResult(result, variantIndex, resultIndex)
+        val candidate = RankedResult(
+            result = result,
+            variantIndex = variantIndex,
+            resultIndex = resultIndex,
+            relevanceScore = SearchEngine.similarity(query, result.title)
+        )
         val key = canonicalKey(result.url)
         val previous = merged[key]
         if (previous == null || candidate.discoveryScore < previous.discoveryScore ||
@@ -111,8 +117,6 @@ class GoogleDiscoveryProvider {
             val domain = hostKey(result.result.url)
             if (domain.isBlank()) continue
             val count = counts[domain] ?: 0
-            // Prevent one site from filling the whole first page while keeping
-            // Google's ordering intact as much as possible.
             if (count >= 3) continue
             counts[domain] = count + 1
             selected += result
@@ -123,10 +127,10 @@ class GoogleDiscoveryProvider {
     private data class RankedResult(
         val result: GoogleResultParser.Result,
         val variantIndex: Int,
-        val resultIndex: Int
+        val resultIndex: Int,
+        val relevanceScore: Int
     ) {
         val discoveryScore: Int get() = variantIndex * 1_000_000 + resultIndex
-        val relevanceScore: Int get() = SearchEngine.similarity("", result.title)
     }
 
     private fun addDiscoveryRank(url: String, rank: Int): String =
