@@ -60,4 +60,20 @@ class GoogleResultParserTest {
         assertEquals("https://example.com/a", results.single().url)
         assertEquals("Artist - Song", results.single().title)
     }
+
+    @Test
+    fun parserPrioritizesOrganicGoogleH3Results() {
+        val html = """
+            <a href="https://example.com/navigation">Navigation</a>
+            <a href="https://example.com/song">
+              <div class="MjjYud"><h3>Artist - Song Title</h3><span>Snippet</span></div>
+            </a>
+        """.trimIndent()
+
+        val results = GoogleResultParser.parseAnchors(html, 1)
+
+        assertEquals(1, results.size)
+        assertEquals("https://example.com/song", results.single().url)
+        assertEquals("Artist - Song Title", results.single().title)
+    }
 }
