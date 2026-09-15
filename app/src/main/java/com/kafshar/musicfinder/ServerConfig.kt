@@ -20,7 +20,7 @@ object ServerConfig {
     private val audioExtensions = setOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm")
     private val obviousPageExtensions = setOf(".html", ".htm", ".json", ".xml", ".css", ".js", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico")
 
-    /** The complete configured reference-site universe used by Google discovery. */
+    /** Legacy reference metadata. It is no longer a discovery allow-list. */
     val MUSIC_HOSTS: Set<String> get() = MusicSitePool.domains.toSet()
     val MUSIC_SITES: List<String> get() = MusicSitePool.domains
     val PRIMARY_SEARCH_SITES: List<String> get() = MusicSitePool.domains
@@ -38,12 +38,12 @@ object ServerConfig {
     fun isYouTubeUrl(url: String?): Boolean = extractHttpHost(url)?.let(::isYouTubeHost) == true
     fun isYouTubeHost(host: String?): Boolean = youtubeDomains.any { hostMatchesDomain(normalizeHost(host).orEmpty(), it) }
 
-    /** Only configured music references (plus YouTube) may enter the search pipeline. */
-    fun isAllowedPageUrl(url: String): Boolean {
-        if (!isPublicWebUrl(url)) return false
-        val host = extractHttpHost(url) ?: return false
-        return isYouTubeHost(host) || isMusicHost(host)
-    }
+    /**
+     * Search discovery is Google-ranked and must not be restricted to the
+     * configured reference pool. Any public HTTP(S) page can be inspected;
+     * private/local hosts remain blocked to prevent SSRF-style access.
+     */
+    fun isAllowedPageUrl(url: String): Boolean = isPublicWebUrl(url)
 
     fun isPublicWebUrl(url: String): Boolean {
         val host = extractHttpHost(url) ?: return false
