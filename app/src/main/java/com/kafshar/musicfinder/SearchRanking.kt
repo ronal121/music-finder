@@ -3,14 +3,6 @@ package com.kafshar.musicfinder
 /** Deterministic ranking shared by native and WebView search paths. */
 object SearchRanking {
     fun webScore(query: String, title: String, url: String, isYouTube: Boolean): Int {
-        // ParallelSearchEngine marks Google-discovered URLs with their original
-        // discovery rank. MainActivity still applies this scorer before rendering,
-        // so preserve Google's semantic ordering instead of letting local token
-        // similarity override it.
-        googleDiscoveryRank(url)?.let { rank ->
-            return (100_000 - rank).coerceAtLeast(50_000)
-        }
-
         val q = SearchEngine.withoutSearchNoise(query)
         val t = SearchEngine.withoutSearchNoise(title)
         var score = SearchEngine.similarity(q, t) * 2
@@ -45,9 +37,4 @@ object SearchRanking {
             .groupBy { SearchEngine.normalizeQuery(it.title) to SearchEngine.normalizeQuery(it.artist) }
             .values.mapNotNull { it.maxByOrNull { result -> result.score } }
             .sortedWith(compareByDescending<SearchResult> { it.score }.thenBy { it.title.lowercase() })
-
-    private fun googleDiscoveryRank(url: String): Int? {
-        val marker = url.substringAfter("#mf-google-rank=", missingDelimiterValue = "")
-        return marker.toIntOrNull()?.takeIf { it >= 0 }
-    }
 }
