@@ -8,10 +8,10 @@ interface SearchProvider {
 /**
  * Searches the configured music sources directly.
  *
- * This is the same discovery model used by the earlier working version:
- * query each configured music site itself, collect song-page URLs, then let
- * the normal page/audio pipeline inspect those pages for a playable file.
- * No Google/Bing/web-search-engine discovery is used here.
+ * This remains the secondary discovery path. Google is used first because it
+ * already ranks the web-wide song pages far better than a fixed list of site
+ * search URL conventions. The normal page/audio pipeline then verifies whether
+ * each discovered page actually exposes playable media.
  */
 class DirectMusicSiteSearchProvider : SearchProvider {
     override val name: String = "Music sites"
@@ -26,10 +26,23 @@ object SearchNetwork {
     const val USER_AGENT = "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36"
 
     /**
-     * The search path is deliberately limited to the configured music-source
-     * pool. All configured sources are queried in parallel by DirectSiteSearchProvider.
+     * Discovery order is intentional:
+     * 1) Google finds the most relevant song pages across the web.
+     * 2) The configured music-site pool is the fallback when Google gives us
+     *    too few usable pages or a site is not indexed.
+     *
+     * Both providers feed the same page-inspection/media-probing pipeline in
+     * MainActivity, so a search result is never considered playable merely
+     * because a search engine returned it.
      */
     val providers: List<SearchProvider> = listOf(
+        object : SearchProvider {
+            override val name: String = "Google"
+            private val delegate = GoogleDiscoveryProvider()
+
+            override fun search(query: String, limit: Int): List<GoogleResultParser.Result> =
+                delegate.search(query, limit)
+        },
         DirectMusicSiteSearchProvider()
     )
 }
