@@ -6,10 +6,7 @@ import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.net.URI
 
-/**
- * Google is the semantic discovery engine. The configured reference pool is a
- * source boundary, not a replacement for Google's ranking.
- */
+/** Google-only discovery. Google decides relevance; the app only removes utility URLs. */
 class GoogleDiscoveryProvider {
     fun search(query: String, limit: Int = 20): List<GoogleResultParser.Result> {
         if (query.isBlank() || limit <= 0) return emptyList()
@@ -18,42 +15,33 @@ class GoogleDiscoveryProvider {
         if (original.isBlank()) return emptyList()
 
         val corrected = SearchEngine.correctedQuery(original).trim()
-        val clean = SearchEngine.withoutSearchNoise(original).trim()
-        val semanticVariants = linkedSetOf<String>().apply {
+        val clean = SearchEngine.withoutSearchNoise(corrected).trim()
+        val variants = linkedSetOf<String>().apply {
             add(original)
             if (corrected.isNotBlank()) add(corrected)
             if (clean.isNotBlank()) add(clean)
-            add("$original آهنگ")
-            add("$original متن آهنگ")
+            if (clean.isNotBlank()) add("$clean آهنگ")
+            if (clean.isNotBlank()) add("$clean song")
         }.take(5)
 
         val target = limit.coerceIn(10, 20)
         val merged = LinkedHashMap<String, RankedResult>()
 
-        for ((variantIndex, variant) in semanticVariants.withIndex()) {
+        // The first query is the authoritative Google result order. Variants are
+        // fallback discovery only and never outrank an exact original-query hit.
+        for ((variantIndex, variant) in variants.withIndex()) {
             fetch(variant, 40).forEachIndexed { resultIndex, result ->
-                if (!isEligibleReferenceResult(result.url)) return@forEachIndexed
-                putBest(merged, result, variantIndex, -1, resultIndex)
+                if (!isEligibleResult(result.url)) return@forEachIndexed
+                putBest(merged, result, variantIndex, resultIndex)
             }
-            if (merged.size >= target * 2) break
-        }
-
-        if (merged.size < target) {
-            val constrainedQueries = ReferenceSiteQueries.build(original).take(18)
-            for ((index, constrainedQuery) in constrainedQueries.withIndex()) {
-                fetch(constrainedQuery, 40).forEachIndexed { resultIndex, result ->
-                    if (!isEligibleReferenceResult(result.url)) return@forEachIndexed
-                    putBest(merged, result, 10 + index, index, resultIndex)
-                }
-                if (merged.size >= target * 2) break
-            }
+            if (merged.size >= target * 3) break
         }
 
         return merged.values
-            .sortedBy { it.discoveryScore }
+            .sortedWith(compareBy<RankedResult> { it.discoveryScore }.thenByDescending { it.relevanceScore })
             .let { diversifyDomains(it, target) }
-            .mapIndexed { index, result ->
-                result.result.copy(url = addDiscoveryRank(result.result.url, index))
+            .mapIndexed { index, ranked ->
+                ranked.result.copy(url = addDiscoveryRank(ranked.result.url, index))
             }
     }
 
@@ -61,13 +49,13 @@ class GoogleDiscoveryProvider {
         merged: LinkedHashMap<String, RankedResult>,
         result: GoogleResultParser.Result,
         variantIndex: Int,
-        batchIndex: Int,
         resultIndex: Int
     ) {
+        val candidate = RankedResult(result, variantIndex, resultIndex)
         val key = canonicalKey(result.url)
-        val candidate = RankedResult(result, variantIndex, batchIndex, resultIndex)
         val previous = merged[key]
-        if (previous == null || candidate.discoveryScore < previous.discoveryScore) {
+        if (previous == null || candidate.discoveryScore < previous.discoveryScore ||
+            (candidate.discoveryScore == previous.discoveryScore && candidate.relevanceScore > previous.relevanceScore)) {
             merged[key] = candidate
         }
     }
@@ -75,13 +63,11 @@ class GoogleDiscoveryProvider {
     private fun fetch(query: String, limit: Int): List<GoogleResultParser.Result> {
         val googleQuery = SearchEngine.displayQuery(query).trim()
         if (googleQuery.isBlank()) return emptyList()
-
         val encoded = URLEncoder.encode(googleQuery, StandardCharsets.UTF_8.toString())
         val urls = listOf(
             "https://www.google.com/search?gbv=1&q=$encoded&hl=fa&num=${limit.coerceIn(20, 40)}&filter=0",
             "https://www.google.com/search?q=$encoded&hl=fa&num=${limit.coerceIn(20, 40)}&filter=0"
         )
-
         for (requestUrl in urls) {
             val parsed = fetchUrl(requestUrl)
             if (parsed.isNotEmpty()) return parsed
@@ -101,34 +87,23 @@ class GoogleDiscoveryProvider {
             connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
             connection.connect()
             if (connection.responseCode !in 200..399) return emptyList()
-
             val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use {
                 it.readText().take(2_500_000)
             }
-
             GoogleResultParser.parseAnchors(html, 200)
                 .filter { !it.url.contains("google.", true) }
                 .filter { !isSearchEngineUtilityUrl(it.url) }
+                .filter { ServerConfig.isPublicWebUrl(it.url) }
                 .distinctBy { canonicalKey(it.url) }
         } catch (_: Exception) {
             emptyList()
         }
     }
 
-    private fun isEligibleReferenceResult(url: String): Boolean {
-        if (ServerConfig.isYouTubeUrl(url)) return true
-        val host = hostKey(url)
-        if (host.isBlank()) return false
-        return MusicSitePool.domains.any { domain ->
-            val normalized = domain.lowercase().removePrefix("www.")
-            host == normalized || host.endsWith(".$normalized")
-        }
-    }
+    /** Any public result from Google is eligible for page inspection. */
+    private fun isEligibleResult(url: String): Boolean = ServerConfig.isPublicWebUrl(url)
 
-    private fun diversifyDomains(
-        results: List<RankedResult>,
-        limit: Int
-    ): List<RankedResult> {
+    private fun diversifyDomains(results: List<RankedResult>, limit: Int): List<RankedResult> {
         val selected = ArrayList<RankedResult>(limit)
         val counts = HashMap<String, Int>()
         for (result in results) {
@@ -136,7 +111,9 @@ class GoogleDiscoveryProvider {
             val domain = hostKey(result.result.url)
             if (domain.isBlank()) continue
             val count = counts[domain] ?: 0
-            if (count >= 2) continue
+            // Prevent one site from filling the whole first page while keeping
+            // Google's ordering intact as much as possible.
+            if (count >= 3) continue
             counts[domain] = count + 1
             selected += result
         }
@@ -146,11 +123,10 @@ class GoogleDiscoveryProvider {
     private data class RankedResult(
         val result: GoogleResultParser.Result,
         val variantIndex: Int,
-        val batchIndex: Int,
         val resultIndex: Int
     ) {
-        val discoveryScore: Int
-            get() = variantIndex * 1_000_000 + (batchIndex + 1).coerceAtLeast(0) * 1_000 + resultIndex
+        val discoveryScore: Int get() = variantIndex * 1_000_000 + resultIndex
+        val relevanceScore: Int get() = SearchEngine.similarity("", result.title)
     }
 
     private fun addDiscoveryRank(url: String, rank: Int): String =
@@ -158,9 +134,7 @@ class GoogleDiscoveryProvider {
 
     private fun hostKey(url: String): String = try {
         URI(url).host.orEmpty().lowercase().removePrefix("www.")
-    } catch (_: Exception) {
-        ""
-    }
+    } catch (_: Exception) { "" }
 
     private fun canonicalKey(url: String): String =
         url.substringBefore('#').trimEnd('/').lowercase()
@@ -173,7 +147,5 @@ class GoogleDiscoveryProvider {
             path.startsWith("/search") ||
             path.startsWith("/preferences") ||
             path.startsWith("/advanced_search")
-    } catch (_: Exception) {
-        true
-    }
+    } catch (_: Exception) { true }
 }
