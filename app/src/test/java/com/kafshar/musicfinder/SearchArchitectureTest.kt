@@ -16,10 +16,9 @@ class SearchArchitectureTest {
         assertTrue(variants.none { it.contains("google", ignoreCase = true) })
     }
 
-    @Test fun searchNetworkTriesGoogleBeforeTheConfiguredPoolFallback() {
-        assertEquals(2, SearchNetwork.providers.size)
-        assertEquals("Google", SearchNetwork.providers[0].name)
-        assertEquals("Music sites", SearchNetwork.providers[1].name)
+    @Test fun searchNetworkUsesTheCompleteConfiguredMusicPool() {
+        assertEquals(1, SearchNetwork.providers.size)
+        assertEquals("Music sites", SearchNetwork.providers.single().name)
         assertTrue(MusicSitePool.domains.isNotEmpty())
         assertTrue(MusicSitePool.domains.size >= 400)
         assertTrue(MusicSitePool.domains.size <= 500)
