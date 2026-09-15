@@ -37,12 +37,15 @@ class GoogleDiscoveryProvider {
             if (merged.size >= target * 3) break
         }
 
+        // Google order remains the primary signal. Title relevance is used before
+        // the original position so a clearly matching result is not buried.
         return merged.values
-            .sortedBy { it.discoveryScore }
+            .sortedWith(
+                compareBy<RankedResult> { it.variantIndex }
+                    .thenByDescending { it.relevanceScore }
+                    .thenBy { it.resultIndex }
+            )
             .let { diversifyDomains(it, target) }
-            .mapIndexed { index, ranked ->
-                ranked.result.copy(url = addDiscoveryRank(ranked.result.url, index))
-            }
     }
 
     private fun putBest(
@@ -109,8 +112,8 @@ class GoogleDiscoveryProvider {
     /** Any public result from Google is eligible for page inspection. */
     private fun isEligibleResult(url: String): Boolean = ServerConfig.isPublicWebUrl(url)
 
-    private fun diversifyDomains(results: List<RankedResult>, limit: Int): List<RankedResult> {
-        val selected = ArrayList<RankedResult>(limit)
+    private fun diversifyDomains(results: List<RankedResult>, limit: Int): List<GoogleResultParser.Result> {
+        val selected = ArrayList<GoogleResultParser.Result>(limit)
         val counts = HashMap<String, Int>()
         for (result in results) {
             if (selected.size >= limit) break
@@ -119,7 +122,7 @@ class GoogleDiscoveryProvider {
             val count = counts[domain] ?: 0
             if (count >= 3) continue
             counts[domain] = count + 1
-            selected += result
+            selected += result.result
         }
         return selected
     }
@@ -132,9 +135,6 @@ class GoogleDiscoveryProvider {
     ) {
         val discoveryScore: Int get() = variantIndex * 1_000_000 + resultIndex
     }
-
-    private fun addDiscoveryRank(url: String, rank: Int): String =
-        url.substringBefore("#") + "#mf-google-rank=$rank"
 
     private fun hostKey(url: String): String = try {
         URI(url).host.orEmpty().lowercase().removePrefix("www.")
