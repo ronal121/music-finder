@@ -27,8 +27,6 @@ class GoogleDiscoveryProvider {
         val target = limit.coerceIn(10, 20)
         val merged = LinkedHashMap<String, RankedResult>()
 
-        // The first query is authoritative. Variants are fallback discovery and
-        // can only contribute URLs not already found by an earlier query.
         for ((variantIndex, variant) in variants.withIndex()) {
             fetch(variant, 40).forEachIndexed { resultIndex, result ->
                 if (!isEligibleResult(result.url)) return@forEachIndexed
@@ -37,8 +35,6 @@ class GoogleDiscoveryProvider {
             if (merged.size >= target * 3) break
         }
 
-        // Google order remains the primary signal. Title relevance is used before
-        // the original position so a clearly matching result is not buried.
         return merged.values
             .sortedWith(
                 compareBy<RankedResult> { it.variantIndex }
@@ -73,13 +69,19 @@ class GoogleDiscoveryProvider {
         val googleQuery = SearchEngine.displayQuery(query).trim()
         if (googleQuery.isBlank()) return emptyList()
         val encoded = URLEncoder.encode(googleQuery, StandardCharsets.UTF_8.toString())
+        val n = limit.coerceIn(20, 40)
+
+        // Google serves different HTML to different clients. The Android app must
+        // not depend on one particular result-page variant or on the consent page.
         val urls = listOf(
-            "https://www.google.com/search?gbv=1&q=$encoded&hl=fa&num=${limit.coerceIn(20, 40)}&filter=0",
-            "https://www.google.com/search?q=$encoded&hl=fa&num=${limit.coerceIn(20, 40)}&filter=0"
+            "https://www.google.com/search?client=firefox-b-d&gbv=1&igu=1&q=$encoded&hl=fa&num=$n&filter=0",
+            "https://www.google.com/search?gbv=1&igu=1&q=$encoded&hl=fa&num=$n&filter=0",
+            "https://www.google.com/search?client=android&gbv=1&igu=1&q=$encoded&hl=fa&num=$n&filter=0",
+            "https://www.google.com/search?q=$encoded&hl=fa&num=$n&filter=0"
         )
         for (requestUrl in urls) {
             val parsed = fetchUrl(requestUrl)
-            if (parsed.isNotEmpty()) return parsed
+            if (parsed.size >= 3) return parsed
         }
         return emptyList()
     }
@@ -87,19 +89,21 @@ class GoogleDiscoveryProvider {
     private fun fetchUrl(requestUrl: String): List<GoogleResultParser.Result> {
         return try {
             val connection = URL(requestUrl).openConnection() as HttpURLConnection
-            connection.connectTimeout = 3500
-            connection.readTimeout = 5500
+            connection.connectTimeout = 5000
+            connection.readTimeout = 8000
             connection.instanceFollowRedirects = true
             connection.useCaches = false
             connection.setRequestProperty("User-Agent", SearchNetwork.USER_AGENT)
             connection.setRequestProperty("Accept-Language", "fa-IR,fa;q=0.9,en;q=0.8")
-            connection.setRequestProperty("Accept", "text/html,application/xhtml+xml")
+            connection.setRequestProperty("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8")
+            connection.setRequestProperty("Accept-Encoding", "identity")
+            connection.setRequestProperty("Referer", "https://www.google.com/")
             connection.connect()
             if (connection.responseCode !in 200..399) return emptyList()
             val html = connection.inputStream.bufferedReader(Charsets.UTF_8).use {
-                it.readText().take(2_500_000)
+                it.readText().take(3_000_000)
             }
-            GoogleResultParser.parseAnchors(html, 200)
+            GoogleResultParser.parseAnchors(html, 300)
                 .filter { !it.url.contains("google.", true) }
                 .filter { !isSearchEngineUtilityUrl(it.url) }
                 .filter { ServerConfig.isPublicWebUrl(it.url) }
@@ -109,7 +113,6 @@ class GoogleDiscoveryProvider {
         }
     }
 
-    /** Any public result from Google is eligible for page inspection. */
     private fun isEligibleResult(url: String): Boolean = ServerConfig.isPublicWebUrl(url)
 
     private fun diversifyDomains(results: List<RankedResult>, limit: Int): List<GoogleResultParser.Result> {
