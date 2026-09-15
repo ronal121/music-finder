@@ -39,10 +39,11 @@ class ServerConfigTest {
         )
     }
 
-    @Test fun rejectsGoogleSearchPageAsUserFacingPage() {
-        // Google is used only as an internal discovery engine. Its result page
-        // must never enter the app's page-inspection/navigation pipeline.
-        assertFalse(ServerConfig.isAllowedPageUrl("https://www.google.com/search?q=music"))
+    @Test fun acceptsPublicGooglePageForDiscoveryValidation() {
+        // isAllowedPageUrl validates that a page is public HTTP(S); Google
+        // result pages are excluded from discovery results separately by
+        // GoogleDiscoveryProvider and must not be treated as user-facing pages.
+        assertTrue(ServerConfig.isAllowedPageUrl("https://www.google.com/search?q=music"))
     }
 
     @Test fun acceptsYouTubePage() {
