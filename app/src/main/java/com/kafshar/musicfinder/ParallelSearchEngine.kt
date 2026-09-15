@@ -1,9 +1,10 @@
 package com.kafshar.musicfinder
 
 import java.net.URI
+import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Future
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
@@ -16,6 +17,7 @@ import java.util.concurrent.atomic.AtomicReference
  */
 object ParallelSearchEngine {
     private val executor = Executors.newFixedThreadPool(4)
+    private val probeExecutor = Executors.newFixedThreadPool(8)
     private val googleProvider = GoogleDiscoveryProvider()
     private val pageInspector = ParallelPageInspector(8)
 
@@ -43,7 +45,9 @@ object ParallelSearchEngine {
                 return@submit
             }
 
-            val candidates = java.util.Collections.synchronizedList(mutableListOf<Candidate>())
+            val mediaRefs = java.util.Collections.synchronizedList(
+                mutableListOf<Pair<ParallelPageInspector.Inspection, String>>()
+            )
             val done = CountDownLatch(1)
             val currentGeneration = AtomicReference(generation)
 
@@ -52,35 +56,47 @@ object ParallelSearchEngine {
                 pages = pages,
                 isGenerationCurrent = { it == currentGeneration.get() },
                 onResult = { inspection ->
-                    if (inspection.candidates.isEmpty()) return@onResult
                     inspection.candidates
                         .asSequence()
                         .distinct()
-                        .take(8)
-                        .forEach { mediaUrl ->
-                            val validation = try {
-                                MediaProbe.probe(mediaUrl, inspection.page.url)
-                            } catch (_: Exception) {
-                                null
-                            }
-                            if (validation?.playable != true) return@forEach
-                            val finalUrl = validation.finalUrl.ifBlank { mediaUrl }
-                            if (!ServerConfig.isAllowedMediaUrl(finalUrl, inspection.page.url)) return@forEach
-                            candidates += Candidate(
-                                url = finalUrl,
-                                title = inspection.title,
-                                artist = inspection.artist,
-                                site = hostName(inspection.page.url),
-                                cover = inspection.cover,
-                                score = SearchRanking.webScore(query, inspection.title, inspection.page.url, false)
-                            )
-                        }
+                        .take(4)
+                        .forEach { mediaUrl -> mediaRefs += inspection to mediaUrl }
                 },
                 onComplete = { done.countDown() }
             )
 
             try {
-                done.await(45L, TimeUnit.SECONDS)
+                done.await(20L, TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+
+            val probeTasks = mediaRefs.toList().map { (inspection, mediaUrl) ->
+                Callable {
+                    val validation = try {
+                        MediaProbe.probe(mediaUrl, inspection.page.url)
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (validation?.playable != true) return@Callable null
+                    val finalUrl = validation.finalUrl.ifBlank { mediaUrl }
+                    if (!ServerConfig.isAllowedMediaUrl(finalUrl, inspection.page.url)) return@Callable null
+                    Candidate(
+                        url = finalUrl,
+                        title = inspection.title,
+                        artist = inspection.artist,
+                        site = hostName(inspection.page.url),
+                        cover = inspection.cover,
+                        score = SearchRanking.webScore(query, inspection.title, inspection.page.url, false)
+                    )
+                }
+            }
+
+            val candidates = mutableListOf<Candidate>()
+            try {
+                probeExecutor.invokeAll(probeTasks, 25L, TimeUnit.SECONDS).forEach { future ->
+                    try { future.get()?.let { candidates += it } } catch (_: Exception) { }
+                }
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
             }
