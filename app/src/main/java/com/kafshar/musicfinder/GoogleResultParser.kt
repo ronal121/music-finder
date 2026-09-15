@@ -41,7 +41,6 @@ object GoogleResultParser {
         if (html.isBlank() || limit <= 0) return emptyList()
 
         val results = LinkedHashMap<String, Result>()
-
         val attribute = Regex(
             "(?:href|data-href)\\s*=\\s*([\\\"'])(.*?)\\1",
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
@@ -51,29 +50,47 @@ object GoogleResultParser {
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
         )
 
-        // First pass: real anchors, preserving their visible titles.
-        for (m in anchor.findAll(html)) {
+        // Google organic results normally expose their result title in an <h3>
+        // inside the destination anchor. Prefer these anchors over navigation,
+        // account, image and footer links which otherwise appear first in HTML.
+        val organic = Regex(
+            "<a\\b[^>]*>(?:(?!</a>).)*?<h3\\b[^>]*>(.*?)</h3>(?:(?!</a>).)*?</a>",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+        )
+        for (m in organic.findAll(html)) {
             if (results.size >= limit) break
-
-            val anchorHtml = m.groupValues[0]
+            val anchorHtml = m.value
             val title = stripHtml(unescapeHtml(m.groupValues[1])).trim()
-            if (title.isBlank()) continue
-
             val href = attribute.find(anchorHtml)?.groupValues?.getOrNull(2).orEmpty()
-            if (href.isBlank()) continue
-
             val url = normalizeUrl(href) ?: continue
-            if (!isExternalHttp(url)) continue
-
-            val key = canonicalKey(url)
+            if (title.isBlank() || !isExternalHttp(url)) continue
             results.putIfAbsent(
-                key,
+                canonicalKey(url),
                 Result(url, title.take(300), ServerConfig.isYouTubeUrl(url))
             )
         }
 
-        // Second pass: Google sometimes puts the destination in data-href or in an
-        // element that is not a conventional <a>. Do not require a specific CSS class.
+        // Fallback: real anchors with visible titles. This keeps compatibility
+        // with simplified Google HTML and the existing parser tests.
+        if (results.size < limit) {
+            for (m in anchor.findAll(html)) {
+                if (results.size >= limit) break
+                val anchorHtml = m.groupValues[0]
+                val title = stripHtml(unescapeHtml(m.groupValues[1])).trim()
+                if (title.isBlank()) continue
+                val href = attribute.find(anchorHtml)?.groupValues?.getOrNull(2).orEmpty()
+                if (href.isBlank()) continue
+                val url = normalizeUrl(href) ?: continue
+                if (!isExternalHttp(url)) continue
+                results.putIfAbsent(
+                    canonicalKey(url),
+                    Result(url, title.take(300), ServerConfig.isYouTubeUrl(url))
+                )
+            }
+        }
+
+        // Google sometimes puts the destination in data-href or in an element that
+        // is not a conventional <a>. Do not require a specific CSS class.
         if (results.size < limit) {
             for (m in attribute.findAll(html)) {
                 if (results.size >= limit) break
@@ -85,9 +102,7 @@ object GoogleResultParser {
             }
         }
 
-        // Third pass: some WebView/Google variants serialize destination URLs in
-        // scripts or JSON rather than href. This is intentionally generic and has
-        // no hard-coded music domains.
+        // Last fallback: serialized destination URLs in scripts or JSON.
         if (results.size < limit) {
             val rawUrl = Regex(
                 "https?://[^\\s\\\"'<>\\\\]+",
@@ -133,23 +148,18 @@ object GoogleResultParser {
     private fun isExternalHttp(url: String): Boolean {
         if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) return false
         val host = try { URI(url).host.orEmpty().lowercase() } catch (_: Exception) { "" }
-        return host.isNotBlank() &&
-            !host.contains("google.") &&
-            host != "webcache.googleusercontent.com"
+        return host.isNotBlank() && !host.contains("google.") && host != "webcache.googleusercontent.com"
     }
 
-    private fun canonicalKey(url: String): String =
-        url.substringBefore('#').trimEnd('/').lowercase()
+    private fun canonicalKey(url: String): String = url.substringBefore('#').trimEnd('/').lowercase()
 
     private fun hostTitle(url: String): String = try {
         URI(url).host.orEmpty().removePrefix("www.").ifBlank { "Result" }
-    } catch (_: Exception) {
-        "Result"
-    }
+    } catch (_: Exception) { "Result" }
 
-    private fun stripHtml(value: String): String =
-        value.replace(Regex("<[^>]+>"), " ")
-            .replace(Regex("\\s+"), " ")
+    private fun stripHtml(value: String): String = value
+        .replace(Regex("<[^>]+>"), " ")
+        .replace(Regex("\\s+"), " ")
 
     private fun unescapeHtml(value: String): String = value
         .replace("&amp;", "&", true)
