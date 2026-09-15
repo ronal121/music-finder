@@ -5,9 +5,9 @@ interface SearchProvider {
     fun search(query: String, limit: Int = 20): List<GoogleResultParser.Result>
 }
 
-/** Compatibility name retained for existing callers; now routed through the real search engine. */
+/** Primary discovery path: Google-ranked organic results. */
 class DirectMusicSiteSearchProvider : SearchProvider {
-    override val name: String = "Music sites"
+    override val name: String = "Google"
 
     override fun search(query: String, limit: Int): List<GoogleResultParser.Result> =
         ParallelSearchEngine.searchDirectBlocking(query, limit)
@@ -16,8 +16,13 @@ class DirectMusicSiteSearchProvider : SearchProvider {
 object SearchNetwork {
     const val USER_AGENT = "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36"
 
-    /** The provider uses the complete MusicSitePool through ParallelSearchEngine. */
+    /**
+     * Google is always tried first. The adaptive site pool is only a fallback when
+     * Google returns no organic pages, so a temporary Google block does not leave
+     * the app with an empty search screen.
+     */
     val providers: List<SearchProvider> = listOf(
-        DirectMusicSiteSearchProvider()
+        DirectMusicSiteSearchProvider(),
+        DirectSiteSearchProvider()
     )
 }
