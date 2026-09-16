@@ -1,153 +1,29 @@
 package com.kafshar.musicfinder
 
-import java.net.URI
-import java.util.concurrent.Callable
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Google discovery -> parallel page inspection -> media probing.
+ * Google-only discovery marker.
  *
- * searchDirect() is the real native playable-search path. The compatibility
- * page-discovery path is kept separate because MainActivity still performs its
- * WebView fallback for pages whose audio is generated at runtime.
+ * Search discovery is intentionally owned by MainActivity's Google WebView.
+ * This object remains only as a compatibility shim for older callers.
  */
 object ParallelSearchEngine {
-    private val executor = Executors.newFixedThreadPool(4)
-    private val probeExecutor = Executors.newFixedThreadPool(8)
-    private val googleProvider = GoogleDiscoveryProvider()
-    private val pageInspector = ParallelPageInspector(8)
-
     fun searchDirect(
         query: String,
         generation: Int,
         callback: (Int, List<Candidate>) -> Unit
     ): Future<*> {
-        if (query.isBlank()) {
-            callback(generation, emptyList())
-            return CompletedFuture
-        }
-
-        return executor.submit {
-            val pages = try {
-                googleProvider.search(query, 15)
-                    .filterNot { it.isYouTube }
-                    .map { ParallelPageInspector.Page(it.url, it.title) }
-            } catch (_: Exception) {
-                emptyList()
-            }
-
-            if (pages.isEmpty()) {
-                callback(generation, emptyList())
-                return@submit
-            }
-
-            val mediaRefs = java.util.Collections.synchronizedList(
-                mutableListOf<Pair<ParallelPageInspector.Inspection, String>>()
-            )
-            val done = CountDownLatch(1)
-            val currentGeneration = AtomicReference(generation)
-
-            pageInspector.inspect(
-                generation = generation,
-                pages = pages,
-                isGenerationCurrent = { it == currentGeneration.get() },
-                onResult = { inspection ->
-                    inspection.candidates
-                        .asSequence()
-                        .distinct()
-                        .take(4)
-                        .forEach { mediaUrl -> mediaRefs += inspection to mediaUrl }
-                },
-                onComplete = { done.countDown() }
-            )
-
-            try {
-                done.await(20L, TimeUnit.SECONDS)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-            }
-
-            val probeTasks = mediaRefs.toList().map { (inspection, mediaUrl) ->
-                Callable {
-                    val validation = try {
-                        MediaProbe.probe(mediaUrl, inspection.page.url)
-                    } catch (_: Exception) {
-                        null
-                    }
-                    if (validation?.playable != true) return@Callable null
-                    val finalUrl = validation.finalUrl.ifBlank { mediaUrl }
-                    if (!ServerConfig.isAllowedMediaUrl(finalUrl, inspection.page.url)) return@Callable null
-                    Candidate(
-                        url = finalUrl,
-                        title = inspection.title,
-                        artist = inspection.artist,
-                        site = hostName(inspection.page.url),
-                        cover = inspection.cover,
-                        score = SearchRanking.webScore(query, inspection.title, inspection.page.url, false)
-                    )
-                }
-            }
-
-            val candidates = mutableListOf<Candidate>()
-            try {
-                probeExecutor.invokeAll(probeTasks, 25L, TimeUnit.SECONDS).forEach { future ->
-                    try { future.get()?.let { candidates += it } } catch (_: Exception) { }
-                }
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-            }
-
-            val ranked = candidates
-                .distinctBy { it.url.substringBefore('#').trimEnd('/').lowercase() }
-                .sortedWith(compareByDescending<Candidate> { it.score }.thenBy { it.title.lowercase() })
-                .take(30)
-            callback(generation, ranked)
-        }
+        callback(generation, emptyList())
+        return CompletedFuture
     }
-
-    /**
-     * Returns Google-discovered page URLs for the existing MainActivity/WebView
-     * pipeline. This deliberately does not return media URLs.
-     */
-    fun discoverPagesBlocking(query: String, limit: Int = 20): List<GoogleResultParser.Result> {
-        if (query.isBlank() || limit <= 0) return emptyList()
-        return try {
-            googleProvider.search(query, limit).take(limit)
-        } catch (_: Exception) {
-            emptyList()
-        }
-    }
-
-    /** Compatibility bridge for SearchProvider callers. */
-    fun searchDirectBlocking(query: String, limit: Int = 20): List<GoogleResultParser.Result> =
-        discoverPagesBlocking(query, limit)
 
     fun search(
         query: String,
         generation: Int,
         callback: (Int, List<Candidate>) -> Unit
     ): Future<*> = searchDirect(query, generation, callback)
-
-    fun toCandidate(result: GoogleResultParser.Result): Candidate {
-        return Candidate(
-            url = result.url,
-            title = result.title,
-            artist = "Unknown Artist",
-            site = hostName(result.url),
-            cover = "",
-            score = SearchRanking.webScore("", result.title, result.url, result.isYouTube)
-        )
-    }
-
-    private fun hostName(url: String): String = try {
-        URI(url).host.orEmpty().removePrefix("www.").ifBlank { "Music" }
-    } catch (_: Exception) {
-        "Music"
-    }
 
     data class Candidate(
         val url: String,
