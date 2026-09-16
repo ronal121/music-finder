@@ -32,7 +32,7 @@ class HarmonizedButton @JvmOverloads constructor(
         post {
             installSearchStatusBar()
             installClearQueryButton()
-            watchSearchStatus()
+            if (id == R.id.search) watchSearchStatus()
         }
     }
 
