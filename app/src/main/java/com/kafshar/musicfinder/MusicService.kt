@@ -6,1181 +6,371 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.net.Uri
+import android.media.AudioManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.core.app.NotificationCompat
+import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.MediaStyleNotificationHelper
 
+@OptIn(androidx.media3.common.util.UnstableApi::class)
 class MusicService : MediaSessionService() {
-
     companion object {
-
-        const val ACTION_PLAY =
-            "com.kafshar.musicfinder.PLAY"
-
-        const val ACTION_PAUSE =
-            "com.kafshar.musicfinder.PAUSE"
-
-        const val ACTION_TOGGLE =
-            "com.kafshar.musicfinder.TOGGLE"
-
-        const val ACTION_STOP =
-            "com.kafshar.musicfinder.STOP"
-
-        const val ACTION_NEXT =
-            "com.kafshar.musicfinder.NEXT"
-
-        const val ACTION_PREVIOUS =
-            "com.kafshar.musicfinder.PREVIOUS"
-
-        const val ACTION_SEEK_PERCENT =
-            "com.kafshar.musicfinder.SEEK_PERCENT"
-
-        const val ACTION_GET_POSITION =
-            "com.kafshar.musicfinder.GET_POSITION"
-
-        const val ACTION_SET_VOLUME =
-            "com.kafshar.musicfinder.SET_VOLUME"
-
+        const val ACTION_PLAY = "com.kafshar.musicfinder.PLAY"
+        const val ACTION_PAUSE = "com.kafshar.musicfinder.PAUSE"
+        const val ACTION_TOGGLE = "com.kafshar.musicfinder.TOGGLE"
+        const val ACTION_STOP = "com.kafshar.musicfinder.STOP"
+        const val ACTION_NEXT = "com.kafshar.musicfinder.NEXT"
+        const val ACTION_PREVIOUS = "com.kafshar.musicfinder.PREVIOUS"
+        const val ACTION_SEEK_PERCENT = "com.kafshar.musicfinder.SEEK_PERCENT"
+        const val ACTION_GET_POSITION = "com.kafshar.musicfinder.GET_POSITION"
+        const val ACTION_SET_VOLUME = "com.kafshar.musicfinder.SET_VOLUME"
+        const val ACTION_MUTE = "com.kafshar.musicfinder.MUTE"
+        const val ACTION_UNMUTE = "com.kafshar.musicfinder.UNMUTE"
+        const val ACTION_REWIND_10 = "com.kafshar.musicfinder.REWIND_10"
+        const val ACTION_FORWARD_10 = "com.kafshar.musicfinder.FORWARD_10"
         const val EXTRA_URL = "url"
         const val EXTRA_TITLE = "title"
         const val EXTRA_PERCENT = "percent"
         const val EXTRA_ARTIST = "artist"
         const val EXTRA_COVER = "cover"
         const val EXTRA_VOLUME = "volume"
-
-        const val UPDATE =
-            "com.kafshar.musicfinder.PLAYER_UPDATE"
-
-        private const val NOTIFICATION_CHANNEL_ID =
-            "music_playback"
-
-        private const val NOTIFICATION_CHANNEL_NAME =
-            "Music Playback"
-
+        const val EXTRA_MUTED = "muted"
+        const val EXTRA_ENDED = "ended"
+        const val UPDATE = "com.kafshar.musicfinder.PLAYER_UPDATE"
+        private const val CHANNEL_ID = "music_playback"
         private const val NOTIFICATION_ID = 1001
     }
 
     private lateinit var player: ExoPlayer
-
+    private lateinit var audioManager: AudioManager
     private var mediaSession: MediaSession? = null
-
-    @Volatile
+    private val handler = Handler(Looper.getMainLooper())
     private var released = false
+    private var muted = false
+    private var previousVolume = 80
+    private var retryingUri = ""
+    private var retryCount = 0
+    private var foregroundStarted = false
+    private var lastTitle = "Music Finder"
+    private var lastArtist = "KAFSHAR"
+    private var lastCover = ""
+    private var playbackReferer = ""
+
+    private val ticker = object : Runnable {
+        override fun run() {
+            if (released) return
+            publish()
+            updateNotification()
+            handler.postDelayed(this, 750L)
+        }
+    }
 
     override fun onCreate() {
-        /*
-         * مهم:
-         *
-         * این سرویس با startForegroundService() اجرا می‌شود.
-         * بنابراین باید قبل از هر کار سنگین، Foreground شود.
-         *
-         * Notification و startForeground در ابتدای onCreate
-         * انجام می‌شوند تا Android منتظر ExoPlayer، MediaSession،
-         * صف آهنگ‌ها یا عملیات دیگری نماند.
-         */
-        createNotificationChannel()
-        startMusicForeground()
-
         super.onCreate()
-
         released = false
-
-        player =
-            ExoPlayer.Builder(this)
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setContentType(
-                            C.AUDIO_CONTENT_TYPE_MUSIC
-                        )
-                        .setUsage(
-                            C.USAGE_MEDIA
-                        )
-                        .build(),
-                    true
-                )
-                .setHandleAudioBecomingNoisy(true)
-                .setPauseAtEndOfMediaItems(false)
-                .build()
-
-        val savedVolume =
-            getSharedPreferences(
-                "player_settings",
-                MODE_PRIVATE
-            ).getInt(
-                "volume_percent",
-                80
-            ).coerceIn(0, 100)
-
-        player.volume =
-            savedVolume / 100f
-
-        mediaSession =
-            MediaSession.Builder(
-                this,
-                player
-            )
-                .setSessionActivity(
-                    createOpenAppPendingIntent()
-                )
-                .build()
-
-        player.addListener(
-            object : Player.Listener {
-
-                override fun onIsPlayingChanged(
-                    isPlaying: Boolean
-                ) {
-                    safeSendUpdate()
-                    updateForegroundNotification()
-                }
-
-                override fun onPlaybackStateChanged(
-                    playbackState: Int
-                ) {
-                    safeSendUpdate()
-                    updateForegroundNotification()
-                }
-
-                override fun onMediaItemTransition(
-                    mediaItem: MediaItem?,
-                    reason: Int
-                ) {
-                    if (mediaItem != null) {
-                        saveToHistory(mediaItem)
-                    }
-
-                    safeSendUpdate()
-                    updateForegroundNotification()
-                }
-
-                override fun onPositionDiscontinuity(
-                    oldPosition: Player.PositionInfo,
-                    newPosition: Player.PositionInfo,
-                    reason: Int
-                ) {
-                    safeSendUpdate()
-                }
-
-                override fun onPlayerError(
-                    error: PlaybackException
-                ) {
-                    try {
-                        player.pause()
-                    } catch (_: Exception) {
-                    }
-
-                    safeSendUpdate()
-                    updateForegroundNotification()
-                }
-            }
-        )
-
-        updateForegroundNotification()
-    }
-
-    /**
-     * ایجاد Notification Channel برای Foreground Service.
-     */
-    private fun createNotificationChannel() {
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-
-            val channel =
-                NotificationChannel(
-                    NOTIFICATION_CHANNEL_ID,
-                    NOTIFICATION_CHANNEL_NAME,
-                    NotificationManager.IMPORTANCE_LOW
-                ).apply {
-
-                    description =
-                        "Music playback controls"
-
-                    setShowBadge(false)
-
-                    lockscreenVisibility =
-                        Notification.VISIBILITY_PUBLIC
-                }
-
-            val manager =
-                getSystemService(
-                    NotificationManager::class.java
-                )
-
-            manager?.createNotificationChannel(channel)
+        createNotificationChannel()
+        startPlaybackForeground()
+        audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        previousVolume = currentVolumePercent().coerceIn(1, 100)
+        val httpFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent("Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36")
+        val dataSourceFactory = DataSource.Factory {
+            val dataSource = httpFactory.createDataSource()
+            if (playbackReferer.isNotBlank()) dataSource.setRequestProperty("Referer", playbackReferer)
+            dataSource
         }
+        player = ExoPlayer.Builder(this)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(dataSourceFactory))
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                    .setUsage(C.USAGE_MEDIA)
+                    .build(), true
+            )
+            .setHandleAudioBecomingNoisy(true)
+            .setPauseAtEndOfMediaItems(false)
+            .build()
+        player.volume = 1f
+        mediaSession = MediaSession.Builder(this, player)
+            .setSessionActivity(openAppPendingIntent())
+            .build()
+        player.addListener(object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                publish()
+                updateNotification()
+            }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                publish(ended = playbackState == Player.STATE_ENDED)
+                updateNotification()
+            }
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                publish()
+                updateNotification()
+            }
+            override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                publish()
+            }
+            override fun onPlayerError(error: PlaybackException) {
+                val uri = player.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty()
+                if (uri.isNotBlank() && uri == retryingUri && retryCount < 1) {
+                    retryCount = 1
+                    handler.postDelayed({
+                        if (!released) loadAndPlay(uri, lastTitle, lastArtist, lastCover, resetRetry = false, referer = playbackReferer)
+                    }, 700L)
+                } else if (uri.isNotBlank()) {
+                    player.pause()
+                }
+                publish(error.message ?: "Playback error")
+                updateNotification()
+            }
+        })
+        handler.post(ticker)
+        publish()
+        updateNotification()
     }
 
-    /**
-     * این تابع باید خیلی زود اجرا شود.
-     *
-     * هیچ عملیات شبکه،
-     * Bitmap،
-     * SharedPreferences سنگین،
-     * MediaItem،
-     * Queue
-     * یا ExoPlayer
-     * قبل از این تابع انجام نمی‌شود.
-     */
-    private fun startMusicForeground() {
-
-        val notification =
-            buildForegroundNotification()
-
+    private fun loadAndPlay(url: String, title: String, artist: String, cover: String, resetRetry: Boolean = true, referer: String = "") {
+        if (released || url.isBlank()) return
+        if (!ServerConfig.isAllowedMediaUrl(url, referer.takeIf { it.isNotBlank() })) {
+            publish("Unsupported media source")
+            return
+        }
+        playbackReferer = referer
+        if (resetRetry) retryCount = 0
+        retryingUri = url
+        lastTitle = title.ifBlank { "Music Finder" }
+        lastArtist = artist.ifBlank { "KAFSHAR" }
+        lastCover = cover
+        val metadata = MediaMetadata.Builder()
+            .setTitle(lastTitle)
+            .setArtist(lastArtist)
+            .apply { if (cover.isNotBlank()) setArtworkUri(android.net.Uri.parse(cover)) }
+            .build()
+        val item = MediaItem.Builder().setUri(url).setMediaMetadata(metadata).build()
         try {
-
-            if (
-                Build.VERSION.SDK_INT >=
-                Build.VERSION_CODES.Q
-            ) {
-
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-                )
-
-            } else {
-
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification
-                )
-            }
-
-        } catch (_: Exception) {
-            /*
-             * عمداً چیزی throw نمی‌کنیم.
-             *
-             * اگر دستگاه محدودیت خاصی داشته باشد،
-             * ادامه lifecycle سرویس را خراب نمی‌کنیم.
-             */
+            player.setMediaItem(item)
+            player.prepare()
+            player.play()
+            publish()
+            updateNotification()
+        } catch (e: Exception) {
+            publish(e.message ?: "Unable to start playback")
         }
     }
 
-    /**
-     * Notification اولیه و Notification زمان پخش.
-     */
-    private fun buildForegroundNotification(): Notification {
+    private fun currentVolumePercent(): Int = try {
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+        val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        (current * 100 / max).coerceIn(0, 100)
+    } catch (_: Exception) { previousVolume.coerceIn(0, 100) }
 
-        val openIntent =
-            createOpenAppPendingIntent()
+    private fun setVolumePercent(percent: Int) {
+        val value = percent.coerceIn(0, 100)
+        try {
+            val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+            val raw = kotlin.math.round(max * value / 100f).toInt().coerceIn(0, max)
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, raw, 0)
+            if (value > 0) previousVolume = value
+            muted = value == 0
+            if (!muted && ::player.isInitialized) player.volume = 1f
+        } catch (_: Exception) { }
+        publish()
+    }
 
-        val builder =
-            NotificationCompat.Builder(
-                this,
-                NOTIFICATION_CHANNEL_ID
+    private fun mute() {
+        val current = currentVolumePercent()
+        if (current > 0) previousVolume = current
+        muted = true
+        try { audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0) } catch (_: Exception) { }
+        publish()
+    }
+
+    private fun unmute() {
+        muted = false
+        setVolumePercent(previousVolume.coerceIn(1, 100))
+    }
+
+    private fun publish(error: String? = null, ended: Boolean = false) {
+        try {
+            if (released || !::player.isInitialized) return
+            val intent = Intent(UPDATE).setPackage(packageName).apply {
+                val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
+                putExtra("position", player.currentPosition.coerceAtLeast(0L))
+                putExtra("duration", duration)
+                putExtra("isPlaying", player.isPlaying)
+                putExtra("playing", player.isPlaying)
+                putExtra(EXTRA_VOLUME, currentVolumePercent())
+                putExtra(EXTRA_MUTED, muted)
+                putExtra(EXTRA_ENDED, ended)
+                putExtra(EXTRA_TITLE, getCurrentTitle())
+                putExtra(EXTRA_ARTIST, getCurrentArtist())
+                putExtra(EXTRA_URL, player.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty())
+                if (error != null) putExtra("error", error)
+            }
+            sendBroadcast(intent)
+        } catch (_: Exception) { }
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            getSystemService(NotificationManager::class.java)?.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "Music Playback", NotificationManager.IMPORTANCE_LOW).apply {
+                    description = "Music playback controls"
+                    setShowBadge(false)
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                }
             )
-                .setSmallIcon(
-                    android.R.drawable.ic_media_play
-                )
-                .setContentTitle(
-                    getCurrentTitle()
-                )
-                .setContentText(
-                    getCurrentArtist()
-                )
-                .setContentIntent(
-                    openIntent
-                )
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setShowWhen(false)
-                .setVisibility(
-                    NotificationCompat.VISIBILITY_PUBLIC
-                )
-                .setCategory(
-                    NotificationCompat.CATEGORY_TRANSPORT
-                )
-                .setPriority(
-                    NotificationCompat.PRIORITY_LOW
-                )
+        }
+    }
 
+    private fun startPlaybackForeground() {
+        if (foregroundStarted) return
+        val notification = buildNotification()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+        foregroundStarted = true
+    }
+
+    private fun ensureForeground() {
+        if (!foregroundStarted && !released) startPlaybackForeground()
+    }
+
+    private fun buildNotification(): Notification {
+        val session = mediaSession
+        val isPlaying = ::player.isInitialized && player.isPlaying
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(getCurrentTitle())
+            .setContentText(getCurrentArtist())
+            .setContentIntent(openAppPendingIntent())
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .addAction(android.R.drawable.ic_media_previous, "Previous", actionPendingIntent(ACTION_PREVIOUS, 301))
+            .addAction(if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play, if (isPlaying) "Pause" else "Play", actionPendingIntent(ACTION_TOGGLE, 303))
+            .addAction(android.R.drawable.ic_media_next, "Next", actionPendingIntent(ACTION_NEXT, 305))
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", actionPendingIntent(ACTION_STOP, 306))
+        if (session != null) {
+            builder.setStyle(MediaStyleNotificationHelper.MediaStyle(session).setShowActionsInCompactView(0, 1, 2))
+        }
         return builder.build()
     }
 
-    private fun getCurrentTitle(): String {
-
-        return try {
-
-            if (
-                ::player.isInitialized &&
-                player.currentMediaItem != null
-            ) {
-
-                player.currentMediaItem
-                    ?.mediaMetadata
-                    ?.title
-                    ?.toString()
-                    ?.ifBlank {
-                        "Music Finder"
-                    }
-                    ?: "Music Finder"
-
-            } else {
-                "Music Finder"
-            }
-
-        } catch (_: Exception) {
-            "Music Finder"
-        }
-    }
-
-    private fun getCurrentArtist(): String {
-
-        return try {
-
-            if (
-                ::player.isInitialized &&
-                player.currentMediaItem != null
-            ) {
-
-                player.currentMediaItem
-                    ?.mediaMetadata
-                    ?.artist
-                    ?.toString()
-                    ?.ifBlank {
-                        "Music Finder"
-                    }
-                    ?: "Music Finder"
-
-            } else {
-                "Music Finder"
-            }
-
-        } catch (_: Exception) {
-            "Music Finder"
-        }
-    }
-
-    /**
-     * Notification را بدون stop/start مجدد به‌روزرسانی می‌کند.
-     */
-    private fun updateForegroundNotification() {
-
-        if (released) {
-            return
-        }
-
+    private fun updateNotification() {
+        if (released) return
         try {
-
-            val manager =
-                getSystemService(
-                    NotificationManager::class.java
-                )
-
-            manager?.notify(
-                NOTIFICATION_ID,
-                buildForegroundNotification()
-            )
-
-        } catch (_: Exception) {
-        }
+            ensureForeground()
+            getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, buildNotification())
+        } catch (_: Exception) { }
     }
 
-    override fun onStartCommand(
-        intent: Intent?,
-        flags: Int,
-        startId: Int
-    ): Int {
+    private fun actionPendingIntent(action: String, requestCode: Int): PendingIntent = PendingIntent.getService(
+        this, requestCode, Intent(this, MusicService::class.java).setAction(action),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
 
-        if (
-            released ||
-            !::player.isInitialized
-        ) {
-            return START_STICKY
-        }
+    private fun openAppPendingIntent(): PendingIntent = PendingIntent.getActivity(
+        this, 100, Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
 
+    private fun seekRelative(delta: Long) {
         try {
+            val duration = player.duration
+            val target = player.currentPosition + delta
+            player.seekTo(if (duration > 0 && duration != C.TIME_UNSET) target.coerceIn(0, duration) else target.coerceAtLeast(0))
+            publish()
+        } catch (_: Exception) { }
+    }
 
+    private fun getCurrentTitle(): String = try {
+        player.currentMediaItem?.mediaMetadata?.title?.toString()?.takeIf { it.isNotBlank() } ?: lastTitle
+    } catch (_: Exception) { lastTitle }
+
+    private fun getCurrentArtist(): String = try {
+        player.currentMediaItem?.mediaMetadata?.artist?.toString()?.takeIf { it.isNotBlank() } ?: lastArtist
+    } catch (_: Exception) { lastArtist }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
+        ensureForeground()
+        try {
             when (intent?.action) {
-
                 ACTION_PLAY -> {
-                    playUrl(intent)
+                    val url = intent.getStringExtra(EXTRA_URL).orEmpty()
+                    if (url.isNotBlank()) loadAndPlay(url, intent.getStringExtra(EXTRA_TITLE).orEmpty(), intent.getStringExtra(EXTRA_ARTIST).orEmpty(), intent.getStringExtra(EXTRA_COVER).orEmpty(), referer = intent.getStringExtra("referer").orEmpty())
+                    else if (::player.isInitialized) player.play()
                 }
-
-                ACTION_PAUSE -> {
-
-                    player.pause()
-
-                    safeSendUpdate()
-                    updateForegroundNotification()
-                }
-
+                ACTION_PAUSE -> if (::player.isInitialized) player.pause()
                 ACTION_TOGGLE -> {
-
-                    if (
-                        player.currentMediaItem == null
-                    ) {
-
-                        val url =
-                            intent.getStringExtra(
-                                EXTRA_URL
-                            )
-
-                        if (!url.isNullOrBlank()) {
-                            playUrl(intent)
-                        }
-
-                    } else {
-
-                        if (player.isPlaying) {
-                            player.pause()
-                        } else {
-                            player.play()
-                        }
-
-                        safeSendUpdate()
-                        updateForegroundNotification()
-                    }
+                    if (!::player.isInitialized) return START_STICKY
+                    val url = intent.getStringExtra(EXTRA_URL).orEmpty()
+                    val currentUrl = player.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty()
+                    if (url.isNotBlank() && currentUrl != url) loadAndPlay(url, intent.getStringExtra(EXTRA_TITLE).orEmpty(), intent.getStringExtra(EXTRA_ARTIST).orEmpty(), intent.getStringExtra(EXTRA_COVER).orEmpty(), referer = intent.getStringExtra("referer").orEmpty())
+                    else if (player.isPlaying) player.pause() else player.play()
                 }
-
-                ACTION_NEXT -> {
-                    next()
-                }
-
-                ACTION_PREVIOUS -> {
-                    previous()
-                }
-
-                ACTION_SEEK_PERCENT -> {
-
-                    val percent =
-                        intent.getIntExtra(
-                            EXTRA_PERCENT,
-                            0
-                        )
-
-                    seekPercent(percent)
-                }
-
-                ACTION_SET_VOLUME -> {
-
-                    val volume =
-                        intent.getIntExtra(
-                            EXTRA_VOLUME,
-                            80
-                        ).coerceIn(0, 100)
-
-                    player.volume =
-                        volume / 100f
-
-                    getSharedPreferences(
-                        "player_settings",
-                        MODE_PRIVATE
-                    ).edit()
-                        .putInt(
-                            "volume_percent",
-                            volume
-                        )
-                        .apply()
-
-                    safeSendUpdate()
-                }
-
-                ACTION_GET_POSITION -> {
-                    safeSendUpdate()
-                }
-
                 ACTION_STOP -> {
-
-                    try {
-                        player.stop()
-                    } catch (_: Exception) {
-                    }
-
-                    safeSendUpdate()
-
-                    try {
-                        stopForeground(
-                            STOP_FOREGROUND_REMOVE
-                        )
-                    } catch (_: Exception) {
-                    }
-
+                    if (::player.isInitialized) player.stop()
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    foregroundStarted = false
                     stopSelf()
+                    return START_NOT_STICKY
                 }
+                ACTION_NEXT -> if (::player.isInitialized && player.hasNextMediaItem) player.seekToNextMediaItem()
+                ACTION_PREVIOUS -> if (::player.isInitialized && player.hasPreviousMediaItem) player.seekToPreviousMediaItem()
+                ACTION_REWIND_10 -> if (::player.isInitialized) seekRelative(-10_000L)
+                ACTION_FORWARD_10 -> if (::player.isInitialized) seekRelative(10_000L)
+                ACTION_SEEK_PERCENT -> if (::player.isInitialized) {
+                    val percent = (intent.extras?.get(EXTRA_PERCENT) as? Number)?.toFloat()?.coerceIn(0f, 100f) ?: 0f
+                    val duration = player.duration
+                    if (duration > 0 && duration != C.TIME_UNSET) player.seekTo((duration.toDouble() * percent.toDouble() / 100.0).toLong().coerceIn(0L, duration))
+                }
+                ACTION_GET_POSITION -> publish()
+                ACTION_SET_VOLUME -> setVolumePercent(intent.getIntExtra(EXTRA_VOLUME, currentVolumePercent()))
+                ACTION_MUTE -> mute()
+                ACTION_UNMUTE -> unmute()
             }
-
-        } catch (_: Exception) {
-
-            safeSendUpdate()
+        } catch (e: Exception) {
+            publish(e.message ?: "Player error")
         }
-
+        publish()
+        updateNotification()
         return START_STICKY
     }
 
-    private fun playUrl(
-        intent: Intent
-    ) {
-
-        val url =
-            intent.getStringExtra(
-                EXTRA_URL
-            )
-                ?.trim()
-
-        if (
-            url.isNullOrBlank() ||
-            !ServerConfig.isAllowedMediaUrl(url)
-        ) {
-            safeSendUpdate()
-            return
-        }
-
-        val title =
-            intent.getStringExtra(
-                EXTRA_TITLE
-            )
-                ?.trim()
-                ?.ifBlank {
-                    "Music Finder"
-                }
-                ?: "Music Finder"
-
-        val artist =
-            intent.getStringExtra(
-                EXTRA_ARTIST
-            )
-                ?.trim()
-                ?.ifBlank {
-                    "Music Finder"
-                }
-                ?: "Music Finder"
-
-        val cover =
-            intent.getStringExtra(
-                EXTRA_COVER
-            )
-                ?.trim()
-                ?: ""
-
-        /*
-         * Foreground قبلاً برقرار شده است.
-         *
-         * از اینجا به بعد می‌توانیم با خیال راحت
-         * MediaItem و Queue را بسازیم.
-         */
-
-        val current =
-            createMediaItem(
-                url,
-                title,
-                artist,
-                cover
-            )
-
-        val queue =
-            buildRelatedQueue(
-                url,
-                title,
-                artist,
-                cover
-            )
-
-        try {
-
-            player.stop()
-            player.clearMediaItems()
-
-            if (queue.size > 1) {
-
-                player.setMediaItems(
-                    queue,
-                    0,
-                    0L
-                )
-
-            } else {
-
-                player.setMediaItem(
-                    current
-                )
-            }
-
-            player.prepare()
-            player.play()
-
-            saveToHistory(current)
-
-            safeSendUpdate()
-            updateForegroundNotification()
-
-        } catch (_: Exception) {
-
-            try {
-                player.stop()
-                player.clearMediaItems()
-            } catch (_: Exception) {
-            }
-
-            safeSendUpdate()
-            updateForegroundNotification()
-        }
-    }
-
-    private fun next() {
-
-        try {
-
-            if (
-                player.hasNextMediaItem()
-            ) {
-
-                player.seekToNextMediaItem()
-
-            } else if (
-                player.currentMediaItem != null
-            ) {
-
-                player.seekTo(
-                    0,
-                    0L
-                )
-            }
-
-            player.prepare()
-            player.play()
-
-            safeSendUpdate()
-            updateForegroundNotification()
-
-        } catch (_: Exception) {
-
-            safeSendUpdate()
-        }
-    }
-
-    private fun previous() {
-
-        try {
-
-            if (
-                player.hasPreviousMediaItem()
-            ) {
-
-                player.seekToPreviousMediaItem()
-
-            } else {
-
-                player.seekTo(
-                    0,
-                    0L
-                )
-            }
-
-            player.prepare()
-            player.play()
-
-            safeSendUpdate()
-            updateForegroundNotification()
-
-        } catch (_: Exception) {
-
-            safeSendUpdate()
-        }
-    }
-
-    private fun buildRelatedQueue(
-        currentUrl: String,
-        currentTitle: String,
-        currentArtist: String,
-        currentCover: String
-    ): List<MediaItem> {
-
-        val result =
-            ArrayList<MediaItem>()
-
-        result.add(
-            createMediaItem(
-                currentUrl,
-                currentTitle,
-                currentArtist,
-                currentCover
-            )
-        )
-
-        try {
-
-            val prefs =
-                getSharedPreferences(
-                    "search_results",
-                    MODE_PRIVATE
-                )
-
-            val data =
-                prefs.getString(
-                    "songs",
-                    ""
-                ) ?: ""
-
-            if (data.isBlank()) {
-                return result
-            }
-
-            val candidates =
-                ArrayList<SongResult>()
-
-            data.split("\n")
-                .take(60)
-                .forEach { line ->
-
-                    val parts =
-                        line.split(
-                            "|||",
-                            limit = 5
-                        )
-
-                    if (parts.size < 5) {
-                        return@forEach
-                    }
-
-                    val song =
-                        SongResult(
-                            url = parts[0],
-                            title = parts[1],
-                            artist = parts[2],
-                            site = parts[3],
-                            cover = parts[4]
-                        )
-
-                    if (
-                        song.url.isNotBlank() &&
-                        song.url != currentUrl &&
-                        ServerConfig.isAllowedMediaUrl(
-                            song.url
-                        )
-                    ) {
-
-                        candidates.add(song)
-                    }
-                }
-
-            if (candidates.isEmpty()) {
-                return result
-            }
-
-            val artistWords =
-                currentArtist
-                    .lowercase()
-                    .split(
-                        Regex(
-                            "[\\s,،\\-_|]+"
-                        )
-                    )
-                    .filter {
-                        it.length >= 2
-                    }
-
-            val titleWords =
-                currentTitle
-                    .lowercase()
-                    .split(
-                        Regex(
-                            "[\\s,،\\-_|]+"
-                        )
-                    )
-                    .filter {
-                        it.length >= 2
-                    }
-
-            val sameArtist =
-                candidates.filter { song ->
-
-                    val artist =
-                        song.artist.lowercase()
-
-                    artistWords.any {
-                        artist.contains(it)
-                    }
-                }
-
-            val sameTitle =
-                candidates.filter { song ->
-
-                    val title =
-                        song.title.lowercase()
-
-                    titleWords.any {
-                        title.contains(it)
-                    }
-                }
-
-            val source =
-                when {
-
-                    sameArtist.size >= 2 ->
-                        sameArtist
-
-                    sameTitle.isNotEmpty() ->
-                        sameTitle
-
-                    sameArtist.isNotEmpty() ->
-                        sameArtist
-
-                    else ->
-                        candidates
-                }
-
-            source
-                .distinctBy {
-                    it.url
-                }
-                .shuffled()
-                .take(
-                    minOf(
-                        15,
-                        source.size
-                    )
-                )
-                .forEach { song ->
-
-                    result.add(
-                        createMediaItem(
-                            song.url,
-                            song.title,
-                            song.artist,
-                            song.cover
-                        )
-                    )
-                }
-
-        } catch (_: Exception) {
-        }
-
-        return result
-    }
-
-    private fun createMediaItem(
-        url: String,
-        title: String,
-        artist: String,
-        cover: String
-    ): MediaItem {
-
-        val metadata =
-            MediaMetadata.Builder()
-                .setTitle(
-                    title.ifBlank {
-                        "Music Finder"
-                    }
-                )
-                .setArtist(
-                    artist.ifBlank {
-                        "Music Finder"
-                    }
-                )
-                .apply {
-
-                    if (cover.isNotBlank()) {
-
-                        try {
-
-                            setArtworkUri(
-                                Uri.parse(cover)
-                            )
-
-                        } catch (_: Exception) {
-                        }
-                    }
-                }
-                .build()
-
-        return MediaItem.Builder()
-            .setUri(url)
-            .setMediaId(url)
-            .setMediaMetadata(metadata)
-            .build()
-    }
-
-    private fun saveToHistory(
-        item: MediaItem
-    ) {
-
-        try {
-
-            val url =
-                item.mediaId
-
-            if (url.isBlank()) {
-                return
-            }
-
-            val prefs =
-                getSharedPreferences(
-                    "music_history",
-                    MODE_PRIVATE
-                )
-
-            val old =
-                prefs.getString(
-                    "items",
-                    ""
-                ) ?: ""
-
-            val title =
-                item.mediaMetadata.title
-                    ?.toString()
-                    ?: ""
-
-            val artist =
-                item.mediaMetadata.artist
-                    ?.toString()
-                    ?: ""
-
-            val cover =
-                item.mediaMetadata.artworkUri
-                    ?.toString()
-                    ?: ""
-
-            val line =
-                listOf(
-                    url,
-                    title,
-                    artist,
-                    cover
-                ).joinToString("|||")
-
-            val lines =
-                old.split("\n")
-                    .filter {
-                        it.isNotBlank() &&
-                                !it.startsWith(
-                                    "$url|||"
-                                )
-                    }
-                    .toMutableList()
-
-            lines.add(
-                0,
-                line
-            )
-
-            while (
-                lines.size > 50
-            ) {
-
-                lines.removeAt(
-                    lines.lastIndex
-                )
-            }
-
-            prefs.edit()
-                .putString(
-                    "items",
-                    lines.joinToString("\n")
-                )
-                .apply()
-
-        } catch (_: Exception) {
-        }
-    }
-
-    private fun seekPercent(
-        percent: Int
-    ) {
-
-        try {
-
-            val duration =
-                player.duration
-
-            if (
-                duration <= 0 ||
-                duration == C.TIME_UNSET
-            ) {
-                return
-            }
-
-            val safe =
-                percent.coerceIn(
-                    0,
-                    100
-                )
-
-            val position =
-                duration *
-                        safe /
-                        100L
-
-            player.seekTo(position)
-
-            safeSendUpdate()
-
-        } catch (_: Exception) {
-        }
-    }
-
-    private fun safeSendUpdate() {
-
-        if (
-            released ||
-            !::player.isInitialized
-        ) {
-            return
-        }
-
-        try {
-
-            val item =
-                player.currentMediaItem
-
-            val duration =
-                if (
-                    player.duration ==
-                    C.TIME_UNSET
-                ) {
-                    0L
-                } else {
-                    player.duration
-                }
-
-            val intent =
-                Intent(UPDATE).apply {
-
-                    setPackage(
-                        packageName
-                    )
-
-                    putExtra(
-                        "playing",
-                        player.isPlaying
-                    )
-
-                    putExtra(
-                        "position",
-                        player.currentPosition
-                    )
-
-                    putExtra(
-                        "duration",
-                        duration
-                    )
-
-                    putExtra(
-                        "title",
-                        item?.mediaMetadata
-                            ?.title
-                            ?.toString()
-                            ?: ""
-                    )
-
-                    putExtra(
-                        "artist",
-                        item?.mediaMetadata
-                            ?.artist
-                            ?.toString()
-                            ?: ""
-                    )
-
-                    putExtra(
-                        "volume",
-                        (player.volume * 100f)
-                            .toInt()
-                            .coerceIn(0, 100)
-                    )
-                }
-
-            sendBroadcast(intent)
-
-        } catch (_: Exception) {
-        }
-    }
-
-    private fun createOpenAppPendingIntent():
-        PendingIntent {
-
-        val intent =
-            Intent(
-                this,
-                MainActivity::class.java
-            ).apply {
-
-                flags =
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                            Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-
-        return PendingIntent.getActivity(
-            this,
-            200,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or
-                    PendingIntent.FLAG_IMMUTABLE
-        )
-    }
-
-    override fun onGetSession(
-        controllerInfo:
-            MediaSession.ControllerInfo
-    ): MediaSession? {
-
-        return mediaSession
-    }
-
-    override fun onTaskRemoved(
-        rootIntent: Intent?
-    ) {
-
-        try {
-
-            if (
-                ::player.isInitialized &&
-                player.playbackState !=
-                Player.STATE_IDLE
-            ) {
-
-                player.play()
-            }
-
-        } catch (_: Exception) {
-        }
-
+    override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
-
         released = true
-
-        try {
-
-            mediaSession?.release()
-
-        } catch (_: Exception) {
-        }
-
+        handler.removeCallbacksAndMessages(null)
+        try { mediaSession?.release() } catch (_: Exception) { }
         mediaSession = null
-
-        try {
-
-            if (::player.isInitialized) {
-
-                player.stop()
-                player.clearMediaItems()
-                player.release()
-            }
-
-        } catch (_: Exception) {
-        }
-
-        try {
-
-            stopForeground(
-                STOP_FOREGROUND_REMOVE
-            )
-
-        } catch (_: Exception) {
-        }
-
+        try { if (::player.isInitialized) player.release() } catch (_: Exception) { }
         super.onDestroy()
     }
+
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 }
