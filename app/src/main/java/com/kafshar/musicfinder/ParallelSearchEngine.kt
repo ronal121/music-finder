@@ -132,19 +132,16 @@ object ParallelSearchEngine {
             }
         }
 
-        // Additive content search: for WordPress-based music sites, the REST
-        // search endpoint indexes both post titles and post content. This lets
-        // a lyric line find a song even when that line is only present inside
-        // the page text and not in the result link title. The normal site
-        // search above remains unchanged and is always attempted first.
-        if (!Thread.currentThread().isInterrupted && out.size < MAX_RESULTS_PER_SITE) {
+        // Additive content search. The existing site-search logic above is
+        // intentionally untouched. Content candidates are always considered,
+        // even when the normal site search already produced eight results.
+        if (!Thread.currentThread().isInterrupted) {
             for (q in queries.take(2)) {
-                if (Thread.currentThread().isInterrupted || out.size >= MAX_RESULTS_PER_SITE) break
+                if (Thread.currentThread().isInterrupted) break
                 val results = searchWordPressContent(domain, q)
                 for (candidate in results) {
                     if (seen.add(canonical(candidate.url))) {
                         out += candidate
-                        if (out.size >= MAX_RESULTS_PER_SITE) break
                     }
                 }
             }
@@ -157,9 +154,10 @@ object ParallelSearchEngine {
     }
 
     /**
-     * WordPress's native search indexes post content as well as titles. It is
-     * deliberately an additive fallback so non-WordPress sites keep using the
-     * existing search logic exactly as before.
+     * WordPress native search supplies candidate pages. Each candidate is then
+     * opened and checked against the actual page text, so lyric-only matches
+     * can outrank unrelated title matches. This is additive and does not alter
+     * the existing site-search URLs or SearchEngine logic.
      */
     private fun searchWordPressContent(domain: String, query: String): List<Candidate> {
         val encoded = try {
@@ -177,7 +175,9 @@ object ParallelSearchEngine {
 
         try {
             val array = JSONArray(json)
-            for (i in 0 until array.length()) {
+            // Only inspect the strongest few WP candidates to keep this additive
+            // check cheap enough for the existing parallel-search timeout.
+            for (i in 0 until minOf(array.length(), 4)) {
                 if (Thread.currentThread().isInterrupted) break
 
                 val item = array.optJSONObject(i) ?: continue
@@ -194,16 +194,57 @@ object ParallelSearchEngine {
 
                 if (title.isBlank()) continue
 
+                val pageHtml = get(pageUrl)
+                val pageText = pageHtml
+                    ?.replace(Regex("(?is)<script\\b[^>]*>.*?</script>"), " ")
+                    ?.replace(Regex("(?is)<style\\b[^>]*>.*?</style>"), " ")
+                    ?.let {
+                        Html.fromHtml(it, Html.FROM_HTML_MODE_LEGACY)
+                            .toString()
+                            .replace(Regex("\\s+"), " ")
+                            .trim()
+                    }
+                    .orEmpty()
+
+                val normalizedQuery = SearchEngine.normalizeQuery(query).trim()
+                val normalizedTitle = SearchEngine.normalizeQuery(title)
+                val normalizedContent = SearchEngine.normalizeQuery(pageText)
+                val queryTokens = normalizedQuery
+                    .split(' ')
+                    .filter { it.length > 1 }
+                    .distinct()
+
+                if (queryTokens.isEmpty()) continue
+
+                val titleHits = queryTokens.count { normalizedTitle.contains(it) }
+                val contentHits = queryTokens.count { normalizedContent.contains(it) }
+                val allContentTokens = contentHits == queryTokens.size
+                val exactPhrase = normalizedQuery.length > 3 &&
+                    normalizedContent.contains(normalizedQuery)
                 val relevance = SearchEngine.similarity(query, title)
                 val sitePriority =
                     (ServerConfig.serverForUrl(pageUrl)?.priority ?: 0) / 10
+
+                // Content evidence deliberately dominates a weak title match.
+                val score =
+                    90 +
+                        titleHits * 18 +
+                        contentHits * 34 +
+                        if (allContentTokens) 70 else 0 +
+                        if (exactPhrase) 100 else 0 +
+                        relevance +
+                        sitePriority
+
+                // A WP search hit that has no query token anywhere in the
+                // actual page is not useful as a content result.
+                if (contentHits == 0 && titleHits == 0) continue
 
                 out += Candidate(
                     url = pageUrl.substringBefore('#').trimEnd('/'),
                     title = cleanTitle(title),
                     artist = "",
                     site = ServerConfig.siteName(pageUrl),
-                    score = 90 + relevance + sitePriority
+                    score = score
                 )
             }
         } catch (_: Exception) {
