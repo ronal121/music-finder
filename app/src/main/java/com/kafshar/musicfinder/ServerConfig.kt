@@ -16,6 +16,8 @@ data class MusicServer(
 object ServerConfig {
     const val GOOGLE_HOST = "google.com"
     private val youtubeDomains = setOf("youtube.com", "m.youtube.com", "youtu.be")
+    private val audioExtensions = setOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm")
+    private val obviousPageExtensions = setOf(".html", ".htm", ".json", ".xml", ".css", ".js", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico")
 
     val SERVERS: List<MusicServer> = listOf(
         MusicServer("beroosic.ir", 110), MusicServer("rozmusic.com", 100), MusicServer("nex1music.com", 99),
@@ -73,32 +75,35 @@ object ServerConfig {
     fun isAllowedMediaUrl(url: String, pageUrl: String? = null): Boolean {
         val host = extractHttpHost(url) ?: return false
         if (isYouTubeHost(host)) return false
+        if (isObviousNonMediaUrl(url)) return false
         if (serverFor(host)?.supportsStreaming == true) return true
         return looksLikeAudioUrl(url)
     }
 
+    fun isObviousNonMediaUrl(url: String): Boolean {
+        val path = url.substringBefore('?').substringBefore('#').lowercase()
+        return obviousPageExtensions.any { path.endsWith(it) }
+    }
+
+    fun hasAudioExtension(url: String): Boolean {
+        val path = url.substringBefore('?').substringBefore('#').lowercase()
+        return audioExtensions.any { path.endsWith(it) }
+    }
+
     fun looksLikeAudioUrl(url: String): Boolean {
         val l = url.lowercase()
-        return listOf(
-            ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm",
-            "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile", ".mp4"
+        return hasAudioExtension(url) || listOf(
+            "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile",
+            ".mp4", "/stream", "/audio/", "/media/", "mime=audio", "type=audio"
         ).any { l.contains(it) }
     }
 
-    /**
-     * Keep Google discovery broad. The app filters the returned links against
-     * MUSIC_SITES in extractGoogleResults(). A huge 40-domain OR expression
-     * causes Google to return poor/empty results for many Persian queries.
-     */
+    /** Keep Google discovery broad; server filtering happens after Google returns links. */
     fun searchQuery(song: String): String {
         val corrected = SearchEngine.correctedQuery(song).trim()
         if (corrected.isBlank()) return "music"
-
-        val clean = SearchEngine.withoutSearchNoise(corrected)
-            .replace(Regex("\\s+"), " ")
-            .trim()
+        val clean = SearchEngine.withoutSearchNoise(corrected).replace(Regex("\\s+"), " ").trim()
         if (clean.isBlank()) return "music"
-
         val phrase = "\"${clean.replace("\"", " ").trim()}\""
         return "$phrase آهنگ دانلود"
     }
