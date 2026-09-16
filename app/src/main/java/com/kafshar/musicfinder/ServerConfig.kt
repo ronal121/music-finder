@@ -32,7 +32,30 @@ object ServerConfig {
         MusicServer("mybia2music.com", 70), MusicServer("musics-fa.com", 69), MusicServer("pro.iraniandj.ir", 68),
         MusicServer("worldofmusic.ir", 67), MusicServer("iranmusic.ir", 66), MusicServer("sahand-music.ir", 65),
         MusicServer("nakaman-music.ir", 64), MusicServer("mokhtalefmusic.com", 63), MusicServer("joyamusic.ir", 62),
-        MusicServer("gisomusic.com", 61), MusicServer("melomusic.ir", 60)
+        MusicServer("gisomusic.com", 61), MusicServer("melomusic.ir", 60),
+
+        MusicServer("mojmusic.ir", 59), MusicServer("sarvnema.ir", 58), MusicServer("hailymusic.ir", 57),
+        MusicServer("biya2ahang.ir", 56), MusicServer("radiomazani.com", 55), MusicServer("musickordi.com", 54),
+        MusicServer("persianamusic.ir", 53), MusicServer("musicito.com", 52), MusicServer("mihanseda.com", 51),
+        MusicServer("takmusics.com", 50), MusicServer("rubik-music.com", 49), MusicServer("shabamusic.com", 48),
+        MusicServer("musicaz.ir", 47), MusicServer("azturk.ir", 46), MusicServer("delkash-music.ir", 45),
+        MusicServer("4zarb.com", 44), MusicServer("iranmusicazin.ir", 43), MusicServer("musictag.ir", 42),
+        MusicServer("melimusics.com", 41), MusicServer("download1music.ir", 40), MusicServer("talashdl.ir", 39),
+        MusicServer("sorud.com", 38), MusicServer("fnanen.com", 37), MusicServer("hibamusic.com", 36),
+        MusicServer("sevilmusics.com", 35), MusicServer("musicc.ir", 34), MusicServer("dornamusic.com", 33),
+        MusicServer("textahang.com", 32), MusicServer("lyricsfa.com", 31), MusicServer("musicsara.com", 30),
+        MusicServer("ahangestan.com", 29), MusicServer("musicg.ir", 28), MusicServer("musicfeed.ir", 27),
+        MusicServer("musics4u.ir", 26), MusicServer("musicjoo.ir", 25), MusicServer("musiceiranian.ir", 24),
+        MusicServer("persianhiphop.com", 23), MusicServer("rapfa.ir", 22), MusicServer("hiphopfa.com", 21),
+        MusicServer("musicisho.com", 20), MusicServer("musicema.com", 19), MusicServer("navaar.ir", 18),
+        MusicServer("musico.ir", 17), MusicServer("music-fa.ir", 16), MusicServer("ahangdl.ir", 15),
+        MusicServer("ahang98.com", 14), MusicServer("ahangchi.com", 13), MusicServer("music-irani.ir", 12),
+        MusicServer("iranmusicbox.com", 11), MusicServer("musicbaran.com", 10), MusicServer("musicsun.ir", 9),
+        MusicServer("musictop.ir", 8), MusicServer("musicday.ir", 7), MusicServer("musicbaz.ir", 6),
+        MusicServer("musicpouya.ir", 5), MusicServer("music98.ir", 4), MusicServer("musicparsi.ir", 3),
+        MusicServer("musicsara.net", 2), MusicServer("download-music.ir", 1), MusicServer("ahangdownload.com", 0),
+        MusicServer("musicsdownload.ir", -1), MusicServer("musiciranian.ir", -2), MusicServer("musiconline.ir", -3),
+        MusicServer("ahangestan.ir", -4), MusicServer("musicplus.ir", -5), MusicServer("musicnavaz.com", -6)
     )
 
     val MUSIC_HOSTS: Set<String>
@@ -87,8 +110,9 @@ object ServerConfig {
 
     /**
      * Keep Google discovery broad. The app filters the returned links against
-     * MUSIC_SITES in extractGoogleResults(). A huge 40-domain OR expression
-     * causes Google to return poor/empty results for many Persian queries.
+     * MUSIC_SITES in extractGoogleResults(). A huge domain list is kept here,
+     * while direct native search intentionally remains limited to the primary
+     * servers so the existing search flow is not slowed down or reordered.
      */
     fun searchQuery(song: String): String {
         val corrected = SearchEngine.correctedQuery(song).trim()
