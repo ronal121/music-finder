@@ -25,7 +25,10 @@ class HarmonizedButton @JvmOverloads constructor(
         setTextColor(0xFFF3F1F7.toInt())
         isClickable = true
         isFocusable = true
-        post { installSearchStatusBar() }
+        post {
+            installSearchStatusBar()
+            installClearQueryButton()
+        }
     }
 
     override fun setBackgroundTintList(tint: ColorStateList?) {
@@ -41,6 +44,16 @@ class HarmonizedButton @JvmOverloads constructor(
             .alpha(if (pressed) 0.72f else 1f)
             .setDuration(70L)
             .start()
+    }
+
+    private fun installClearQueryButton() {
+        if (id != R.id.clearQuery) return
+        setOnClickListener {
+            (context as? Activity)
+                ?.findViewById<EditText>(R.id.query)
+                ?.text
+                ?.clear()
+        }
     }
 
     private fun installSearchStatusBar() {
