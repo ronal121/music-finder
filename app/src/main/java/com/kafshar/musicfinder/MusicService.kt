@@ -18,9 +18,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.datasource.DataSource
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -68,7 +65,6 @@ class MusicService : MediaSessionService() {
     private var lastTitle = "Music Finder"
     private var lastArtist = "KAFSHAR"
     private var lastCover = ""
-    private var playbackReferer = ""
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -86,15 +82,7 @@ class MusicService : MediaSessionService() {
         startPlaybackForeground()
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         previousVolume = currentVolumePercent().coerceIn(1, 100)
-        val httpFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/128 Mobile Safari/537.36")
-        val dataSourceFactory = DataSource.Factory {
-            val dataSource = httpFactory.createDataSource()
-            if (playbackReferer.isNotBlank()) dataSource.setRequestProperty("Referer", playbackReferer)
-            dataSource
-        }
         player = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(dataSourceFactory))
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -129,7 +117,7 @@ class MusicService : MediaSessionService() {
                 if (uri.isNotBlank() && uri == retryingUri && retryCount < 1) {
                     retryCount = 1
                     handler.postDelayed({
-                        if (!released) loadAndPlay(uri, lastTitle, lastArtist, lastCover, resetRetry = false, referer = playbackReferer)
+                        if (!released) loadAndPlay(uri, lastTitle, lastArtist, lastCover, resetRetry = false)
                     }, 700L)
                 } else if (uri.isNotBlank()) {
                     player.pause()
@@ -143,13 +131,12 @@ class MusicService : MediaSessionService() {
         updateNotification()
     }
 
-    private fun loadAndPlay(url: String, title: String, artist: String, cover: String, resetRetry: Boolean = true, referer: String = "") {
+    private fun loadAndPlay(url: String, title: String, artist: String, cover: String, resetRetry: Boolean = true) {
         if (released || url.isBlank()) return
-        if (!ServerConfig.isAllowedMediaUrl(url, referer.takeIf { it.isNotBlank() })) {
+        if (!ServerConfig.isAllowedMediaUrl(url)) {
             publish("Unsupported media source")
             return
         }
-        playbackReferer = referer
         if (resetRetry) retryCount = 0
         retryingUri = url
         lastTitle = title.ifBlank { "Music Finder" }
@@ -319,7 +306,7 @@ class MusicService : MediaSessionService() {
             when (intent?.action) {
                 ACTION_PLAY -> {
                     val url = intent.getStringExtra(EXTRA_URL).orEmpty()
-                    if (url.isNotBlank()) loadAndPlay(url, intent.getStringExtra(EXTRA_TITLE).orEmpty(), intent.getStringExtra(EXTRA_ARTIST).orEmpty(), intent.getStringExtra(EXTRA_COVER).orEmpty(), referer = intent.getStringExtra("referer").orEmpty())
+                    if (url.isNotBlank()) loadAndPlay(url, intent.getStringExtra(EXTRA_TITLE).orEmpty(), intent.getStringExtra(EXTRA_ARTIST).orEmpty(), intent.getStringExtra(EXTRA_COVER).orEmpty())
                     else if (::player.isInitialized) player.play()
                 }
                 ACTION_PAUSE -> if (::player.isInitialized) player.pause()
@@ -327,7 +314,7 @@ class MusicService : MediaSessionService() {
                     if (!::player.isInitialized) return START_STICKY
                     val url = intent.getStringExtra(EXTRA_URL).orEmpty()
                     val currentUrl = player.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty()
-                    if (url.isNotBlank() && currentUrl != url) loadAndPlay(url, intent.getStringExtra(EXTRA_TITLE).orEmpty(), intent.getStringExtra(EXTRA_ARTIST).orEmpty(), intent.getStringExtra(EXTRA_COVER).orEmpty(), referer = intent.getStringExtra("referer").orEmpty())
+                    if (url.isNotBlank() && currentUrl != url) loadAndPlay(url, intent.getStringExtra(EXTRA_TITLE).orEmpty(), intent.getStringExtra(EXTRA_ARTIST).orEmpty(), intent.getStringExtra(EXTRA_COVER).orEmpty())
                     else if (player.isPlaying) player.pause() else player.play()
                 }
                 ACTION_STOP -> {

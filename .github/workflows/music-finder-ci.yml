@@ -42,6 +42,7 @@ jobs:
       - name: Unit tests
         run: gradle --no-daemon --stacktrace test
 
+      # Build the APK BEFORE lint so lint failures cannot prevent APK creation.
       - name: Assemble debug APK
         run: gradle --no-daemon --stacktrace assembleDebug
 
@@ -54,6 +55,8 @@ jobs:
           test -s "$APK"
           ls -lh "$APK"
 
+      # Upload immediately after a successful build. This step is independent
+      # of the later lint result, so a lint failure cannot remove the APK artifact.
       - name: Upload debug APK
         uses: actions/upload-artifact@v6
         with:

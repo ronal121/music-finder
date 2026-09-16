@@ -16,11 +16,7 @@ data class MusicServer(
 object ServerConfig {
     const val GOOGLE_HOST = "google.com"
     private val youtubeDomains = setOf("youtube.com", "m.youtube.com", "youtu.be")
-    private val audioExtensions = setOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm")
-    private val obviousPageExtensions = setOf(".html", ".htm", ".json", ".xml", ".css", ".js", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico")
 
-    // Keep the verified Run #33727462525 sources and add a wider set of
-    // Iranian music/media sites plus Iranian sites that publish foreign music.
     val SERVERS: List<MusicServer> = listOf(
         MusicServer("beroosic.ir", 110), MusicServer("rozmusic.com", 100), MusicServer("nex1music.com", 99),
         MusicServer("musicbaran.ir", 98), MusicServer("mymusicbaran.ir", 98), MusicServer("musicviral.ir", 97),
@@ -36,18 +32,7 @@ object ServerConfig {
         MusicServer("mybia2music.com", 70), MusicServer("musics-fa.com", 69), MusicServer("pro.iraniandj.ir", 68),
         MusicServer("worldofmusic.ir", 67), MusicServer("iranmusic.ir", 66), MusicServer("sahand-music.ir", 65),
         MusicServer("nakaman-music.ir", 64), MusicServer("mokhtalefmusic.com", 63), MusicServer("joyamusic.ir", 62),
-        MusicServer("gisomusic.com", 61), MusicServer("melomusic.ir", 60),
-
-        MusicServer("songsun.ir", 59), MusicServer("musicito.com", 58), MusicServer("sound98.com", 57),
-        MusicServer("farskids.com", 56), MusicServer("upsong.ir", 55), MusicServer("musictarin.com", 54),
-        MusicServer("instamusic.ir", 53), MusicServer("musicmodern.ir", 52), MusicServer("takmusics.com", 51),
-        MusicServer("musicfeed.ir", 50), MusicServer("mediak.ir", 49), MusicServer("kjmusic.ir", 48),
-        MusicServer("enfamusic.ir", 47), MusicServer("ritmapp.ir", 46), MusicServer("musicbazz.ir", 45),
-        MusicServer("faazmusic.com", 44), MusicServer("azlyrics.ir", 43), MusicServer("roohmusic.ir", 42),
-        MusicServer("ahaang.com", 41), MusicServer("topseda.ir", 40), MusicServer("ir-music.ir", 39),
-        MusicServer("dreamusic.ir", 38), MusicServer("ahang-baz.ir", 37), MusicServer("toptunes.ir", 36),
-        MusicServer("beepmusic.org", 35), MusicServer("itarane.com", 34), MusicServer("musicmedia.ir", 33),
-        MusicServer("musicsbaran.ir", 32), MusicServer("melovaz.net", 31), MusicServer("mp3lyric.us", 30)
+        MusicServer("gisomusic.com", 61), MusicServer("melomusic.ir", 60)
     )
 
     val MUSIC_HOSTS: Set<String>
@@ -88,35 +73,32 @@ object ServerConfig {
     fun isAllowedMediaUrl(url: String, pageUrl: String? = null): Boolean {
         val host = extractHttpHost(url) ?: return false
         if (isYouTubeHost(host)) return false
-        if (isObviousNonMediaUrl(url)) return false
         if (serverFor(host)?.supportsStreaming == true) return true
         return looksLikeAudioUrl(url)
     }
 
-    fun isObviousNonMediaUrl(url: String): Boolean {
-        val path = url.substringBefore('?').substringBefore('#').lowercase()
-        return obviousPageExtensions.any { path.endsWith(it) }
-    }
-
-    fun hasAudioExtension(url: String): Boolean {
-        val path = url.substringBefore('?').substringBefore('#').lowercase()
-        return audioExtensions.any { path.endsWith(it) }
-    }
-
     fun looksLikeAudioUrl(url: String): Boolean {
         val l = url.lowercase()
-        return hasAudioExtension(url) || listOf(
-            "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile",
-            ".mp4", "/stream", "/audio/", "/media/", "mime=audio", "type=audio"
+        return listOf(
+            ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm",
+            "audio/", "/download", "/dl/", "download.php", "getfile", "mediafile", ".mp4"
         ).any { l.contains(it) }
     }
 
-    /** Keep the exact broad-discovery Google query from Fix Google search query to use broad discovery #412. */
+    /**
+     * Keep Google discovery broad. The app filters the returned links against
+     * MUSIC_SITES in extractGoogleResults(). A huge 40-domain OR expression
+     * causes Google to return poor/empty results for many Persian queries.
+     */
     fun searchQuery(song: String): String {
         val corrected = SearchEngine.correctedQuery(song).trim()
         if (corrected.isBlank()) return "music"
-        val clean = SearchEngine.withoutSearchNoise(corrected).replace(Regex("\\s+"), " ").trim()
+
+        val clean = SearchEngine.withoutSearchNoise(corrected)
+            .replace(Regex("\\s+"), " ")
+            .trim()
         if (clean.isBlank()) return "music"
+
         val phrase = "\"${clean.replace("\"", " ").trim()}\""
         return "$phrase آهنگ دانلود"
     }
