@@ -19,6 +19,8 @@ object ServerConfig {
     private val audioExtensions = setOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".webm")
     private val obviousPageExtensions = setOf(".html", ".htm", ".json", ".xml", ".css", ".js", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico")
 
+    // Keep the verified Run #33727462525 sources and add a wider set of
+    // Iranian music/media sites plus Iranian sites that publish foreign music.
     val SERVERS: List<MusicServer> = listOf(
         MusicServer("beroosic.ir", 110), MusicServer("rozmusic.com", 100), MusicServer("nex1music.com", 99),
         MusicServer("musicbaran.ir", 98), MusicServer("mymusicbaran.ir", 98), MusicServer("musicviral.ir", 97),
@@ -34,7 +36,18 @@ object ServerConfig {
         MusicServer("mybia2music.com", 70), MusicServer("musics-fa.com", 69), MusicServer("pro.iraniandj.ir", 68),
         MusicServer("worldofmusic.ir", 67), MusicServer("iranmusic.ir", 66), MusicServer("sahand-music.ir", 65),
         MusicServer("nakaman-music.ir", 64), MusicServer("mokhtalefmusic.com", 63), MusicServer("joyamusic.ir", 62),
-        MusicServer("gisomusic.com", 61), MusicServer("melomusic.ir", 60)
+        MusicServer("gisomusic.com", 61), MusicServer("melomusic.ir", 60),
+
+        MusicServer("songsun.ir", 59), MusicServer("musicito.com", 58), MusicServer("sound98.com", 57),
+        MusicServer("farskids.com", 56), MusicServer("upsong.ir", 55), MusicServer("musictarin.com", 54),
+        MusicServer("instamusic.ir", 53), MusicServer("musicmodern.ir", 52), MusicServer("takmusics.com", 51),
+        MusicServer("musicfeed.ir", 50), MusicServer("mediak.ir", 49), MusicServer("kjmusic.ir", 48),
+        MusicServer("enfamusic.ir", 47), MusicServer("ritmapp.ir", 46), MusicServer("musicbazz.ir", 45),
+        MusicServer("faazmusic.com", 44), MusicServer("azlyrics.ir", 43), MusicServer("roohmusic.ir", 42),
+        MusicServer("ahaang.com", 41), MusicServer("topseda.ir", 40), MusicServer("ir-music.ir", 39),
+        MusicServer("dreamusic.ir", 38), MusicServer("ahang-baz.ir", 37), MusicServer("toptunes.ir", 36),
+        MusicServer("beepmusic.org", 35), MusicServer("itarane.com", 34), MusicServer("musicmedia.ir", 33),
+        MusicServer("musicsbaran.ir", 32), MusicServer("melovaz.net", 31), MusicServer("mp3lyric.us", 30)
     )
 
     val MUSIC_HOSTS: Set<String>
@@ -98,7 +111,7 @@ object ServerConfig {
         ).any { l.contains(it) }
     }
 
-    /** Keep Google discovery broad; server filtering happens after Google returns links. */
+    /** Keep the exact broad-discovery Google query from Fix Google search query to use broad discovery #412. */
     fun searchQuery(song: String): String {
         val corrected = SearchEngine.correctedQuery(song).trim()
         if (corrected.isBlank()) return "music"
