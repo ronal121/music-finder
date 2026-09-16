@@ -1,6 +1,7 @@
 package com.kafshar.musicfinder
 
 import android.text.Html
+import org.json.JSONArray
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
@@ -131,7 +132,88 @@ object ParallelSearchEngine {
             }
         }
 
+        // Additive content search: for WordPress-based music sites, the REST
+        // search endpoint indexes both post titles and post content. This lets
+        // a lyric line find a song even when that line is only present inside
+        // the page text and not in the result link title. The normal site
+        // search above remains unchanged and is always attempted first.
+        if (!Thread.currentThread().isInterrupted && out.size < MAX_RESULTS_PER_SITE) {
+            for (q in queries.take(2)) {
+                if (Thread.currentThread().isInterrupted || out.size >= MAX_RESULTS_PER_SITE) break
+                val results = searchWordPressContent(domain, q)
+                for (candidate in results) {
+                    if (seen.add(canonical(candidate.url))) {
+                        out += candidate
+                        if (out.size >= MAX_RESULTS_PER_SITE) break
+                    }
+                }
+            }
+        }
+
         return out
+            .distinctBy { canonical(it.url) }
+            .sortedByDescending { it.score }
+            .take(MAX_RESULTS_PER_SITE)
+    }
+
+    /**
+     * WordPress's native search indexes post content as well as titles. It is
+     * deliberately an additive fallback so non-WordPress sites keep using the
+     * existing search logic exactly as before.
+     */
+    private fun searchWordPressContent(domain: String, query: String): List<Candidate> {
+        val encoded = try {
+            URLEncoder.encode(query, "UTF-8")
+        } catch (_: Exception) {
+            return emptyList()
+        }
+
+        val url =
+            "https://$domain/wp-json/wp/v2/search" +
+                "?search=$encoded&per_page=8&subtype=any&_fields=id,title,url,subtype"
+
+        val json = get(url) ?: return emptyList()
+        val out = ArrayList<Candidate>()
+
+        try {
+            val array = JSONArray(json)
+            for (i in 0 until array.length()) {
+                if (Thread.currentThread().isInterrupted) break
+
+                val item = array.optJSONObject(i) ?: continue
+                val pageUrl = item.optString("url").trim()
+                if (pageUrl.isBlank() || !ServerConfig.isAllowedPageUrl(pageUrl)) continue
+
+                val titleObject = item.optJSONObject("title")
+                val title = Html.fromHtml(
+                    titleObject?.optString("rendered").orEmpty(),
+                    Html.FROM_HTML_MODE_LEGACY
+                ).toString()
+                    .replace(Regex("\\s+"), " ")
+                    .trim()
+
+                if (title.isBlank()) continue
+
+                val relevance = SearchEngine.similarity(query, title)
+                val sitePriority =
+                    (ServerConfig.serverForUrl(pageUrl)?.priority ?: 0) / 10
+
+                out += Candidate(
+                    url = pageUrl.substringBefore('#').trimEnd('/'),
+                    title = cleanTitle(title),
+                    artist = "",
+                    site = ServerConfig.siteName(pageUrl),
+                    score = 90 + relevance + sitePriority
+                )
+            }
+        } catch (_: Exception) {
+            return emptyList()
+        }
+
+        return out
+            .distinctBy { canonical(it.url) }
+            .sortedByDescending { it.score }
+            .take(MAX_RESULTS_PER_SITE)
     }
 
     private fun get(url: String): String? {
