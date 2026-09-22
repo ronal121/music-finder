@@ -80,6 +80,8 @@ class MainActivity : Activity() {
     private lateinit var libraryButton: TextView
     private lateinit var historyButton: TextView
     private lateinit var historyContainer: LinearLayout
+    private lateinit var updateButton: TextView
+    private lateinit var updateStatus: TextView
     private lateinit var resultsContainer: LinearLayout
     private lateinit var vinyl: VinylView
 
@@ -91,6 +93,7 @@ class MainActivity : Activity() {
 
     private val io = Executors.newFixedThreadPool(4)
     private val downloadExecutor = Executors.newSingleThreadExecutor()
+    private lateinit var updater: InAppUpdater
 
     private var downloadFuture: Future<*>? = null
 
@@ -194,6 +197,7 @@ class MainActivity : Activity() {
         setContentView(R.layout.activity_main)
 
         bindViews()
+        updater = InAppUpdater(this)
         setupWebView()
         setupButtons()
         setupVolumeControl()
@@ -239,6 +243,8 @@ class MainActivity : Activity() {
         saveButton = findViewById(R.id.saveButton)
         libraryButton = findViewById(R.id.libraryButton)
         historyButton = findViewById(R.id.historyButton)
+        updateButton = findViewById(R.id.updateButton)
+        updateStatus = findViewById(R.id.updateStatus)
 
         historyContainer = findViewById(R.id.historyContainer)
         resultsContainer = findViewById(R.id.resultsContainer)
@@ -389,6 +395,13 @@ class MainActivity : Activity() {
         historyButton.setOnClickListener {
             toggleHistory()
         }
+
+        updateButton.setOnClickListener {
+            updater.checkAndInstall { message, installing ->
+                updateStatus.text = message
+                updateButton.text = if (installing) "در حال دریافت…" else "↻  بررسی آپدیت"
+            }
+        }
     }
 
     private fun setupVolumeControl() {
@@ -475,7 +488,8 @@ class MainActivity : Activity() {
                 pauseDownloadButton,
                 saveButton,
                 libraryButton,
-                historyButton
+                historyButton,
+                updateButton
             )
 
         seekBar.progressTintList =
