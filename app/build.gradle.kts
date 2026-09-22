@@ -14,18 +14,15 @@ android {
         val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
         versionCode = ciRunNumber?.coerceAtLeast(13) ?: 13
         versionName = if (ciRunNumber != null) "1.3.$ciRunNumber" else "1.3"
+        buildConfigField(
+            "String",
+            "BUILD_COMMIT",
+            "\"${System.getenv("GITHUB_SHA") ?: "local"}\""
+        )
     }
 
     buildFeatures {
         buildConfig = true
-    }
-
-    defaultConfig {
-        buildConfigField(
-            "String",
-            "BUILD_COMMIT",
-            ""${System.getenv("GITHUB_SHA") ?: "local"}""
-        )
     }
 
     compileOptions {
