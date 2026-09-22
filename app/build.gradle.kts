@@ -11,8 +11,21 @@ android {
         applicationId = "com.kafshar.musicfinder"
         minSdk = 24
         targetSdk = 35
-        versionCode = 13
-        versionName = "1.3"
+        val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+        versionCode = ciRunNumber?.coerceAtLeast(13) ?: 13
+        versionName = if (ciRunNumber != null) "1.3.$ciRunNumber" else "1.3"
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    defaultConfig {
+        buildConfigField(
+            "String",
+            "BUILD_COMMIT",
+            ""${System.getenv("GITHUB_SHA") ?: "local"}""
+        )
     }
 
     compileOptions {
