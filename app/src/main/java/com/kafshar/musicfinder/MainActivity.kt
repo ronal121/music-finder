@@ -498,7 +498,6 @@ class MainActivity : Activity() {
             )
         }
     }
-
     private fun requestNotificationPermission() {
         if (
             Build.VERSION.SDK_INT >= 33 &&
@@ -997,8 +996,7 @@ class MainActivity : Activity() {
                       if(
                         q &&
                         q.indexOf('http')===0
-                      ){
-                        return decodeURIComponent(q);
+                      ){                        return decodeURIComponent(q);
                       }
                     }
 
@@ -1382,10 +1380,18 @@ class MainActivity : Activity() {
         if (metadataCoverage >= 60) return true
         if (metadataCoverage >= 35 && bodyCoverage >= 70) return true
 
-        return tokens.size <= 2 &&
+        // Lyrics-style queries may identify the song from page text
+        // even when the title contains only the track name.
+        if (
+            metadataCoverage >= 20 &&
             bodyCoverage >= 80 &&
             title.isNotBlank() &&
             title != "Music"
+        ) {
+            return true
+        }
+
+        return false
     }
 
     private fun finishSearch() {
@@ -1497,7 +1503,6 @@ class MainActivity : Activity() {
     }
 
     private fun restoreSearchResults() {
-
         val data =
             getSharedPreferences(
                 "search_results",
@@ -1997,88 +2002,3 @@ class MainActivity : Activity() {
 
         durationText.text =
             formatTime(d)
-
-        playButton.text =
-            if (playing) {
-                "Ⅱ"
-            } else {
-                "▶"
-            }
-
-        if (playing) {
-            vinyl.startRotation()
-        } else {
-            vinyl.stopRotation()
-        }
-    }
-
-    private fun formatTime(
-        ms: Long
-    ): String {
-
-        val total =
-            (ms / 1000)
-                .coerceAtLeast(0)
-
-        return String.format(
-            Locale.US,
-            "%02d:%02d",
-            total / 60,
-            total % 60
-        )
-    }
-
-    private fun updateActiveResultHighlight(
-        mediaUrl: String
-    ) {
-
-        if (mediaUrl.isBlank()) return
-
-        currentAudioUrl =
-            mediaUrl
-
-        val index =
-            songs.indexOfFirst {
-                it.url == mediaUrl
-            }
-
-        if (index >= 0) {
-
-            currentIndex = index
-
-            currentSong =
-                songs[index]
-
-            if (
-                titleText.text.isNullOrBlank() ||
-                titleText.text.toString()
-                    .equals(
-                        "Music",
-                        true
-                    )
-            ) {
-                titleText.text =
-                    songs[index].title
-            }
-
-            if (
-                artistText.text.isNullOrBlank() ||
-                artistText.text.toString()
-                    .equals(
-                        "Unknown Artist",
-                        true
-                    )
-            ) {
-                artistText.text =
-                    songs[index].artist
-            }
-        }
-    }
-
-    private fun loadCoverToVinyl(
-        url: String
-    ) {
-
-        if (url.isBlank()) return
-
-        io.execute {
