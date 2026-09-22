@@ -1,3 +1,67 @@
+name: Music Finder - Full CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: music-finder-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Test + Build + Lint APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+          cache-read-only: false
+
+      - name: Verify Gradle
+        run: gradle --version
+
+      - name: Unit tests
+        run: gradle --no-daemon --stacktrace test
+
+      - name: Assemble debug APK
+        run: gradle --no-daemon --stacktrace assembleDebug
+
+      - name: Verify APK exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          test -s "$APK"
+          ls -lh "$APK"
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: music-finder-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Android lint
         run: gradle --no-daemon --stacktrace lint
 
@@ -8,9 +72,9 @@
           set -euo pipefail
           cat > update.json <<EOF
           {
-            "commit": "${ github.sha }",
-            "versionCode": ${ github.run_number },
-            "versionName": "1.3.${ github.run_number }",
+            "commit": "${{ github.sha }}",
+            "versionCode": ${{ github.run_number }},
+            "versionName": "1.3.${{ github.run_number }}",
             "apk": "music-finder-debug.apk"
           }
           EOF
@@ -19,7 +83,7 @@
       - name: Publish latest successful Full CI
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
-          GH_TOKEN: ${ github.token }
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
