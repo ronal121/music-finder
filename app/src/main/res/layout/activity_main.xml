@@ -61,6 +61,8 @@
             <TextView android:id="@+id/downloadText" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:gravity="center" android:textColor="@color/muted" android:textSize="11sp" android:visibility="gone"/>
             <com.kafshar.musicfinder.HarmonizedButton android:id="@+id/historyButton" android:layout_width="match_parent" android:layout_height="50dp" android:layout_marginTop="10dp" android:gravity="center" android:background="@drawable/bg_secondary_button" android:text="History" android:textColor="@color/white" android:textSize="13sp"/>
             <LinearLayout android:id="@+id/historyContainer" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="vertical" android:visibility="gone"/>
+            <com.kafshar.musicfinder.HarmonizedButton android:id="@+id/updateButton" android:layout_width="match_parent" android:layout_height="50dp" android:layout_marginTop="12dp" android:gravity="center" android:background="@drawable/bg_secondary_button" android:text="↻  بررسی آپدیت" android:textColor="@color/white" android:textSize="13sp" android:contentDescription="Check for app updates"/>
+            <TextView android:id="@+id/updateStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:gravity="center" android:textColor="@color/muted" android:textSize="11sp" android:text=""/>
         </LinearLayout>
     </ScrollView>
     <WebView android:id="@+id/web" android:layout_width="1dp" android:layout_height="1dp" android:visibility="visible" tools:ignore="WebViewLayout" />
