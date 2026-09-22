@@ -57,6 +57,7 @@ class MainActivity : Activity() {
     private lateinit var web: WebView
     private lateinit var query: EditText
     private lateinit var status: TextView
+    private lateinit var searchProgress: ProgressBar
     private lateinit var titleText: TextView
     private lateinit var artistText: TextView
     private lateinit var lyricsText: TextView
@@ -200,6 +201,7 @@ class MainActivity : Activity() {
         requestNotificationPermission()
 
         status.text = "نام آهنگ یا خواننده را جستجو کنید"
+        searchProgress.progress = 0
     }
 
     private fun bindViews() {
@@ -207,6 +209,7 @@ class MainActivity : Activity() {
         query = findViewById(R.id.query)
 
         status = findViewById(R.id.status)
+        searchProgress = findViewById(R.id.searchProgress)
 
         titleText = findViewById(R.id.titleText)
         artistText = findViewById(R.id.artistText)
@@ -497,7 +500,6 @@ class MainActivity : Activity() {
     }
 
     private fun requestNotificationPermission() {
-
         if (
             Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(
@@ -525,6 +527,7 @@ class MainActivity : Activity() {
 
                 resultGeneration = searchGeneration
                 resultPageIndex = 0
+                searchProgress.progress = 20
 
                 resultPages =
                     raw.orEmpty()
@@ -569,10 +572,10 @@ class MainActivity : Activity() {
                     raw.orEmpty()
                         .split(
                             "###",
-                            limit = 4
+                            limit = 5
                         )
 
-                if (parts.size < 4) {
+                if (parts.size < 5) {
                     finishCurrentResultPage()
                     return@runOnUiThread
                 }
@@ -607,41 +610,42 @@ class MainActivity : Activity() {
                         }
                         .orEmpty()
 
+                val pageText =
+                    decode(parts[4])
+                        .take(8000)
+
                 if (
+                    isRelevantMusicResult(
+                        title,
+                        artist,
+                        pageText
+                    ) &&
                     audio.isNotBlank() &&
                     ServerConfig.isAllowedMediaUrl(
                         audio
                     )
                 ) {
-
                     val song =
                         SongResult(
                             audio,
                             title,
                             artist,
-                            getSiteName(
-                                expectedPageUrl
-                            ),
+                            getSiteName(expectedPageUrl),
                             cover
                         )
 
-                    if (
-                        songs.none {
-                            it.url == song.url
-                        }
-                    ) {
-
+                    if (songs.none { it.url == song.url }) {
                         songs.add(song)
-
-                        addSongView(
-                            song,
-                            songs.lastIndex
-                        )
-
+                        addSongView(song, songs.lastIndex)
                         status.text =
-                            "${songs.size} آهنگ پیدا شد"
+                            "${songs.size} آهنگ مرتبط پیدا شد"
                     }
                 }
+
+                val total = resultPages.size.coerceAtLeast(1)
+                val done = resultPageIndex.coerceAtMost(total)
+                searchProgress.progress =
+                    (25 + done * 70 / total).coerceIn(25, 95)
 
                 finishCurrentResultPage()
             }
@@ -862,6 +866,7 @@ class MainActivity : Activity() {
         titleText.text = text
         artistText.text = "در حال جستجو..."
         status.text = "در حال جستجوی منابع موسیقی..."
+        searchProgress.progress = 3
         seekBar.progress = 0
         currentTimeText.text = "00:00"
         durationText.text = "00:00"
@@ -876,11 +881,13 @@ class MainActivity : Activity() {
                     .distinctBy { it.substringBefore("#").trimEnd('/').lowercase() }
                     .take(60)
                 resultPageIndex = 0
+                searchProgress.progress = 25
                 if (resultPages.isEmpty()) {
                     status.text = "منابع مستقیم نتیجه‌ای ندادند؛ در حال جستجوی جایگزین..."
                     loadGoogleFallback(text, generation)
                 } else {
-                    status.text = "${resultPages.size} صفحه پیدا شد؛ در حال استخراج آهنگ..."
+                    status.text = "${resultPages.size} صفحه پیدا شد؛ در حال استخراج و اعتبارسنجی..."
+                    searchProgress.progress = 25
                     processNextResultPage()
                 }
             }
@@ -997,8 +1004,7 @@ class MainActivity : Activity() {
 
                     return x.href;
 
-                  }catch(e){
-                    return h;
+                  }catch(e){                    return h;
                   }
                 }
 
@@ -1139,6 +1145,18 @@ class MainActivity : Activity() {
                 if(im)
                   cover=im.content||'';
 
+                var bodyText=
+                  document.body ?
+                  (document.body.innerText||'') :
+                  '';
+
+                bodyText=
+                  bodyText
+                    .replace(/[\r\n\t]+/g,' ')
+                    .replace(/\s+/g,' ')
+                    .trim()
+                    .slice(0,8000);
+
                 var els=
                   document.querySelectorAll(
                     'audio source,audio,video source,video,a'
@@ -1185,7 +1203,9 @@ class MainActivity : Activity() {
                   '###'+
                   encodeURIComponent(
                     aud.join('|||')
-                  )
+                  )+
+                  '###'+
+                  encodeURIComponent(bodyText)
                 );
 
               }catch(e){
@@ -1237,6 +1257,11 @@ class MainActivity : Activity() {
                 .trim()
 
         resultPageIndex++
+
+        val totalPages = resultPages.size.coerceAtLeast(1)
+        searchProgress.progress =
+            (25 + ((resultPageIndex - 1).coerceAtLeast(0) * 70 / totalPages))
+                .coerceIn(25, 95)
 
         if (
             url.isBlank() ||
@@ -1304,6 +1329,65 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun isRelevantMusicResult(
+        title: String,
+        artist: String,
+        pageText: String
+    ): Boolean {
+        val cleanQuery =
+            SearchEngine.withoutSearchNoise(
+                SearchEngine.correctedQuery(
+                    query.text.toString()
+                )
+            ).trim()
+
+        if (cleanQuery.isBlank()) return true
+
+        val metadata =
+            SearchEngine.normalizeQuery("$title $artist")
+        val body =
+            SearchEngine.normalizeQuery(pageText)
+
+        val tokens =
+            SearchEngine.normalizeQuery(cleanQuery)
+                .split(' ')
+                .filter { it.length >= 2 }
+                .distinct()
+
+        if (tokens.isEmpty()) return true
+
+        fun coverage(text: String): Int {
+            if (text.isBlank()) return 0
+            val words = text.split(' ').filter { it.isNotBlank() }
+            if (words.isEmpty()) return 0
+
+            var matched = 0
+            for (token in tokens) {
+                val exact = words.any {
+                    it == token ||
+                        it.contains(token) ||
+                        (token.contains(it) && it.length >= 3)
+                }
+                val fuzzy = !exact && words.any {
+                    SearchEngine.similarity(token, it) >= 82
+                }
+                if (exact || fuzzy) matched++
+            }
+            return matched * 100 / tokens.size
+        }
+
+        val metadataCoverage = coverage(metadata)
+        val bodyCoverage = coverage(body)
+
+        if (metadataCoverage >= 60) return true
+        if (metadataCoverage >= 35 && bodyCoverage >= 70) return true
+
+        return tokens.size <= 2 &&
+            bodyCoverage >= 80 &&
+            title.isNotBlank() &&
+            title != "Music"
+    }
+
     private fun finishSearch() {
 
         if (destroyed) return
@@ -1318,10 +1402,12 @@ class MainActivity : Activity() {
 
         status.text =
             if (songs.isEmpty()) {
-                "آهنگ قابل پخش پیدا نشد"
+                "آهنگ مرتبط و قابل پخش پیدا نشد"
             } else {
-                "${songs.size} نتیجه پیدا شد"
+                "${songs.size} آهنگ مرتبط پیدا شد"
             }
+
+        searchProgress.progress = 100
 
         if (
             songs.isNotEmpty() &&
@@ -1497,8 +1583,7 @@ class MainActivity : Activity() {
                     0xFF15151D.toInt()
                 )
 
-                setOnClickListener {
-                    playSong(song)
+                setOnClickListener {                    playSong(song)
                 }
             }
 
@@ -1997,917 +2082,3 @@ class MainActivity : Activity() {
         if (url.isBlank()) return
 
         io.execute {
-
-            try {
-
-                val connection =
-                    URL(url)
-                        .openConnection()
-                        as HttpURLConnection
-
-                connection.connectTimeout = 5000
-                connection.readTimeout = 5000
-                connection.instanceFollowRedirects = true
-
-                connection.connect()
-
-                val bytes =
-                    connection.inputStream
-                        .use {
-                            it.readBytes()
-                        }
-
-                connection.disconnect()
-
-                val bitmap =
-                    BitmapFactory.decodeByteArray(
-                        bytes,
-                        0,
-                        bytes.size
-                    )
-
-                if (
-                    bitmap != null &&
-                    !destroyed
-                ) {
-
-                    runOnUiThread {
-
-                        if (!destroyed) {
-                            vinyl.setCover(
-                                bitmap
-                            )
-                        }
-                    }
-                }
-
-            } catch (_: Exception) {
-            }
-        }
-    }
-
-    private fun clearLyrics() {
-
-        lyricsText.text = ""
-
-        lyricsText.visibility =
-            View.GONE
-    }
-
-    private fun loadLyricsFor(
-        title: String,
-        artist: String
-    ) {
-
-        if (
-            title.isBlank() ||
-            destroyed
-        ) {
-            return
-        }
-
-        lyricsText.text = ""
-
-        lyricsText.visibility =
-            View.GONE
-
-        io.execute {
-
-            try {
-
-                val url =
-                    "https://api.lyrics.ovh/v1/" +
-                    "${URLEncoder.encode(artist, "UTF-8")}/" +
-                    URLEncoder.encode(
-                        title,
-                        "UTF-8"
-                    )
-
-                val connection =
-                    URL(url)
-                        .openConnection()
-                        as HttpURLConnection
-
-                connection.connectTimeout = 4000
-                connection.readTimeout = 5000
-
-                connection.connect()
-
-                if (
-                    connection.responseCode !in 200..299
-                ) {
-
-                    connection.disconnect()
-
-                    return@execute
-                }
-
-                val text =
-                    connection.inputStream
-                        .bufferedReader()
-                        .use {
-                            it.readText()
-                        }
-
-                connection.disconnect()
-
-                val lyrics =
-                    Regex(
-                        "\\\"lyrics\\\"\\s*:\\s*\\\"(.*?)\\\"",
-                        RegexOption.DOT_MATCHES_ALL
-                    )
-                        .find(text)
-                        ?.groupValues
-                        ?.getOrNull(1)
-                        ?.replace(
-                            "\\n",
-                            "\n"
-                        )
-                        ?.replace(
-                            "\\\"",
-                            "\""
-                        )
-
-                if (
-                    !lyrics.isNullOrBlank() &&
-                    !destroyed
-                ) {
-
-                    runOnUiThread {
-
-                        if (!destroyed) {
-
-                            lyricsText.text =
-                                lyrics
-
-                            lyricsText.visibility =
-                                View.VISIBLE
-                        }
-                    }
-                }
-
-            } catch (_: Exception) {
-            }
-        }
-    }
-
-    private fun getSiteName(
-        url: String
-    ): String =
-        ServerConfig.siteName(url)
-
-    private fun decode(
-        value: String
-    ): String =
-        try {
-            URLDecoder.decode(
-                value,
-                "UTF-8"
-            )
-        } catch (_: Exception) {
-            value
-        }
-
-    private fun cleanTitle(
-        value: String
-    ): String =
-        value
-            .replace(
-                Regex("\\s+"),
-                " "
-            )
-            .trim()
-
-    private fun saveCurrentSong() {
-
-        val song =
-            currentSong
-                ?: songs.getOrNull(
-                    currentIndex
-                )
-
-        if (song == null) {
-
-            Toast.makeText(
-                this,
-                "آهنگی انتخاب نشده",
-                Toast.LENGTH_SHORT
-            ).show()
-
-            return
-        }
-
-        try {
-
-            LibraryManager.add(
-                this,
-                song
-            )
-
-            Toast.makeText(
-                this,
-                "به کتابخانه اضافه شد",
-                Toast.LENGTH_SHORT
-            ).show()
-
-        } catch (_: Exception) {
-
-            Toast.makeText(
-                this,
-                "ذخیره آهنگ انجام نشد",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-    }
-
-    private fun saveHistory(
-        song: SongResult
-    ) {
-
-        val list =
-            getHistory()
-                .filter {
-                    it.url != song.url
-                }
-                .toMutableList()
-
-        list.add(
-            0,
-            song
-        )
-
-        val data =
-            list
-                .take(100)
-                .joinToString("\n") {
-
-                    listOf(
-                        it.url,
-                        it.title,
-                        it.artist,
-                        it.site,
-                        it.cover
-                    ).joinToString(
-                        "|||"
-                    )
-                }
-
-        getSharedPreferences(
-            "history",
-            MODE_PRIVATE
-        )
-            .edit()
-            .putString(
-                "songs",
-                data
-            )
-            .apply()
-    }
-
-    private fun getHistory(): List<SongResult> {
-
-        val data =
-            getSharedPreferences(
-                "history",
-                MODE_PRIVATE
-            )
-                .getString(
-                    "songs",
-                    ""
-                )
-                .orEmpty()
-
-        if (data.isBlank()) {
-            return emptyList()
-        }
-
-        return data
-            .split("\n")
-            .mapNotNull {
-
-                val p =
-                    it.split(
-                        "|||",
-                        limit = 5
-                    )
-
-                if (
-                    p.size == 5 &&
-                    p[0].isNotBlank()
-                ) {
-
-                    SongResult(
-                        p[0],
-                        p[1],
-                        p[2],
-                        p[3],
-                        p[4]
-                    )
-
-                } else {
-                    null
-                }
-            }
-    }
-
-    private fun toggleHistory() {
-
-        if (
-            historyContainer.visibility ==
-            View.VISIBLE
-        ) {
-
-            historyContainer.visibility =
-                View.GONE
-
-            return
-        }
-
-        historyContainer.removeAllViews()
-
-        getHistory()
-            .take(30)
-            .forEachIndexed {
-                i,
-                song ->
-
-                val view =
-                    TextView(this).apply {
-
-                        text =
-                            "${i + 1}. ${song.title} — ${song.artist}"
-
-                        textSize = 13f
-
-                        setTextColor(
-                            0xFFFFFFFF.toInt()
-                        )
-
-                        setPadding(
-                            12,
-                            14,
-                            12,
-                            14
-                        )
-
-                        setOnClickListener {
-                            playSong(song)
-                        }
-                    }
-
-                historyContainer.addView(
-                    view
-                )
-            }
-
-        historyContainer.visibility =
-            View.VISIBLE
-    }
-
-    private fun downloadCurrentSong() {
-
-        val song =
-            currentSong
-                ?: songs.getOrNull(
-                    currentIndex
-                )
-
-        if (
-            song == null ||
-            song.url.isBlank()
-        ) {
-
-            Toast.makeText(
-                this,
-                "آهنگی برای دانلود انتخاب نشده",
-                Toast.LENGTH_SHORT
-            ).show()
-
-            return
-        }
-
-        if (
-            downloadFuture?.isDone == false
-        ) {
-
-            Toast.makeText(
-                this,
-                "دانلود در حال انجام است",
-                Toast.LENGTH_SHORT
-            ).show()
-
-            return
-        }
-
-        cancelDownloadRequested = false
-        pauseDownloadRequested = false
-
-        downloadProgress.visibility =
-            View.VISIBLE
-
-        downloadText.visibility =
-            View.VISIBLE
-
-        cancelDownloadButton.visibility =
-            View.VISIBLE
-
-        pauseDownloadButton.visibility =
-            View.VISIBLE
-
-        downloadProgress.progress = 0
-
-        downloadText.text =
-            "در حال دانلود..."
-
-        pauseDownloadButton.text =
-            "Ⅱ"
-
-        downloadFuture =
-            downloadExecutor.submit {
-
-                downloadSong(song)
-            }
-    }
-
-    private fun downloadSong(
-        song: SongResult
-    ) {
-
-        var outputUri:
-            android.net.Uri? = null
-
-        var connection:
-            HttpURLConnection? = null
-
-        try {
-
-            connection =
-                URL(song.url)
-                    .openConnection()
-                    as HttpURLConnection
-
-            activeConnection =
-                connection
-
-            connection.connectTimeout =
-                10000
-
-            connection.readTimeout =
-                15000
-
-            connection.instanceFollowRedirects =
-                true
-
-            connection.connect()
-
-            val response =
-                connection.responseCode
-
-            if (
-                response !in 200..299
-            ) {
-                throw Exception(
-                    "HTTP $response"
-                )
-            }
-
-            val length =
-                connection.contentLengthLong
-
-            val name =
-                cleanTitle(
-                    song.title
-                )
-                    .ifBlank {
-                        "music"
-                    }
-                    .replace(
-                        Regex(
-                            "[^A-Za-z0-9_\\- ]"
-                        ),
-                        "_"
-                    )
-                    .take(60)
-                    + ".mp3"
-
-            if (
-                Build.VERSION.SDK_INT >= 29
-            ) {
-
-                val values =
-                    ContentValues().apply {
-
-                        put(
-                            MediaStore.Downloads.DISPLAY_NAME,
-                            name
-                        )
-
-                        put(
-                            MediaStore.Downloads.MIME_TYPE,
-                            "audio/mpeg"
-                        )
-
-                        put(
-                            MediaStore.Downloads.RELATIVE_PATH,
-                            Environment.DIRECTORY_DOWNLOADS +
-                            "/MusicFinder"
-                        )
-                    }
-
-                outputUri =
-                    contentResolver.insert(
-                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                        values
-                    )
-                        ?: throw Exception(
-                            "storage"
-                        )
-
-                val outputStream =
-                    contentResolver
-                        .openOutputStream(
-                            outputUri
-                        )
-                        ?: throw Exception(
-                            "output"
-                        )
-
-                outputStream.use { out ->
-
-                    connection.inputStream.use {
-                        input ->
-
-                        copyDownload(
-                            input,
-                            out,
-                            length
-                        )
-                    }
-                }
-
-            } else {
-
-                val dir =
-                    Environment
-                        .getExternalStoragePublicDirectory(
-                            Environment.DIRECTORY_DOWNLOADS
-                        )
-
-                val folder =
-                    java.io.File(
-                        dir,
-                        "MusicFinder"
-                    )
-
-                if (!folder.exists()) {
-                    folder.mkdirs()
-                }
-
-                val file =
-                    java.io.File(
-                        folder,
-                        name
-                    )
-
-                FileOutputStream(file).use {
-                    out ->
-
-                    connection.inputStream.use {
-                        input ->
-
-                        copyDownload(
-                            input,
-                            out,
-                            length
-                        )
-                    }
-                }
-            }
-
-            if (
-                !cancelDownloadRequested
-            ) {
-
-                runOnUiThread {
-
-                    if (!destroyed) {
-
-                        downloadText.text =
-                            "دانلود کامل شد"
-
-                        downloadProgress.progress =
-                            100
-                    }
-                }
-
-            } else {
-
-                outputUri?.let {
-
-                    try {
-                        contentResolver.delete(
-                            it,
-                            null,
-                            null
-                        )
-                    } catch (_: Exception) {
-                    }
-                }
-            }
-
-        } catch (e: Exception) {
-
-            if (
-                !cancelDownloadRequested &&
-                !destroyed
-            ) {
-
-                runOnUiThread {
-
-                    downloadText.text =
-                        "خطا در دانلود"
-                }
-            }
-
-        } finally {
-
-            try {
-                connection?.disconnect()
-            } catch (_: Exception) {
-            }
-
-            activeConnection = null
-
-            runOnUiThread {
-
-                if (!destroyed) {
-
-                    handler.postDelayed(
-                        {
-
-                            downloadProgress.visibility =
-                                View.GONE
-
-                            cancelDownloadButton.visibility =
-                                View.GONE
-
-                            pauseDownloadButton.visibility =
-                                View.GONE
-
-                        },
-                        1200L
-                    )
-                }
-            }
-        }
-    }
-
-    private fun copyDownload(
-        input: java.io.InputStream,
-        out: java.io.OutputStream,
-        total: Long
-    ) {
-
-        val buffer =
-            ByteArray(32 * 1024)
-
-        var done = 0L
-
-        while (true) {
-
-            if (
-                cancelDownloadRequested
-            ) {
-                break
-            }
-
-            while (
-                pauseDownloadRequested &&
-                !cancelDownloadRequested
-            ) {
-
-                try {
-                    Thread.sleep(150)
-                } catch (
-                    e: InterruptedException
-                ) {
-                    Thread.currentThread()
-                        .interrupt()
-                    return
-                }
-            }
-
-            val count =
-                try {
-                    input.read(buffer)
-                } catch (
-                    e: Exception
-                ) {
-                    if (
-                        cancelDownloadRequested
-                    ) {
-                        break
-                    }
-
-                    throw e
-                }
-
-            if (count < 0) {
-                break
-            }
-
-            if (count == 0) {
-                continue
-            }
-
-            out.write(
-                buffer,
-                0,
-                count
-            )
-
-            done += count
-
-            if (total > 0) {
-
-                val progress =
-                    (
-                        done * 100L /
-                        total
-                    )
-                        .toInt()
-                        .coerceIn(
-                            0,
-                            100
-                        )
-
-                if (!destroyed) {
-
-                    runOnUiThread {
-
-                        if (!destroyed) {
-
-                            downloadProgress.progress =
-                                progress
-
-                            if (
-                                !pauseDownloadRequested
-                            ) {
-
-                                downloadText.text =
-                                    "$progress%"
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private fun cancelDownload() {
-
-        cancelDownloadRequested = true
-        pauseDownloadRequested = false
-
-        try {
-            activeConnection?.disconnect()
-        } catch (_: Exception) {
-        }
-
-        downloadText.text =
-            "دانلود لغو شد"
-
-        downloadProgress.progress = 0
-    }
-
-    private fun toggleDownloadPause() {
-
-        if (
-            downloadFuture?.isDone != false
-        ) {
-            return
-        }
-
-        pauseDownloadRequested =
-            !pauseDownloadRequested
-
-        pauseDownloadButton.text =
-            if (pauseDownloadRequested) {
-                "▶"
-            } else {
-                "Ⅱ"
-            }
-
-        downloadText.text =
-            if (pauseDownloadRequested) {
-                "دانلود متوقف شد"
-            } else {
-                "در حال دانلود..."
-            }
-    }
-
-    override fun onStart() {
-
-        super.onStart()
-
-        if (receiverRegistered) {
-            return
-        }
-
-        try {
-
-            val filter =
-                IntentFilter(
-                    MusicService.UPDATE
-                )
-
-            if (
-                Build.VERSION.SDK_INT >= 33
-            ) {
-
-                registerReceiver(
-                    playerReceiver,
-                    filter,
-                    Context.RECEIVER_NOT_EXPORTED
-                )
-
-            } else {
-
-                registerReceiver(
-                    playerReceiver,
-                    filter
-                )
-            }
-
-            receiverRegistered = true
-
-        } catch (_: Exception) {
-
-            receiverRegistered = false
-        }
-    }
-
-    override fun onStop() {
-
-        if (receiverRegistered) {
-
-            try {
-                unregisterReceiver(
-                    playerReceiver
-                )
-            } catch (_: Exception) {
-            }
-
-            receiverRegistered = false
-        }
-
-        super.onStop()
-    }
-
-    override fun onDestroy() {
-
-        destroyed = true
-
-        cancelSearchCallbacks()
-
-        cancelDownloadRequested = true
-        pauseDownloadRequested = false
-
-        try {
-            activeConnection?.disconnect()
-        } catch (_: Exception) {
-        }
-
-        activeConnection = null
-
-        try {
-            downloadFuture?.cancel(
-                true
-            )
-        } catch (_: Exception) {
-        }
-
-        downloadFuture = null
-
-        handler.removeCallbacksAndMessages(
-            null
-        )
-
-        try {
-            web.stopLoading()
-            web.removeJavascriptInterface(
-                "MusicFinder"
-            )
-            web.destroy()
-        } catch (_: Exception) {
-        }
-
-        try {
-            io.shutdownNow()
-            downloadExecutor.shutdownNow()
-        } catch (_: Exception) {
-        }
-
-        super.onDestroy()
-    }
-}
