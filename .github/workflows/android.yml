@@ -66,10 +66,11 @@ jobs:
           set -e
           APK="app/build/outputs/apk/debug/app-debug.apk"
           cp "$APK" "music-finder-debug.apk"
+          zip -j "music-finder-full-ci.zip" "$APK" >/dev/null
           printf '%s\\n' '{' '  "commit": "'"${GITHUB_SHA}"'",' '  "versionCode": "'"${GITHUB_RUN_NUMBER}"'",' '  "versionName": "1.3.'"${GITHUB_RUN_NUMBER}"'",' '  "workflow": "Android CI",' '  "runId": "'"${GITHUB_RUN_ID}"'"' '}' > update.json
           if ! gh release view ci-latest >/dev/null 2>&1; then
             gh release create ci-latest --target "$GITHUB_SHA" --title "Full CI Latest" --notes "آخرین نسخه ساخته‌شده توسط Full CI / Android CI"
           else
             gh release edit ci-latest --target "$GITHUB_SHA" --title "Full CI Latest" --notes "آخرین نسخه ساخته‌شده توسط Full CI / Android CI"
           fi
-          gh release upload ci-latest music-finder-debug.apk update.json --clobber
+          gh release upload ci-latest music-finder-debug.apk music-finder-full-ci.zip update.json --clobber
