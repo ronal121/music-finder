@@ -138,14 +138,12 @@ class GoogleSuggestionEngine(
             val root = org.json.JSONArray(body.substring(start))
             val values = root.optJSONArray(1) ?: return emptyList()
 
-            buildList {
-                for (i in 0 until values.length()) {
-                    val value = values.optString(i).trim()
-                    if (value.isNotBlank()) add(value)
-                }
+            val result = ArrayList<String>()
+            for (i in 0 until values.length()) {
+                val value = values.optString(i).trim()
+                if (value.isNotBlank()) result.add(value)
             }
-                .distinct()
-                .take(8)
+            result.distinct().take(8)
         } catch (_: Exception) {
             emptyList()
         }
