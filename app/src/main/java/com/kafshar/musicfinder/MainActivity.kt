@@ -20,6 +20,8 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.view.Gravity
 import android.view.View
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.JavascriptInterface
@@ -83,6 +85,7 @@ class MainActivity : Activity() {
     private lateinit var updateButton: TextView
     private lateinit var updateStatus: TextView
     private lateinit var resultsContainer: LinearLayout
+    private lateinit var suggestionContainer: LinearLayout
     private lateinit var vinyl: VinylView
 
     private val turquoiseColor = 0xFF20C9C9.toInt()
@@ -94,6 +97,7 @@ class MainActivity : Activity() {
     private val io = Executors.newFixedThreadPool(4)
     private val downloadExecutor = Executors.newSingleThreadExecutor()
     private lateinit var updater: InAppUpdater
+    private lateinit var suggestionEngine: GoogleSuggestionEngine
 
     private var downloadFuture: Future<*>? = null
 
@@ -202,6 +206,12 @@ class MainActivity : Activity() {
 
         bindViews()
         updater = InAppUpdater(this)
+        suggestionEngine = GoogleSuggestionEngine { generation, suggestions ->
+            runOnUiThread {
+                if (destroyed || generation != searchGeneration) return@runOnUiThread
+                renderSuggestions(suggestions)
+            }
+        }
         setupWebView()
         setupButtons()
         setupVolumeControl()
@@ -252,6 +262,7 @@ class MainActivity : Activity() {
 
         historyContainer = findViewById(R.id.historyContainer)
         resultsContainer = findViewById(R.id.resultsContainer)
+        suggestionContainer = findViewById(R.id.suggestionContainer)
 
         vinyl = findViewById(R.id.vinyl)
     }
@@ -277,6 +288,55 @@ class MainActivity : Activity() {
                 true
             } else {
                 false
+            }
+        }
+
+        query.addTextChangedListener(
+            object : TextWatcher {
+                override fun beforeTextChanged(
+                    s: CharSequence?,
+                    start: Int,
+                    count: Int,
+                    after: Int
+                ) = Unit
+
+                override fun onTextChanged(
+                    s: CharSequence?,
+                    start: Int,
+                    before: Int,
+                    count: Int
+                ) {
+                    if (destroyed) return
+                    val text = s?.toString().orEmpty().trim()
+
+                    if (text.length < 2) {
+                        suggestionEngine.clear(searchGeneration)
+                        return
+                    }
+
+                    suggestionEngine.suggest(
+                        text,
+                        searchGeneration
+                    )
+                }
+
+                override fun afterTextChanged(
+                    s: Editable?
+                ) = Unit
+            }
+        )
+
+        query.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) {
+                handler.postDelayed(
+                    { if (!destroyed) hideSuggestions() },
+                    180L
+                )
+            } else if (query.text.length >= 2) {
+                suggestionEngine.suggest(
+                    query.text.toString(),
+                    searchGeneration
+                )
             }
         }
 
@@ -868,6 +928,70 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun renderSuggestions(suggestions: List<String>) {
+        if (destroyed) return
+
+        val current = query.text.toString().trim()
+
+        suggestionContainer.removeAllViews()
+
+        val visible = suggestions
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .filter { it != current }
+            .distinct()
+            .take(8)
+
+        if (visible.isEmpty() || current.length < 2 || !query.hasFocus()) {
+            hideSuggestions()
+            return
+        }
+
+        visible.forEach { suggestion ->
+            val item =
+                TextView(this).apply {
+                    text = "⌕  $suggestion"
+                    textSize = 14f
+                    setTextColor(0xFFFFFFFF.toInt())
+                    setPadding(16, 15, 16, 15)
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener {
+                        query.setText(suggestion)
+                        query.setSelection(query.text.length)
+                        hideSuggestions()
+                        hideSearchKeyboard()
+                        searchMusic()
+                    }
+                }
+
+            suggestionContainer.addView(item)
+
+            val divider =
+                View(this).apply {
+                    setBackgroundColor(0x22333333)
+                    layoutParams =
+                        LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            1
+                        )
+                }
+
+            suggestionContainer.addView(divider)
+        }
+
+        if (suggestionContainer.childCount > 0) {
+            suggestionContainer.visibility = View.VISIBLE
+        } else {
+            hideSuggestions()
+        }
+    }
+
+    private fun hideSuggestions() {
+        suggestionContainer.removeAllViews()
+        suggestionContainer.visibility = View.GONE
+    }
+
     private fun searchMusic() {
 
         if (destroyed) return
@@ -876,6 +1000,7 @@ class MainActivity : Activity() {
             Toast.makeText(this, "نام آهنگ یا خواننده را وارد کنید", Toast.LENGTH_SHORT).show()
             return
         }
+        hideSuggestions()
         hideSearchKeyboard()
 
         searchGeneration++
@@ -3050,6 +3175,11 @@ class MainActivity : Activity() {
     override fun onDestroy() {
 
         destroyed = true
+
+        try {
+            suggestionEngine.destroy()
+        } catch (_: Exception) {
+        }
 
         cancelSearchCallbacks()
 
