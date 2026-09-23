@@ -185,6 +185,10 @@ class MainActivity : Activity() {
                 if (mediaUrl.isNotBlank()) {
                     updateActiveResultHighlight(mediaUrl)
                 }
+
+                if (intent.getBooleanExtra(MusicService.EXTRA_ENDED, false)) {
+                    playNextAfterEnd(mediaUrl)
+                }
             }
         }
     }
@@ -399,7 +403,7 @@ class MainActivity : Activity() {
         updateButton.setOnClickListener {
             updater.checkAndInstall { message, installing ->
                 updateStatus.text = message
-                updateButton.text = if (installing) "در حال دریافت…" else "↻  بررسی آپدیت"
+                updateButton.text = if (installing) "در حال دریافت…" else "بروزرسانی"
             }
         }
     }
@@ -653,8 +657,14 @@ class MainActivity : Activity() {
                     if (songs.none { it.url == song.url }) {
                         songs.add(song)
                         addSongView(song, songs.lastIndex)
-                        status.text =
-                            "${songs.size} آهنگ مرتبط پیدا شد"
+
+                        if (currentIndex < 0) {
+                            currentIndex = songs.lastIndex
+                            playSong(song)
+                        } else {
+                            status.text =
+                                "${songs.size} آهنگ مرتبط پیدا شد؛ جستجو ادامه دارد..."
+                        }
                     }
                 }
 
@@ -1425,22 +1435,16 @@ class MainActivity : Activity() {
             return
         }
 
-        status.text =
-            if (songs.isEmpty()) {
-                "آهنگ مرتبط و قابل پخش پیدا نشد"
-            } else {
-                "${songs.size} آهنگ مرتبط پیدا شد"
-            }
-
-        searchProgress.progress = 100
-
-        if (songs.isNotEmpty() && currentIndex < 0) {
+        if (songs.isEmpty()) {
+            status.text = "آهنگ مرتبط و قابل پخش پیدا نشد"
+        } else if (currentAudioUrl.isBlank()) {
             currentIndex = 0
-            saveSearchResults()
             playSong(songs[0])
-            return
+        } else {
+            status.text = "جستجو کامل شد؛ ${songs.size} آهنگ مرتبط آماده پخش است"
         }
 
+        searchProgress.progress = 100
         saveSearchResults()
 
     }
@@ -1777,6 +1781,32 @@ class MainActivity : Activity() {
             } catch (_: Exception) {
             }
         }
+    }
+
+    private fun playNextAfterEnd(endedUrl: String) {
+        if (destroyed || songs.isEmpty()) return
+
+        val current = songs.firstOrNull { it.url == endedUrl } ?: currentSong
+        val currentArtist = SearchEngine.normalizeQuery(current?.artist.orEmpty()).trim()
+
+        val artistMatches = if (currentArtist.isNotBlank()) {
+            songs.filter { song ->
+                song.url != endedUrl &&
+                    SearchEngine.similarity(currentArtist, song.artist) >= 60
+            }
+        } else {
+            emptyList()
+        }
+
+        val pool = (artistMatches.ifEmpty {
+            songs.filter { it.url != endedUrl }
+        }).ifEmpty { songs }
+
+        val next = pool.shuffled().firstOrNull() ?: return
+        status.text = "آهنگ بعدی: ${next.title}"
+        handler.postDelayed({
+            if (!destroyed) playSong(next)
+        }, 350L)
     }
 
     private fun playSong(
