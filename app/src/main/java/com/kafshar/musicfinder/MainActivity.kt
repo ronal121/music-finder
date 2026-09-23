@@ -213,7 +213,7 @@ class MainActivity : Activity() {
                 merged += candidates
                 resultPages = merged
                     .filter { ServerConfig.isDiscoverablePageUrl(it) }
-                    .distinctBy { it.substringBefore("#").trimEnd("/").lowercase() }
+                    .distinctBy { it.substringBefore("#").trimEnd('/').lowercase() }
                     .take(80)
 
                 if (resultPages.isNotEmpty() && resultPageIndex >= resultPages.size) {
