@@ -111,6 +111,8 @@ class MainActivity : Activity() {
 
     private var googleFallbackUsed = false
 
+    private var smartSearchEngine: SmartSearchEngine? = null
+
     private var resultPages: List<String> = emptyList()
     private var resultPageIndex = 0
     private var resultGeneration = 0
@@ -203,6 +205,29 @@ class MainActivity : Activity() {
         bindViews()
         updater = InAppUpdater(this)
         setupWebView()
+        smartSearchEngine = SmartSearchEngine(this) { generation, candidates ->
+            runOnUiThread {
+                if (destroyed || generation != searchGeneration) return@runOnUiThread
+
+                val merged = ArrayList(resultPages)
+                merged += candidates
+                resultPages = merged
+                    .filter { ServerConfig.isDiscoverablePageUrl(it) }
+                    .distinctBy { it.substringBefore("#").trimEnd('/').lowercase() }
+                    .take(80)
+
+                if (resultPages.isNotEmpty() && resultPageIndex >= resultPages.size) {
+                    resultPageIndex = 0
+                }
+
+                if (resultPages.isNotEmpty() && expectedPageUrl.isBlank()) {
+                    status.text = "نتایج وب هم پیدا شد؛ در حال بررسی منابع..."
+                    processNextResultPage()
+                } else if (resultPages.isNotEmpty()) {
+                    status.text = "${resultPages.size} صفحه برای بررسی پیدا شد..."
+                }
+            }
+        }
         setupButtons()
         setupVolumeControl()
         applyTurquoiseButtonStyle()
@@ -901,22 +926,37 @@ class MainActivity : Activity() {
         vinyl.clearCover()
         vinyl.stopRotation()
         clearLyrics()
+        // Run the existing native search and the independent web-discovery engine together.
+        // The web engine never replaces native results; it only adds discovered pages.
+        smartSearchEngine?.search(text, generation)
+
         searchFuture = ParallelSearchEngine.searchDirect(text, generation) { callbackGeneration, candidates ->
             runOnUiThread {
                 if (destroyed || callbackGeneration != searchGeneration) return@runOnUiThread
-                resultPages = candidates.map { it.url }
+                val nativePages = candidates.map { it.url }
                     .filter { ServerConfig.isAllowedPageUrl(it) }
                     .distinctBy { it.substringBefore("#").trimEnd('/').lowercase() }
                     .take(60)
-                resultPageIndex = 0
+
+                val mergedPages = ArrayList(resultPages)
+                mergedPages += nativePages
+                resultPages = mergedPages
+                    .filter { ServerConfig.isDiscoverablePageUrl(it) }
+                    .distinctBy { it.substringBefore("#").trimEnd('/').lowercase() }
+                    .take(80)
+
+                resultPageIndex = resultPageIndex.coerceAtMost(resultPages.size)
                 searchProgress.progress = 25
+
                 if (resultPages.isEmpty()) {
-                    status.text = "منابع مستقیم نتیجه‌ای ندادند؛ در حال جستجوی جایگزین..."
+                    status.text = "منابع مستقیم و وب هنوز نتیجه‌ای ندادند؛ جستجو ادامه دارد..."
                     loadGoogleFallback(text, generation)
-                } else {
+                } else if (expectedPageUrl.isBlank()) {
                     status.text = "${resultPages.size} صفحه پیدا شد؛ در حال استخراج و اعتبارسنجی..."
                     searchProgress.progress = 25
                     processNextResultPage()
+                } else {
+                    status.text = "${resultPages.size} صفحه برای بررسی پیدا شد..."
                 }
             }
         }
@@ -3048,6 +3088,9 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+
+        smartSearchEngine?.destroy()
+        smartSearchEngine = null
 
         destroyed = true
 
