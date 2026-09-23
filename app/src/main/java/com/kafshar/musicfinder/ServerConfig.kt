@@ -93,6 +93,36 @@ object ServerConfig {
         return isGoogleHost(host) || isYouTubeHost(host) || serverFor(host) != null
     }
 
+    /**
+     * Candidate-page policy for web discovery.
+     *
+     * Direct/native search keeps using isAllowedPageUrl() so the existing
+     * trusted-server path is unchanged. Google fallback is intentionally
+     * broader: any normal HTTP(S) page may be inspected, because otherwise
+     * Google can discover a valid music source that the static server list
+     * does not know about.
+     */
+    fun isDiscoverablePageUrl(url: String): Boolean {
+        val host = extractHttpHost(url) ?: return false
+        if (isGoogleHost(host)) return false
+        if (isYouTubeHost(host)) return true
+
+        val normalized = normalizeHost(host).orEmpty()
+        val blockedHosts = setOf(
+            "accounts.google.com",
+            "support.google.com",
+            "policies.google.com",
+            "translate.google.com",
+            "webcache.googleusercontent.com"
+        )
+
+        if (blockedHosts.any { hostMatchesDomain(normalized, it) }) {
+            return false
+        }
+
+        return true
+    }
+
     fun isAllowedMediaUrl(url: String, pageUrl: String? = null): Boolean {
         val host = extractHttpHost(url) ?: return false
         if (isYouTubeHost(host)) return false
