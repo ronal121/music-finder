@@ -77,6 +77,7 @@ class SmartSearchEngine(
             }
 
             try {
+                pendingGeneration = generation
                 webView?.stopLoading()
                 webView?.loadUrl(
                     "https://www.google.com/search?q=$encoded&num=20&hl=fa&gbv=1"
