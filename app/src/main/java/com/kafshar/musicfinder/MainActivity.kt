@@ -933,19 +933,30 @@ class MainActivity : Activity() {
         searchFuture = ParallelSearchEngine.searchDirect(text, generation) { callbackGeneration, candidates ->
             runOnUiThread {
                 if (destroyed || callbackGeneration != searchGeneration) return@runOnUiThread
-                resultPages = candidates.map { it.url }
+                val nativePages = candidates.map { it.url }
                     .filter { ServerConfig.isAllowedPageUrl(it) }
                     .distinctBy { it.substringBefore("#").trimEnd('/').lowercase() }
                     .take(60)
-                resultPageIndex = 0
+
+                val mergedPages = ArrayList(resultPages)
+                mergedPages += nativePages
+                resultPages = mergedPages
+                    .filter { ServerConfig.isDiscoverablePageUrl(it) }
+                    .distinctBy { it.substringBefore("#").trimEnd('/').lowercase() }
+                    .take(80)
+
+                resultPageIndex = resultPageIndex.coerceAtMost(resultPages.size)
                 searchProgress.progress = 25
+
                 if (resultPages.isEmpty()) {
-                    status.text = "منابع مستقیم نتیجه‌ای ندادند؛ در حال جستجوی جایگزین..."
+                    status.text = "منابع مستقیم و وب هنوز نتیجه‌ای ندادند؛ جستجو ادامه دارد..."
                     loadGoogleFallback(text, generation)
-                } else {
+                } else if (expectedPageUrl.isBlank()) {
                     status.text = "${resultPages.size} صفحه پیدا شد؛ در حال استخراج و اعتبارسنجی..."
                     searchProgress.progress = 25
                     processNextResultPage()
+                } else {
+                    status.text = "${resultPages.size} صفحه برای بررسی پیدا شد..."
                 }
             }
         }
