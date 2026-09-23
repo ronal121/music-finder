@@ -3078,6 +3078,9 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
 
+        smartSearchEngine?.destroy()
+        smartSearchEngine = null
+
         destroyed = true
 
         cancelSearchCallbacks()
