@@ -713,7 +713,7 @@ class MainActivity : Activity() {
                             "google.com",
                             true
                         ) ||
-                        ServerConfig.isAllowedPageUrl(
+                        ServerConfig.isDiscoverablePageUrl(
                             url
                         )
                     )
@@ -753,7 +753,7 @@ class MainActivity : Activity() {
                     } else if (
                         resultGeneration ==
                         searchGeneration &&
-                        ServerConfig.isAllowedPageUrl(
+                        ServerConfig.isDiscoverablePageUrl(
                             url
                         )
                     ) {
@@ -966,142 +966,174 @@ class MainActivity : Activity() {
             return
         }
 
-        val hosts =
-            ServerConfig.MUSIC_SITES
-                .joinToString(",") {
-                    "\"${
-                        it.replace(
-                            "\"",
-                            "\\\""
-                        )
-                    }\""
-                }
+        val cleanQuery =
+            SearchEngine.withoutSearchNoise(
+                SearchEngine.correctedQuery(
+                    query.text.toString()
+                )
+            ).trim()
+
+        val queryJson = try {
+            org.json.JSONObject.quote(cleanQuery)
+        } catch (_: Exception) {
+            ""music""
+        }
 
         val script = """
             (function(){
               try{
-                var hosts=[$hosts], found=[];
+                var query=$queryJson;
+                var tokens=query
+                  .toLowerCase()
+                  .split(/\\s+/)
+                  .filter(function(x){return x.length>=2;});
 
-                function allowed(u){
-                  if(!u) return false;
+                var musicWords=[
+                  'mp3','music','song','audio','download',
+                  'دانلود','آهنگ','موزیک','ترانه','پخش',
+                  'lyrics','لیرکس','موسیقی'
+                ];
 
+                var blocked=[
+                  'google.com',
+                  'googleusercontent.com',
+                  'gstatic.com',
+                  'accounts.google.com',
+                  'support.google.com',
+                  'policies.google.com',
+                  'translate.google.com',
+                  'webcache.googleusercontent.com'
+                ];
+
+                function hostOf(u){
                   try{
-                    var x=new URL(u);
-                    var h=x.hostname
-                      .toLowerCase()
-                      .replace(/^www\./,'');
-
-                    for(var i=0;i<hosts.length;i++){
-                      var d=hosts[i].toLowerCase();
-
-                      if(
-                        h===d ||
-                        h.endsWith('.'+d)
-                      ){
-                        return true;
-                      }
-                    }
-                  }catch(e){}
-
-                  return false;
+                    return new URL(u,location.href)
+                      .hostname.toLowerCase()
+                      .replace(/^www\\./,'');
+                  }catch(e){
+                    return '';
+                  }
                 }
 
                 function real(h){
                   try{
-                    var x=new URL(
-                      h,
-                      location.href
-                    );
+                    var x=new URL(h,location.href);
 
                     if(
-                      x.hostname.indexOf(
-                        'google.'
-                      )>=0
+                      x.hostname.toLowerCase().indexOf('google.')>=0
                     ){
                       var q=
                         x.searchParams.get('q') ||
                         x.searchParams.get('url');
 
-                      if(
-                        q &&
-                        q.indexOf('http')===0
-                      ){
+                      if(q && /^https?:/i.test(q)){
                         return decodeURIComponent(q);
                       }
                     }
 
                     return x.href;
-
                   }catch(e){
                     return h;
                   }
                 }
 
-                var links=
-                  document.querySelectorAll('a');
+                function blockedHost(h){
+                  for(var i=0;i<blocked.length;i++){
+                    if(
+                      h===blocked[i] ||
+                      h.endsWith('.'+blocked[i])
+                    ) return true;
+                  }
+                  return false;
+                }
+
+                function score(u,t){
+                  var text=(t+' '+u).toLowerCase();
+                  var value=0;
+
+                  for(var i=0;i<tokens.length;i++){
+                    var token=tokens[i];
+                    if(t.toLowerCase().indexOf(token)>=0) value+=45;
+                    else if(text.indexOf(token)>=0) value+=22;
+                  }
+
+                  for(var j=0;j<musicWords.length;j++){
+                    if(text.indexOf(musicWords[j])>=0) value+=8;
+                  }
+
+                  if(/\\.(mp3|m4a|aac|ogg|opus|wav|flac)(?:[?#]|$)/i.test(u)){
+                    value+=120;
+                  }
+
+                  var h=hostOf(u);
+                  if(h==='youtube.com' || h.endsWith('.youtube.com') || h==='youtu.be'){
+                    value+=35;
+                  }
+
+                  if(t.length>3 && t.length<220) value+=5;
+
+                  return value;
+                }
+
+                var links=document.querySelectorAll('a');
+                var candidates=[];
 
                 for(
                   var i=0;
                   i<links.length &&
-                  found.length<50;
+                  candidates.length<120;
                   i++
                 ){
+                  var raw=links[i].href||'';
+                  if(!/^https?:/i.test(raw)) continue;
 
-                  var u=
-                    real(
-                      links[i].href || ''
-                    );
+                  var u=real(raw).split('#')[0];
+                  var h=hostOf(u);
+                  if(!h || blockedHost(h)) continue;
 
-                  if(!allowed(u))
-                    continue;
-
-                  u=u.split('#')[0];
-
-                  var dup=false;
-
-                  for(
-                    var j=0;
-                    j<found.length;
-                    j++
-                  ){
-
-                    if(
-                      found[j].split(
-                        '|||'
-                      )[0]===u
-                    ){
-                      dup=true;
-                      break;
-                    }
-                  }
-
-                  if(dup)
-                    continue;
-
-                  var t=
-                    (
-                      links[i].innerText ||
-                      links[i].textContent ||
-                      ''
-                    )
-                    .replace(
-                      /[\r\n\t]+/g,
-                      ' '
-                    )
-                    .replace(
-                      /\s+/g,
-                      ' '
-                    )
+                  var text=(
+                    links[i].innerText ||
+                    links[i].textContent ||
+                    links[i].getAttribute('aria-label') ||
+                    links[i].getAttribute('title') ||
+                    ''
+                  )
+                    .replace(/[\\r\\n\\t]+/g,' ')
+                    .replace(/\\s+/g,' ')
                     .trim();
 
+                  if(!text && !u) continue;
+
+                  candidates.push({
+                    u:u,
+                    t:text,
+                    s:score(u,text)
+                  });
+                }
+
+                candidates.sort(function(a,b){
+                  return b.s-a.s;
+                });
+
+                var found=[];
+                var seen={};
+
+                for(var k=0;k<candidates.length;k++){
+                  var c=candidates[k];
+                  if(seen[c.u]) continue;
+                  seen[c.u]=true;
+
+                  // Keep enough candidates to survive pages that fail to load,
+                  // but cap the fallback work so a weak Google page cannot
+                  // make the search appear frozen.
+                  if(found.length>=30) break;
+
                   found.push(
-                    u+'|||'+t
+                    c.u+'|||'+c.t+'|||'+c.s
                   );
                 }
 
-                MusicFinder.results(
-                  found.join('###')
-                );
+                MusicFinder.results(found.join('###'));
 
               }catch(e){
                 MusicFinder.results('');
@@ -1294,7 +1326,7 @@ class MainActivity : Activity() {
 
         if (
             url.isBlank() ||
-            !ServerConfig.isAllowedPageUrl(
+            !ServerConfig.isDiscoverablePageUrl(
                 url
             )
         ) {
