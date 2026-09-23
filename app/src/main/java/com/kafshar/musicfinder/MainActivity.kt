@@ -976,7 +976,7 @@ class MainActivity : Activity() {
         val queryJson = try {
             org.json.JSONObject.quote(cleanQuery)
         } catch (_: Exception) {
-            ""music""
+            "\"music\""
         }
 
         val script = """
