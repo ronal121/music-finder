@@ -121,7 +121,7 @@ class SmartSearchEngine(
                 .filter { it.startsWith("http", true) }
                 .map { unwrapGoogleUrl(it) }
                 .filter { ServerConfig.isDiscoverablePageUrl(it) }
-                .distinctBy { it.substringBefore("#").trimEnd("/").lowercase() }
+                .distinctBy { it.substringBefore("#").trimEnd('/').lowercase() }
                 .take(30)
 
             if (urls.isNotEmpty()) {
