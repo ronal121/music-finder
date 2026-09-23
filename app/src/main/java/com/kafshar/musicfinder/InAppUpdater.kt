@@ -31,9 +31,19 @@ class InAppUpdater(private val activity: Activity) {
                 var metadataUrl = ""
                 for (i in 0 until assets.length()) {
                     val asset = assets.optJSONObject(i) ?: continue
-                    when (asset.optString("name")) {
-                        "music-finder-debug.apk" -> apkUrl = asset.optString("browser_download_url")
-                        "update.json" -> metadataUrl = asset.optString("browser_download_url")
+                    val name = asset.optString("name")
+                    val label = asset.optString("label")
+
+                    if (
+                        name == "music-finder-debug.apk" ||
+                        name == "app-debug.apk" ||
+                        label == "music-finder-debug.apk"
+                    ) {
+                        apkUrl = asset.optString("browser_download_url")
+                    }
+
+                    if (name == "update.json") {
+                        metadataUrl = asset.optString("browser_download_url")
                     }
                 }
                 if (apkUrl.isBlank() || metadataUrl.isBlank()) {
