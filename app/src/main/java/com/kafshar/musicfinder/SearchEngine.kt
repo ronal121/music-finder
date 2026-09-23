@@ -142,8 +142,10 @@ object SearchEngine {
             .take(8)
     }
 
-    fun buildGoogleQuery(input: String): String =
-        ServerConfig.searchQuery(correctedQuery(input))
+    fun buildGoogleQuery(input: String): String {
+        val corrected = ServerConfig.searchQuery(correctedQuery(input))
+        return corrected
+    }
 
     fun parseArtistTitle(input: String): Pair<String?, String?> {
         val clean = displayQuery(input)
