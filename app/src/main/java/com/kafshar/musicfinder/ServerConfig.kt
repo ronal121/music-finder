@@ -123,8 +123,13 @@ object ServerConfig {
             .trim()
         if (clean.isBlank()) return "music"
 
-        val phrase = "\"${clean.replace("\"", " ").trim()}\""
-        return "$phrase آهنگ دانلود"
+        return if (clean.split(' ').size >= 4) {
+            // Lyric fragments are often written with small textual variants.
+            "$clean آهنگ دانلود"
+        } else {
+            val phrase = ""${clean.replace(""", " ").trim()}""
+            "$phrase آهنگ دانلود"
+        }
     }
 
     fun siteName(url: String): String {
