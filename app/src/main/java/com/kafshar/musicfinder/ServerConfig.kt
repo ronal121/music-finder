@@ -157,7 +157,7 @@ object ServerConfig {
             // Lyric fragments are often written with small textual variants.
             "$clean آهنگ دانلود"
         } else {
-            val phrase = ""${clean.replace(""", " ").trim()}""
+            val phrase = "\"${clean.replace("\"", " ").trim()}\""
             "$phrase آهنگ دانلود"
         }
     }
