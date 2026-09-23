@@ -29,6 +29,7 @@ class InAppUpdater(private val activity: Activity) {
                 val assets = release.optJSONArray("assets")
                     ?: throw IllegalStateException("فایل آپدیت پیدا نشد")
                 var apkUrl = ""
+                var zipUrl = ""
                 var metadataUrl = ""
                 for (i in 0 until assets.length()) {
                     val asset = assets.optJSONObject(i) ?: continue
@@ -43,12 +44,16 @@ class InAppUpdater(private val activity: Activity) {
                         apkUrl = asset.optString("browser_download_url")
                     }
 
+                    if (name == "music-finder-full-ci.zip") {
+                        zipUrl = asset.optString("browser_download_url")
+                    }
+
                     if (name == "update.json") {
                         metadataUrl = asset.optString("browser_download_url")
                     }
                 }
-                if (apkUrl.isBlank() || metadataUrl.isBlank()) {
-                    throw IllegalStateException("نسخه قابل نصب پیدا نشد")
+                if (apkUrl.isBlank() && zipUrl.isBlank()) {
+                    throw IllegalStateException("نسخه قابل نصب Full CI پیدا نشد")
                 }
                 val metadata = getJson(metadataUrl)
                 val remoteCommit = metadata.optString("commit").trim()
@@ -65,7 +70,22 @@ class InAppUpdater(private val activity: Activity) {
                         true
                     )
                 }
-                val apkFile = downloadApk(apkUrl)
+                val apkFile =
+                    try {
+                        downloadApk(apkUrl)
+                    } catch (directError: Exception) {
+                        if (zipUrl.isBlank()) {
+                            throw directError
+                        }
+
+                        val zipFile = downloadFile(zipUrl, "music-finder-full-ci.zip")
+                        try {
+                            extractApk(zipFile)
+                        } finally {
+                            zipFile.delete()
+                        }
+                    }
+
                 val packageInfo =
                     activity.packageManager.getPackageArchiveInfo(apkFile.absolutePath, 0)
                 if (packageInfo == null || packageInfo.packageName != activity.packageName) {
@@ -113,20 +133,34 @@ class InAppUpdater(private val activity: Activity) {
     private fun downloadApk(urlString: String): File {
         val directory = File(activity.cacheDir, "updates").apply { mkdirs() }
         val target = File(directory, "music-finder-latest.apk")
+        return downloadFile(urlString, target.name)
+    }
+
+    private fun downloadFile(urlString: String, fileName: String): File {
+        if (urlString.isBlank()) {
+            throw IllegalStateException("لینک دانلود Full CI خالی است")
+        }
+
+        val directory = File(activity.cacheDir, "updates").apply { mkdirs() }
+        val target = File(directory, fileName)
+        target.delete()
+
         val connection =
             (URL(urlString).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = 15000
-                readTimeout = 60000
+                readTimeout = 90000
                 instanceFollowRedirects = true
                 setRequestProperty("User-Agent", "Music-Finder-Updater")
             }
+
         try {
             if (connection.responseCode !in 200..299) {
                 throw IllegalStateException(
-                    "دانلود APK خطا داد: HTTP ${connection.responseCode}"
+                    "دانلود Full CI خطا داد: HTTP ${connection.responseCode}"
                 )
             }
+
             connection.inputStream.use { input ->
                 FileOutputStream(target).use { output ->
                     val buffer = ByteArray(64 * 1024)
@@ -138,9 +172,11 @@ class InAppUpdater(private val activity: Activity) {
                     output.flush()
                 }
             }
+
             if (!target.exists() || target.length() <= 0L) {
-                throw IllegalStateException("فایل APK خالی است")
+                throw IllegalStateException("فایل دانلودشده خالی است")
             }
+
             return target
         } catch (e: Exception) {
             target.delete()
@@ -148,6 +184,38 @@ class InAppUpdater(private val activity: Activity) {
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun extractApk(zipFile: File): File {
+        val directory = File(activity.cacheDir, "updates").apply { mkdirs() }
+        val apkFile = File(directory, "music-finder-latest.apk")
+        apkFile.delete()
+
+        ZipInputStream(zipFile.inputStream().buffered()).use { zip ->
+            var entry = zip.nextEntry
+            while (entry != null) {
+                if (!entry.isDirectory && entry.name.endsWith(".apk", ignoreCase = true)) {
+                    FileOutputStream(apkFile).use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            val count = zip.read(buffer)
+                            if (count <= 0) break
+                            output.write(buffer, 0, count)
+                        }
+                        output.flush()
+                    }
+                    break
+                }
+                zip.closeEntry()
+                entry = zip.nextEntry
+            }
+        }
+
+        if (!apkFile.exists() || apkFile.length() <= 0L) {
+            throw IllegalStateException("داخل Full CI ZIP فایل APK پیدا نشد")
+        }
+
+        return apkFile
     }
 
     private fun installApk(apkFile: File) {
