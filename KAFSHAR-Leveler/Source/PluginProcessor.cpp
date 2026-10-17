@@ -53,9 +53,9 @@ void KAFSHARLevelerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer
     const float responseMs = parameters.getRawParameterValue("responseMs")->load();
     const float maxBoostDb = parameters.getRawParameterValue("maxBoostDb")->load();
     const float maxCutDb = parameters.getRawParameterValue("maxCutDb")->load();
-    const float target = juce::Decibels::decibelsTo gain (targetDb);
-    const float minGain = juce::Decibels::decibelsTo gain(-maxCutDb);
-    const float maxGain = juce::Decibels::decibelsTo gain(maxBoostDb);
+    const float target = juce::Decibels::decibelsToGain(targetDb);
+    const float minGain = juce::Decibels::decibelsToGain(-maxCutDb);
+    const float maxGain = juce::Decibels::decibelsToGain(maxBoostDb);
 
     // RMS-style envelope follower with smoothed gain. A linked detector keeps
     // stereo image stable by applying the same gain to every channel.
