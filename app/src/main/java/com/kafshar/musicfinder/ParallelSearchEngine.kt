@@ -1,5 +1,6 @@
 package com.kafshar.musicfinder
 
+import android.content.Context
 import android.text.Html
 import org.json.JSONArray
 import java.net.HttpURLConnection
@@ -20,9 +21,9 @@ import java.util.concurrent.TimeUnit
 object ParallelSearchEngine {
     private const val CONNECT_TIMEOUT_MS = 3500
     private const val READ_TIMEOUT_MS = 5000
-    private const val BATCH_TIMEOUT_SECONDS = 9L
+    private const val BATCH_TIMEOUT_SECONDS = 60L
     private const val MAX_RESULTS_PER_SITE = 8
-    private const val MAX_RESULTS = 60
+    private const val MAX_RESULTS = 240
 
     private val executor = Executors.newFixedThreadPool(12)
 
@@ -42,6 +43,7 @@ object ParallelSearchEngine {
     fun searchDirect(
         query: String,
         generation: Int,
+        context: Context? = null,
         callback: (Int, List<Candidate>) -> Unit
     ): Future<*> {
         val q = SearchEngine.correctedQuery(query).trim()
@@ -52,7 +54,7 @@ object ParallelSearchEngine {
 
         return executor.submit {
             val merged = LinkedHashMap<String, Candidate>()
-            val sites = ServerConfig.PRIMARY_SEARCH_SITES
+            val sites = SearchTelemetry.rankSites(context, ServerConfig.PRIMARY_SEARCH_SITES)
 
             try {
                 val tasks = sites.map { domain ->
@@ -63,18 +65,19 @@ object ParallelSearchEngine {
                     BATCH_TIMEOUT_SECONDS,
                     TimeUnit.SECONDS
                 )
-                futures.forEach { future ->
-                    if (Thread.currentThread().isInterrupted) return@forEach
+                futures.forEachIndexed { index, future ->
+                    if (Thread.currentThread().isInterrupted) return@forEachIndexed
+                    val domain = sites.getOrNull(index) ?: return@forEachIndexed
                     try {
-                        future.get().forEach { candidate ->
+                        val siteResults = future.get()
+                        SearchTelemetry.recordSearch(context, domain, siteResults.size)
+                        siteResults.forEach { candidate ->
                             val key = canonical(candidate.url)
                             val old = merged[key]
-                            if (old == null || candidate.score > old.score) {
-                                merged[key] = candidate
-                            }
+                            if (old == null || candidate.score > old.score) merged[key] = candidate
                         }
                     } catch (_: Exception) {
-                        // One unavailable source must not fail the whole search.
+                        SearchTelemetry.recordSearch(context, domain, 0)
                     }
                 }
             } catch (_: InterruptedException) {
@@ -102,7 +105,7 @@ object ParallelSearchEngine {
         query: String,
         generation: Int,
         callback: (Int, List<Candidate>) -> Unit
-    ): Future<*> = searchDirect(query, generation, callback)
+    ): Future<*> = searchDirect(query, generation, null, callback)
 
     private fun searchSite(domain: String, queries: List<String>): List<Candidate> {
         val out = ArrayList<Candidate>()
