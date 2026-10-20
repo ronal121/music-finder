@@ -656,6 +656,7 @@ class MainActivity : Activity() {
 
                     if (songs.none { it.url == song.url }) {
                         songs.add(song)
+                        SearchTelemetry.recordPlayable(this@MainActivity, song.site)
                         addSongView(song, songs.lastIndex)
 
                         if (currentIndex < 0) {
@@ -901,13 +902,13 @@ class MainActivity : Activity() {
         vinyl.clearCover()
         vinyl.stopRotation()
         clearLyrics()
-        searchFuture = ParallelSearchEngine.searchDirect(text, generation) { callbackGeneration, candidates ->
+        searchFuture = ParallelSearchEngine.searchDirect(text, generation, this) { callbackGeneration, candidates ->
             runOnUiThread {
                 if (destroyed || callbackGeneration != searchGeneration) return@runOnUiThread
                 resultPages = candidates.map { it.url }
                     .filter { ServerConfig.isAllowedPageUrl(it) }
                     .distinctBy { it.substringBefore("#").trimEnd('/').lowercase() }
-                    .take(60)
+                    .take(240)
                 resultPageIndex = 0
                 searchProgress.progress = 25
                 if (resultPages.isEmpty()) {
