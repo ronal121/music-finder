@@ -235,8 +235,8 @@ object ParallelSearchEngine {
                     90 +
                         titleHits * 18 +
                         contentHits * 34 +
-                        if (allContentTokens) 70 else 0 +
-                        if (exactPhrase) 100 else 0 +
+                        (if (allContentTokens) 70 else 0) +
+                        (if (exactPhrase) 100 else 0) +
                         relevance +
                         sitePriority
 
@@ -342,7 +342,7 @@ object ParallelSearchEngine {
             val score =
                 hits * 24 +
                     SearchEngine.similarity(query, display) +
-                    if (display.length <= 180) 8 else 0 +
+                    (if (display.length <= 180) 8 else 0) +
                     (ServerConfig.serverForUrl(absolute)?.priority ?: 0) / 10
 
             out += Candidate(
