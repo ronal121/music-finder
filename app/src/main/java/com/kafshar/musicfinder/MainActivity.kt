@@ -110,6 +110,8 @@ class MainActivity : Activity() {
     private var searchGeneration = 0
 
     private var googleFallbackUsed = false
+    private var googleFallbackAttempt = 0
+    private var googleFallbackQueries: List<String> = emptyList()
 
     private var resultPages: List<String> = emptyList()
     private var resultPageIndex = 0
@@ -883,6 +885,8 @@ class MainActivity : Activity() {
         val generation = searchGeneration
         cancelSearchCallbacks()
         googleFallbackUsed = false
+        googleFallbackAttempt = 0
+        googleFallbackQueries = emptyList()
         resultGeneration = generation
         resultPages = emptyList()
         resultPageIndex = 0
@@ -924,20 +928,36 @@ class MainActivity : Activity() {
     }
 
     private fun loadGoogleFallback(text: String, generation: Int) {
-        if (destroyed || generation != searchGeneration || googleFallbackUsed) return
-        googleFallbackUsed = true
+        if (destroyed || generation != searchGeneration) return
+        if (!googleFallbackUsed) {
+            googleFallbackQueries = SearchEngine.buildQueries(text)
+                .map { ServerConfig.searchQuery(it) }
+                .distinct()
+                .take(6)
+                .ifEmpty { listOf(ServerConfig.searchQuery(text)) }
+            googleFallbackUsed = true
+        }
+        if (googleFallbackAttempt >= googleFallbackQueries.size) {
+            finishSearch()
+            return
+        }
+
+        val googleQuery = googleFallbackQueries[googleFallbackAttempt++]
         resultGeneration = generation
         resultPages = emptyList()
         resultPageIndex = 0
-        val encoded = try { URLEncoder.encode(SearchEngine.buildGoogleQuery(text), "UTF-8") } catch (_: Exception) {
+        val encoded = try { URLEncoder.encode(googleQuery, "UTF-8") } catch (_: Exception) {
             status.text = "خطا در آماده‌سازی جستجو"
+            finishSearch()
             return
         }
+        status.text = "در حال جستجوی Google (${googleFallbackAttempt}/${googleFallbackQueries.size})..."
         try {
             web.stopLoading()
             web.loadUrl("https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1")
         } catch (_: Exception) {
-            status.text = "جستجوی جایگزین در دسترس نیست"
+            status.text = "جستجوی جایگزین در دسترس نیست؛ تلاش برای عبارت بعدی..."
+            finishSearch()
         }
     }
 
@@ -1302,6 +1322,12 @@ class MainActivity : Activity() {
             return
         }
 
+        // Stop crawling as soon as a playable audio URL has started playback.
+        if (songs.isNotEmpty() && currentAudioUrl.isNotBlank()) {
+            finishSearch()
+            return
+        }
+
         if (
             resultPageIndex >=
             resultPages.size
@@ -1462,19 +1488,27 @@ class MainActivity : Activity() {
 
         cancelSearchCallbacks()
 
-        if (songs.isEmpty() && !googleFallbackUsed && resultGeneration == searchGeneration) {
-            status.text = "در منابع مستقیم آهنگ قابل پخش پیدا نشد؛ در حال جستجوی Google..."
+        if (
+            songs.isEmpty() &&
+            resultGeneration == searchGeneration &&
+            (!googleFallbackUsed || googleFallbackAttempt < googleFallbackQueries.size)
+        ) {
+            status.text = if (googleFallbackUsed) {
+                "این عبارت نتیجه قابل پخش نداد؛ در حال امتحان عبارت جستجوی بعدی..."
+            } else {
+                "در منابع مستقیم آهنگ قابل پخش پیدا نشد؛ در حال جستجوی Google..."
+            }
             loadGoogleFallback(query.text.toString(), searchGeneration)
             return
         }
 
         if (songs.isEmpty()) {
-            status.text = "آهنگ مرتبط و قابل پخش پیدا نشد"
+            status.text = "پس از بررسی منابع مستقیم و Google، لینک صوتی قابل پخش پیدا نشد"
         } else if (currentAudioUrl.isBlank()) {
             currentIndex = 0
             playSong(songs[0])
         } else {
-            status.text = "جستجو کامل شد؛ ${songs.size} آهنگ مرتبط آماده پخش است"
+            status.text = "آهنگ پیدا شد و پخش آغاز شد؛ منبع: ${songs[0].site}"
         }
 
         searchProgress.progress = 100
