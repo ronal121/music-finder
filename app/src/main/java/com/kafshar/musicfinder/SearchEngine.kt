@@ -148,8 +148,8 @@ object SearchEngine {
             val artist = normalizeQuery(explicitArtist)
             val title = normalizeQuery(explicitTitle)
             if (artist.isNotBlank() && title.isNotBlank()) {
-                variants += "\\"$title\\" \\"$artist\\""
-                variants += "\\"$artist\\" \\"$title\\""
+                variants += "\"$title\" \"$artist\""
+                variants += "\"$artist\" \"$title\""
                 variants += "$artist $title"
                 variants += "$title $artist"
             }
