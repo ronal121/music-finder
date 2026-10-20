@@ -115,6 +115,8 @@ class MainActivity : Activity() {
 
     private var resultPages: List<String> = emptyList()
     private var resultPageIndex = 0
+    private var pagesInspected = 0
+    private var pagesWithPlayableAudio = 0
     private var resultGeneration = 0
     private var expectedPageUrl = ""
 
@@ -602,6 +604,8 @@ class MainActivity : Activity() {
                     return@runOnUiThread
                 }
 
+                pagesInspected++
+
                 val title =
                     cleanTitle(
                         decode(parts[0])
@@ -647,6 +651,7 @@ class MainActivity : Activity() {
                         audio
                     )
                 ) {
+                    pagesWithPlayableAudio++
                     val song =
                         SongResult(
                             audio,
@@ -669,6 +674,10 @@ class MainActivity : Activity() {
                                 "${songs.size} آهنگ مرتبط پیدا شد؛ جستجو ادامه دارد..."
                         }
                     }
+                }
+
+                if (songs.isEmpty()) {
+                    status.text = "بررسی $pagesInspected صفحه وب؛ هنوز لینک صوتی مستقیم پیدا نشده است"
                 }
 
                 val total = resultPages.size.coerceAtLeast(1)
@@ -890,6 +899,8 @@ class MainActivity : Activity() {
         resultGeneration = generation
         resultPages = emptyList()
         resultPageIndex = 0
+        pagesInspected = 0
+        pagesWithPlayableAudio = 0
         expectedPageUrl = ""
         songs.clear()
         currentIndex = -1
@@ -1503,7 +1514,7 @@ class MainActivity : Activity() {
         }
 
         if (songs.isEmpty()) {
-            status.text = "پس از بررسی منابع مستقیم و Google، لینک صوتی قابل پخش پیدا نشد"
+            status.text = "پس از بررسی منابع مستقیم و Google، لینک صوتی قابل پخش پیدا نشد؛ $pagesInspected صفحه وب بررسی شد و $pagesWithPlayableAudio صفحه دارای صوت مرتبط بود"
         } else if (currentAudioUrl.isBlank()) {
             currentIndex = 0
             playSong(songs[0])
