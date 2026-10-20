@@ -55,6 +55,12 @@ data class SongResult(
 
 class MainActivity : Activity() {
 
+    companion object {
+        private const val MAX_DIRECT_PAGES_BEFORE_GOOGLE = 18
+    }
+
+    private val failedAudioUrls = mutableSetOf<String>()
+
     private lateinit var web: WebView
     private lateinit var query: EditText
     private lateinit var status: TextView
@@ -159,6 +165,8 @@ class MainActivity : Activity() {
                 MusicService.EXTRA_URL
             ).orEmpty()
 
+            val playbackError = intent.getStringExtra("error").orEmpty()
+
             runOnUiThread {
 
                 if (destroyed) return@runOnUiThread
@@ -188,6 +196,21 @@ class MainActivity : Activity() {
 
                 if (mediaUrl.isNotBlank()) {
                     updateActiveResultHighlight(mediaUrl)
+                }
+
+                if (playbackError.isNotBlank() && mediaUrl.isNotBlank()) {
+                    failedAudioUrls.add(mediaUrl)
+                    val nextPlayable = songs.firstOrNull {
+                        it.url != mediaUrl && it.url !in failedAudioUrls
+                    }
+                    if (nextPlayable != null) {
+                        status.text = "این لینک پخش نشد؛ در حال امتحان منبع بعدی..."
+                        handler.postDelayed({
+                            if (!destroyed && currentAudioUrl == mediaUrl) playSong(nextPlayable)
+                        }, 250L)
+                    } else {
+                        status.text = "صفحه آهنگ پیدا شد، اما سرور پخش را رد کرد: $playbackError"
+                    }
                 }
 
                 if (intent.getBooleanExtra(MusicService.EXTRA_ENDED, false)) {
@@ -568,7 +591,7 @@ class MainActivity : Activity() {
                         .distinctBy {
                             it.substringBefore("|||")
                         }
-                        .take(50)
+                        .take(12)
 
                 if (resultPages.isEmpty()) {
                     finishSearch()
@@ -903,6 +926,7 @@ class MainActivity : Activity() {
         pagesWithPlayableAudio = 0
         expectedPageUrl = ""
         songs.clear()
+        failedAudioUrls.clear()
         currentIndex = -1
         currentAudioUrl = ""
         currentSong = null
@@ -944,7 +968,7 @@ class MainActivity : Activity() {
             googleFallbackQueries = SearchEngine.buildQueries(text)
                 .map { ServerConfig.searchQuery(it) }
                 .distinct()
-                .take(6)
+                .take(4)
                 .ifEmpty { listOf(ServerConfig.searchQuery(text)) }
             googleFallbackUsed = true
         }
@@ -1158,7 +1182,7 @@ class MainActivity : Activity() {
                   // Keep enough candidates to survive pages that fail to load,
                   // but cap the fallback work so a weak Google page cannot
                   // make the search appear frozen.
-                  if(found.length>=30) break;
+                  if(found.length>=12) break;
 
                   found.push(
                     c.u+'|||'+c.t+'|||'+c.s
@@ -1330,6 +1354,18 @@ class MainActivity : Activity() {
             resultGeneration !=
             searchGeneration
         ) {
+            return
+        }
+
+        // A large set of direct-site candidates can otherwise delay Google fallback
+        // for many minutes (each WebView navigation can consume the 5s page timeout).
+        if (
+            songs.isEmpty() &&
+            !googleFallbackUsed &&
+            resultPageIndex >= minOf(resultPages.size, MAX_DIRECT_PAGES_BEFORE_GOOGLE)
+        ) {
+            status.text = "جست‌وجوی مستقیم نتیجه قابل پخش نداد؛ در حال بررسی Google..."
+            loadGoogleFallback(query.text.toString(), searchGeneration)
             return
         }
 
