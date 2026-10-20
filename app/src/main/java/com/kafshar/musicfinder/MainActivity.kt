@@ -56,7 +56,7 @@ data class SongResult(
 class MainActivity : Activity() {
 
     companion object {
-        private const val MAX_DIRECT_PAGES_BEFORE_GOOGLE = 18
+        private const val MAX_DIRECT_PAGES_BEFORE_GOOGLE = 4
     }
 
     private val failedAudioUrls = mutableSetOf<String>()
@@ -947,7 +947,7 @@ class MainActivity : Activity() {
                 resultPages = candidates.map { it.url }
                     .filter { ServerConfig.isAllowedPageUrl(it) }
                     .distinctBy { it.substringBefore("#").trimEnd('/').lowercase() }
-                    .take(240)
+                    .take(60)
                 resultPageIndex = 0
                 searchProgress.progress = 25
                 if (resultPages.isEmpty()) {
@@ -1434,7 +1434,7 @@ class MainActivity : Activity() {
 
         handler.postDelayed(
             timeout,
-            5000L
+            2500L
         )
 
         try {
@@ -1469,64 +1469,52 @@ class MainActivity : Activity() {
         artist: String,
         pageText: String
     ): Boolean {
-        val cleanQuery =
-            SearchEngine.withoutSearchNoise(
-                SearchEngine.correctedQuery(
-                    query.text.toString()
-                )
-            ).trim()
-
+        val cleanQuery = SearchEngine.withoutSearchNoise(
+            SearchEngine.correctedQuery(query.text.toString())
+        ).trim()
         if (cleanQuery.isBlank()) return true
 
-        val metadata =
-            SearchEngine.normalizeQuery("$title $artist")
-        val body =
-            SearchEngine.normalizeQuery(pageText)
+        val metadata = SearchEngine.normalizeQuery("$title $artist")
+        val body = SearchEngine.normalizeQuery(pageText)
+        val (rawArtist, rawTitle) = SearchEngine.parseArtistTitle(cleanQuery)
 
-        val tokens =
-            SearchEngine.normalizeQuery(cleanQuery)
-                .split(' ')
-                .filter { it.length >= 2 }
-                .distinct()
-
-        if (tokens.isEmpty()) return true
-
-        fun coverage(text: String): Int {
-            if (text.isBlank()) return 0
-            val words = text.split(' ').filter { it.isNotBlank() }
-            if (words.isEmpty()) return 0
-
-            var matched = 0
-            for (token in tokens) {
-                val exact = words.any {
-                    it == token ||
-                        it.contains(token) ||
-                        (token.contains(it) && it.length >= 3)
+        fun tokenCoverage(phrase: String, text: String): Int {
+            val tokens = SearchEngine.normalizeQuery(phrase)
+                .split(' ').filter { it.length >= 2 }.distinct()
+            if (tokens.isEmpty()) return 100
+            val words = SearchEngine.normalizeQuery(text).split(' ').filter { it.isNotBlank() }
+            val matched = tokens.count { token ->
+                words.any { word ->
+                    word == token ||
+                        (token.length >= 4 && word.length >= 4 &&
+                            SearchEngine.similarity(token, word) >= 88)
                 }
-                val fuzzy = !exact && words.any {
-                    SearchEngine.similarity(token, it) >= 82
-                }
-                if (exact || fuzzy) matched++
             }
             return matched * 100 / tokens.size
         }
 
-        val metadataCoverage = coverage(metadata)
-        val bodyCoverage = coverage(body)
+        // For "artist - title" queries require evidence for both components.
+        // A page that mentions only the artist (e.g. Shadmehr) is not enough.
+        if (!rawArtist.isNullOrBlank() && !rawTitle.isNullOrBlank()) {
+            val artistMeta = tokenCoverage(rawArtist, metadata)
+            val titleMeta = tokenCoverage(rawTitle, metadata)
+            val artistBody = tokenCoverage(rawArtist, body)
+            val titleBody = tokenCoverage(rawTitle, body)
 
-        if (metadataCoverage >= 60) return true
-        if (metadataCoverage >= 35 && bodyCoverage >= 70) return true
-
-        if (
-            metadataCoverage >= 20 &&
-            bodyCoverage >= 80 &&
-            title.isNotBlank() &&
-            title != "Music"
-        ) {
-            return true
+            if (artistMeta >= 60 && titleMeta >= 60) return true
+            if (artistMeta >= 50 && titleMeta >= 50 &&
+                artistBody >= 75 && titleBody >= 75) return true
+            return false
         }
 
-        return false
+        val tokens = SearchEngine.normalizeQuery(cleanQuery)
+            .split(' ').filter { it.length >= 2 }.distinct()
+        if (tokens.isEmpty()) return true
+
+        val metadataCoverage = tokenCoverage(cleanQuery, metadata)
+        val bodyCoverage = tokenCoverage(cleanQuery, body)
+        return metadataCoverage >= 70 ||
+            (metadataCoverage >= 45 && bodyCoverage >= 75)
     }
 
     private fun finishSearch() {
