@@ -21,9 +21,9 @@ import java.util.concurrent.TimeUnit
 object ParallelSearchEngine {
     private const val CONNECT_TIMEOUT_MS = 3500
     private const val READ_TIMEOUT_MS = 5000
-    private const val BATCH_TIMEOUT_SECONDS = 60L
-    private const val MAX_RESULTS_PER_SITE = 8
-    private const val MAX_RESULTS = 240
+    private const val BATCH_TIMEOUT_SECONDS = 18L
+    private const val MAX_RESULTS_PER_SITE = 5
+    private const val MAX_RESULTS = 80
 
     private val executor = Executors.newFixedThreadPool(12)
 
@@ -54,7 +54,7 @@ object ParallelSearchEngine {
 
         return executor.submit {
             val merged = LinkedHashMap<String, Candidate>()
-            val sites = SearchTelemetry.rankSites(context, ServerConfig.PRIMARY_SEARCH_SITES)
+            val sites = SearchTelemetry.rankSites(context, ServerConfig.PRIMARY_SEARCH_SITES).take(28)
 
             try {
                 val tasks = sites.map { domain ->
@@ -113,14 +113,12 @@ object ParallelSearchEngine {
         val out = ArrayList<Candidate>()
         val seen = HashSet<String>()
 
-        for (q in queries.take(4)) {
+        for (q in queries.take(3)) {
             if (Thread.currentThread().isInterrupted) break
             val encoded = URLEncoder.encode(q, "UTF-8")
             val urls = listOf(
                 "https://$domain/?s=$encoded",
-                "https://$domain/search?q=$encoded",
-                "https://$domain/?q=$encoded",
-                "https://$domain/search?query=$encoded"
+                "https://$domain/search?q=$encoded"
             )
 
             for (url in urls) {
@@ -141,7 +139,7 @@ object ParallelSearchEngine {
         // intentionally untouched. Content candidates are always considered,
         // even when the normal site search already produced eight results.
         if (!Thread.currentThread().isInterrupted) {
-            for (q in queries.take(2)) {
+            for (q in queries.take(1)) {
                 if (Thread.currentThread().isInterrupted) break
                 val results = searchWordPressContent(domain, q)
                 for (candidate in results) {
@@ -182,7 +180,7 @@ object ParallelSearchEngine {
             val array = JSONArray(json)
             // Only inspect the strongest few WP candidates to keep this additive
             // check cheap enough for the existing parallel-search timeout.
-            for (i in 0 until minOf(array.length(), 4)) {
+            for (i in 0 until minOf(array.length(), 2)) {
                 if (Thread.currentThread().isInterrupted) break
 
                 val item = array.optJSONObject(i) ?: continue
@@ -337,12 +335,15 @@ object ParallelSearchEngine {
 
             val normalized = SearchEngine.normalizeQuery(display + " " + absolute)
             val hits = queryTokens.count { normalized.contains(it) }
-            if (hits == 0) continue
+            // Multi-word song searches must match more than one incidental token;
+            // otherwise any page mentioning only the artist can look like a hit.
+            val minimumHits = if (queryTokens.size >= 4) 2 else 1
+            if (hits < minimumHits) continue
 
             val score =
-                hits * 24 +
+                hits * 30 +
                     SearchEngine.similarity(query, display) +
-                    if (display.length <= 180) 8 else 0 +
+                    (if (display.length <= 180) 8 else 0) +
                     (ServerConfig.serverForUrl(absolute)?.priority ?: 0) / 10
 
             out += Candidate(
