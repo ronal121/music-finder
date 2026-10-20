@@ -6,6 +6,18 @@ object SearchEngine {
     private val punctuation = Regex("[^\\p{L}\\p{N}\\s]")
     private val searchNoise = setOf("آهنگ", "دانلود", "mp3", "music", "song", "download")
 
+    private val knownArtistAliases = linkedMapOf(
+        "مرتضی پاشایی" to "مرتضی پاشایی", "پاشایی" to "مرتضی پاشایی",
+        "محسن یگانه" to "محسن یگانه", "یگانه" to "محسن یگانه",
+        "شادمهر عقیلی" to "شادمهر عقیلی", "شادمهر" to "شادمهر عقیلی",
+        "محسن چاوشی" to "محسن چاوشی", "چاوشی" to "محسن چاوشی",
+        "رضا بهرام" to "رضا بهرام", "علی یاسینی" to "علی یاسینی",
+        "فرزاد فرزین" to "فرزاد فرزین", "بابک جهانبخش" to "بابک جهانبخش",
+        "محمد علیزاده" to "محمد علیزاده", "سیاوش قمیشی" to "سیاوش قمیشی",
+        "امیر تتلو" to "امیر تتلو", "ماکان بند" to "ماکان بند",
+        "ابی" to "ابی", "معین" to "معین", "گوگوش" to "گوگوش", "داریوش" to "داریوش"
+    )
+
     private val persianToCanonical = mapOf(
         'آ' to 'ا', 'أ' to 'ا', 'إ' to 'ا', 'ٱ' to 'ا', 'ة' to 'ه',
         'ي' to 'ی', 'ى' to 'ی', 'ك' to 'ک', 'ۀ' to 'ه', 'ؤ' to 'و',
@@ -119,27 +131,45 @@ object SearchEngine {
     }
 
     /** Multiple independent search variants; callers should deduplicate results. */
+    /** Multiple query variants, with artist-aware variants for common Persian names. */
     fun buildQueries(input: String): List<String> {
         val original = displayQuery(input)
         if (original.isBlank()) return emptyList()
-
         val corrected = correctedQuery(original)
         val clean = withoutSearchNoise(corrected)
         val normalized = normalizeQuery(original)
         val words = clean.split(' ').filter { it.isNotBlank() }
         val variants = linkedSetOf<String>()
-
         variants += original
         variants += corrected
         if (clean.isNotBlank()) variants += clean
+
+        val normalizedClean = normalizeQuery(clean)
+        val artistMatch = knownArtistAliases.entries
+            .sortedByDescending { normalizeQuery(it.key).length }
+            .firstOrNull { (alias, _) ->
+                val a = normalizeQuery(alias)
+                a.isNotBlank() && Regex("(^|\\s)" + Regex.escape(a) + "($|\\s)").containsMatchIn(normalizedClean)
+            }
+        if (artistMatch != null) {
+            val alias = normalizeQuery(artistMatch.key)
+            val artist = normalizeQuery(artistMatch.value)
+            val title = normalizedClean
+                .replace(Regex("(^|\\s)" + Regex.escape(alias) + "($|\\s)"), " ")
+                .replace(whitespace, " ").trim()
+            if (title.isNotBlank()) {
+                variants += "\"$title\" \"$artist\""
+                variants += "$title $artist"
+                variants += "$artist $title"
+                variants += "\"$title\" \"${normalizeQuery(artistMatch.key)}\""
+            } else variants += artist
+        }
         if (normalized != corrected) variants += normalized
         if (words.size > 1) variants += words.asReversed().joinToString(" ")
         if (clean.isNotBlank()) variants += "$clean song"
-
-        return variants
-            .map { it.trim().replace(whitespace, " ") }
-            .filter { it.isNotBlank() }
-            .take(8)
+        if (clean.isNotBlank()) variants += "\"$clean\" آهنگ"
+        return variants.map { it.trim().replace(whitespace, " ") }
+            .filter { it.isNotBlank() }.take(12)
     }
 
     fun buildGoogleQuery(input: String): String {

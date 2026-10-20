@@ -69,10 +69,10 @@ object ServerConfig {
             .sortedByDescending { it.priority }
             .map { it.domain }
 
+    /** All enabled search sources; adaptive ranking decides order, not a fixed 16-site limit. */
     val PRIMARY_SEARCH_SITES: List<String>
         get() = SERVERS.filter { it.enabled && it.supportsSearch }
             .sortedByDescending { it.priority }
-            .take(16)
             .map { it.domain }
 
     fun serverFor(host: String?): MusicServer? {

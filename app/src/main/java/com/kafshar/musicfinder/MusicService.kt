@@ -116,13 +116,14 @@ class MusicService : MediaSessionService() {
                 val uri = player.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty()
                 if (uri.isNotBlank() && uri == retryingUri && retryCount < 1) {
                     retryCount = 1
+                    publish()
                     handler.postDelayed({
                         if (!released) loadAndPlay(uri, lastTitle, lastArtist, lastCover, resetRetry = false)
                     }, 700L)
-                } else if (uri.isNotBlank()) {
-                    player.pause()
+                } else {
+                    if (uri.isNotBlank()) player.pause()
+                    publish(error.message ?: "Playback error")
                 }
-                publish(error.message ?: "Playback error")
                 updateNotification()
             }
         })

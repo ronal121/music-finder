@@ -39,6 +39,19 @@ class ServerConfigTest {
         )
     }
 
+    @Test fun acceptsUnconfiguredGoogleDiscoveredMusicPage() {
+        assertTrue(ServerConfig.isDiscoverablePageUrl("https://zeemusic.ir/56247/"))
+    }
+
+    @Test fun acceptsDirectMp3OnUnconfiguredDownloadHost() {
+        assertTrue(
+            ServerConfig.isAllowedMediaUrl(
+                "https://dl.zeemusic.ir/zmz/1/04%20Kaash%20%5BZEEMusic%5D.mp3",
+                "https://zeemusic.ir/56247/"
+            )
+        )
+    }
+
     @Test fun acceptsGoogleSearchPage() {
         assertTrue(ServerConfig.isAllowedPageUrl("https://www.google.com/search?q=music"))
     }

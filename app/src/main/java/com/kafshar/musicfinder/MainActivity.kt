@@ -55,6 +55,12 @@ data class SongResult(
 
 class MainActivity : Activity() {
 
+    companion object {
+        private const val MAX_DIRECT_PAGES_BEFORE_GOOGLE = 18
+    }
+
+    private val failedAudioUrls = mutableSetOf<String>()
+
     private lateinit var web: WebView
     private lateinit var query: EditText
     private lateinit var status: TextView
@@ -110,9 +116,13 @@ class MainActivity : Activity() {
     private var searchGeneration = 0
 
     private var googleFallbackUsed = false
+    private var googleFallbackAttempt = 0
+    private var googleFallbackQueries: List<String> = emptyList()
 
     private var resultPages: List<String> = emptyList()
     private var resultPageIndex = 0
+    private var pagesInspected = 0
+    private var pagesWithPlayableAudio = 0
     private var resultGeneration = 0
     private var expectedPageUrl = ""
 
@@ -155,6 +165,8 @@ class MainActivity : Activity() {
                 MusicService.EXTRA_URL
             ).orEmpty()
 
+            val playbackError = intent.getStringExtra("error").orEmpty()
+
             runOnUiThread {
 
                 if (destroyed) return@runOnUiThread
@@ -184,6 +196,21 @@ class MainActivity : Activity() {
 
                 if (mediaUrl.isNotBlank()) {
                     updateActiveResultHighlight(mediaUrl)
+                }
+
+                if (playbackError.isNotBlank() && mediaUrl.isNotBlank()) {
+                    failedAudioUrls.add(mediaUrl)
+                    val nextPlayable = songs.firstOrNull {
+                        it.url != mediaUrl && it.url !in failedAudioUrls
+                    }
+                    if (nextPlayable != null) {
+                        status.text = "این لینک پخش نشد؛ در حال امتحان منبع بعدی..."
+                        handler.postDelayed({
+                            if (!destroyed && currentAudioUrl == mediaUrl) playSong(nextPlayable)
+                        }, 250L)
+                    } else {
+                        status.text = "صفحه آهنگ پیدا شد، اما سرور پخش را رد کرد: $playbackError"
+                    }
                 }
 
                 if (intent.getBooleanExtra(MusicService.EXTRA_ENDED, false)) {
@@ -564,7 +591,7 @@ class MainActivity : Activity() {
                         .distinctBy {
                             it.substringBefore("|||")
                         }
-                        .take(50)
+                        .take(12)
 
                 if (resultPages.isEmpty()) {
                     finishSearch()
@@ -599,6 +626,8 @@ class MainActivity : Activity() {
                     finishCurrentResultPage()
                     return@runOnUiThread
                 }
+
+                pagesInspected++
 
                 val title =
                     cleanTitle(
@@ -645,6 +674,7 @@ class MainActivity : Activity() {
                         audio
                     )
                 ) {
+                    pagesWithPlayableAudio++
                     val song =
                         SongResult(
                             audio,
@@ -656,6 +686,7 @@ class MainActivity : Activity() {
 
                     if (songs.none { it.url == song.url }) {
                         songs.add(song)
+                        SearchTelemetry.recordPlayable(this@MainActivity, song.site)
                         addSongView(song, songs.lastIndex)
 
                         if (currentIndex < 0) {
@@ -666,6 +697,10 @@ class MainActivity : Activity() {
                                 "${songs.size} آهنگ مرتبط پیدا شد؛ جستجو ادامه دارد..."
                         }
                     }
+                }
+
+                if (songs.isEmpty()) {
+                    status.text = "بررسی $pagesInspected صفحه وب؛ هنوز لینک صوتی مستقیم پیدا نشده است"
                 }
 
                 val total = resultPages.size.coerceAtLeast(1)
@@ -882,11 +917,16 @@ class MainActivity : Activity() {
         val generation = searchGeneration
         cancelSearchCallbacks()
         googleFallbackUsed = false
+        googleFallbackAttempt = 0
+        googleFallbackQueries = emptyList()
         resultGeneration = generation
         resultPages = emptyList()
         resultPageIndex = 0
+        pagesInspected = 0
+        pagesWithPlayableAudio = 0
         expectedPageUrl = ""
         songs.clear()
+        failedAudioUrls.clear()
         currentIndex = -1
         currentAudioUrl = ""
         currentSong = null
@@ -901,13 +941,13 @@ class MainActivity : Activity() {
         vinyl.clearCover()
         vinyl.stopRotation()
         clearLyrics()
-        searchFuture = ParallelSearchEngine.searchDirect(text, generation) { callbackGeneration, candidates ->
+        searchFuture = ParallelSearchEngine.searchDirect(text, generation, this) { callbackGeneration, candidates ->
             runOnUiThread {
                 if (destroyed || callbackGeneration != searchGeneration) return@runOnUiThread
                 resultPages = candidates.map { it.url }
                     .filter { ServerConfig.isAllowedPageUrl(it) }
                     .distinctBy { it.substringBefore("#").trimEnd('/').lowercase() }
-                    .take(60)
+                    .take(240)
                 resultPageIndex = 0
                 searchProgress.progress = 25
                 if (resultPages.isEmpty()) {
@@ -923,20 +963,36 @@ class MainActivity : Activity() {
     }
 
     private fun loadGoogleFallback(text: String, generation: Int) {
-        if (destroyed || generation != searchGeneration || googleFallbackUsed) return
-        googleFallbackUsed = true
+        if (destroyed || generation != searchGeneration) return
+        if (!googleFallbackUsed) {
+            googleFallbackQueries = SearchEngine.buildQueries(text)
+                .map { ServerConfig.searchQuery(it) }
+                .distinct()
+                .take(4)
+                .ifEmpty { listOf(ServerConfig.searchQuery(text)) }
+            googleFallbackUsed = true
+        }
+        if (googleFallbackAttempt >= googleFallbackQueries.size) {
+            finishSearch()
+            return
+        }
+
+        val googleQuery = googleFallbackQueries[googleFallbackAttempt++]
         resultGeneration = generation
         resultPages = emptyList()
         resultPageIndex = 0
-        val encoded = try { URLEncoder.encode(SearchEngine.buildGoogleQuery(text), "UTF-8") } catch (_: Exception) {
+        val encoded = try { URLEncoder.encode(googleQuery, "UTF-8") } catch (_: Exception) {
             status.text = "خطا در آماده‌سازی جستجو"
+            finishSearch()
             return
         }
+        status.text = "در حال جستجوی Google (${googleFallbackAttempt}/${googleFallbackQueries.size})..."
         try {
             web.stopLoading()
             web.loadUrl("https://www.google.com/search?q=$encoded&num=50&hl=en&gbv=1")
         } catch (_: Exception) {
-            status.text = "جستجوی جایگزین در دسترس نیست"
+            status.text = "جستجوی جایگزین در دسترس نیست؛ تلاش برای عبارت بعدی..."
+            finishSearch()
         }
     }
 
@@ -1126,7 +1182,7 @@ class MainActivity : Activity() {
                   // Keep enough candidates to survive pages that fail to load,
                   // but cap the fallback work so a weak Google page cannot
                   // make the search appear frozen.
-                  if(found.length>=30) break;
+                  if(found.length>=12) break;
 
                   found.push(
                     c.u+'|||'+c.t+'|||'+c.s
@@ -1301,6 +1357,24 @@ class MainActivity : Activity() {
             return
         }
 
+        // A large set of direct-site candidates can otherwise delay Google fallback
+        // for many minutes (each WebView navigation can consume the 5s page timeout).
+        if (
+            songs.isEmpty() &&
+            !googleFallbackUsed &&
+            resultPageIndex >= minOf(resultPages.size, MAX_DIRECT_PAGES_BEFORE_GOOGLE)
+        ) {
+            status.text = "جست‌وجوی مستقیم نتیجه قابل پخش نداد؛ در حال بررسی Google..."
+            loadGoogleFallback(query.text.toString(), searchGeneration)
+            return
+        }
+
+        // Stop crawling as soon as a playable audio URL has started playback.
+        if (songs.isNotEmpty() && currentAudioUrl.isNotBlank()) {
+            finishSearch()
+            return
+        }
+
         if (
             resultPageIndex >=
             resultPages.size
@@ -1461,19 +1535,27 @@ class MainActivity : Activity() {
 
         cancelSearchCallbacks()
 
-        if (songs.isEmpty() && !googleFallbackUsed && resultGeneration == searchGeneration) {
-            status.text = "در منابع مستقیم آهنگ قابل پخش پیدا نشد؛ در حال جستجوی Google..."
+        if (
+            songs.isEmpty() &&
+            resultGeneration == searchGeneration &&
+            (!googleFallbackUsed || googleFallbackAttempt < googleFallbackQueries.size)
+        ) {
+            status.text = if (googleFallbackUsed) {
+                "این عبارت نتیجه قابل پخش نداد؛ در حال امتحان عبارت جستجوی بعدی..."
+            } else {
+                "در منابع مستقیم آهنگ قابل پخش پیدا نشد؛ در حال جستجوی Google..."
+            }
             loadGoogleFallback(query.text.toString(), searchGeneration)
             return
         }
 
         if (songs.isEmpty()) {
-            status.text = "آهنگ مرتبط و قابل پخش پیدا نشد"
+            status.text = "پس از بررسی منابع مستقیم و Google، لینک صوتی قابل پخش پیدا نشد؛ $pagesInspected صفحه وب بررسی شد و $pagesWithPlayableAudio صفحه دارای صوت مرتبط بود"
         } else if (currentAudioUrl.isBlank()) {
             currentIndex = 0
             playSong(songs[0])
         } else {
-            status.text = "جستجو کامل شد؛ ${songs.size} آهنگ مرتبط آماده پخش است"
+            status.text = "آهنگ پیدا شد و پخش آغاز شد؛ منبع: ${songs[0].site}"
         }
 
         searchProgress.progress = 100
