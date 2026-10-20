@@ -1476,7 +1476,9 @@ class MainActivity : Activity() {
 
         val metadata = SearchEngine.normalizeQuery("$title $artist")
         val body = SearchEngine.normalizeQuery(pageText)
-        val (rawArtist, rawTitle) = SearchEngine.parseArtistTitle(cleanQuery)
+        val (rawArtist, rawTitle) = SearchEngine.parseArtistTitle(
+            SearchEngine.correctedQuery(query.text.toString()).trim()
+        )
 
         fun tokenCoverage(phrase: String, text: String): Int {
             val tokens = SearchEngine.normalizeQuery(phrase)
