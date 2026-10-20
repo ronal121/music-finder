@@ -96,9 +96,9 @@ class InAppUpdater(private val activity: Activity) {
             throw IllegalStateException("نسخهٔ نصب‌شده پیدا نشد")
         }
 
-        if (archiveInfo.longVersionCode <= installedInfo.longVersionCode) {
+        if (archiveInfo.versionCode.toLong() <= installedInfo.versionCode.toLong()) {
             throw IllegalStateException(
-                "این APK نسخهٔ جدیدتری نیست (نصب‌شده: ${installedInfo.longVersionCode}، دانلودشده: ${archiveInfo.longVersionCode})"
+                "این APK نسخهٔ جدیدتری نیست (نصب‌شده: ${installedInfo.versionCode}، دانلودشده: ${archiveInfo.versionCode})"
             )
         }
 
