@@ -3,6 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val releaseStoreFile = System.getenv("ANDROID_KEYSTORE_PATH")
+val releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+
 android {
     namespace = "com.kafshar.musicfinder"
     compileSdk = 35
@@ -17,8 +22,25 @@ android {
         buildConfigField(
             "String",
             "BUILD_COMMIT",
-            "\"${System.getenv("GITHUB_SHA") ?: "local"}\""
+            "\"\${System.getenv("GITHUB_SHA") ?: "local"}\""
         )
+    }
+
+    signingConfigs {
+        create("release") {
+            if (!releaseStoreFile.isNullOrBlank()) {
+                storeFile = file(releaseStoreFile)
+            }
+            if (!releaseStorePassword.isNullOrBlank()) {
+                storePassword = releaseStorePassword
+            }
+            if (!releaseKeyAlias.isNullOrBlank()) {
+                keyAlias = releaseKeyAlias
+            }
+            if (!releaseKeyPassword.isNullOrBlank()) {
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildFeatures {
@@ -37,6 +59,7 @@ android {
 
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
