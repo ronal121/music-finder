@@ -28,7 +28,7 @@ android {
         buildConfigField(
             "String",
             "BUILD_COMMIT",
-            "\"\${System.getenv("GITHUB_SHA") ?: "local"}\""
+            "\"${System.getenv("GITHUB_SHA") ?: "local"}\""
         )
     }
 
