@@ -155,6 +155,11 @@ object SearchEngine {
             }
         }
 
+        // Preserve broad fallback variants after the exact combined queries.
+        variants += original
+        variants += corrected
+        if (clean.isNotBlank()) variants += clean
+
         val normalizedClean = normalizeQuery(clean)
         val artistMatch = knownArtistAliases.entries
             .sortedByDescending { normalizeQuery(it.key).length }
