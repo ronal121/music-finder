@@ -140,9 +140,20 @@ object SearchEngine {
         val normalized = normalizeQuery(original)
         val words = clean.split(' ').filter { it.isNotBlank() }
         val variants = linkedSetOf<String>()
-        variants += original
-        variants += corrected
-        if (clean.isNotBlank()) variants += clean
+
+        // When the user explicitly separates artist and title, prioritize a
+        // joint exact-phrase query so an artist-only page cannot dominate.
+        val (explicitArtist, explicitTitle) = parseArtistTitle(original)
+        if (!explicitArtist.isNullOrBlank() && !explicitTitle.isNullOrBlank()) {
+            val artist = normalizeQuery(explicitArtist)
+            val title = normalizeQuery(explicitTitle)
+            if (artist.isNotBlank() && title.isNotBlank()) {
+                variants += "\\"$title\\" \\"$artist\\""
+                variants += "\\"$artist\\" \\"$title\\""
+                variants += "$artist $title"
+                variants += "$title $artist"
+            }
+        }
 
         val normalizedClean = normalizeQuery(clean)
         val artistMatch = knownArtistAliases.entries
