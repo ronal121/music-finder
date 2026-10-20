@@ -21,9 +21,9 @@ import java.util.concurrent.TimeUnit
 object ParallelSearchEngine {
     private const val CONNECT_TIMEOUT_MS = 3500
     private const val READ_TIMEOUT_MS = 5000
-    private const val BATCH_TIMEOUT_SECONDS = 60L
-    private const val MAX_RESULTS_PER_SITE = 8
-    private const val MAX_RESULTS = 240
+    private const val BATCH_TIMEOUT_SECONDS = 8L
+    private const val MAX_RESULTS_PER_SITE = 4
+    private const val MAX_RESULTS = 60
 
     private val executor = Executors.newFixedThreadPool(12)
 
@@ -54,11 +54,11 @@ object ParallelSearchEngine {
 
         return executor.submit {
             val merged = LinkedHashMap<String, Candidate>()
-            val sites = SearchTelemetry.rankSites(context, ServerConfig.PRIMARY_SEARCH_SITES)
+            val sites = SearchTelemetry.rankSites(context, ServerConfig.PRIMARY_SEARCH_SITES).take(10)
 
             try {
                 val tasks = sites.map { domain ->
-                    Callable { searchSite(domain, SearchEngine.buildQueries(q)) }
+                    Callable { searchSite(domain, SearchEngine.buildQueries(q).take(2)) }
                 }
                 val futures = executor.invokeAll(
                     tasks,
