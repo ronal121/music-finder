@@ -77,7 +77,9 @@ object ParallelSearchEngine {
                             if (old == null || candidate.score > old.score) merged[key] = candidate
                         }
                     } catch (_: Exception) {
-                        SearchTelemetry.recordSearch(context, domain, 0)
+                        // A cancelled future means this source was not measured; do not
+                        // poison its quality score as if it returned an empty result.
+                        if (!future.isCancelled) SearchTelemetry.recordSearch(context, domain, 0)
                     }
                 }
             } catch (_: InterruptedException) {
