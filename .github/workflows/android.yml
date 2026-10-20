@@ -58,7 +58,7 @@ jobs:
           if-no-files-found: error
 
       - name: Decode persistent release keystore
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' && secrets.ANDROID_KEY_ALIAS != '' && secrets.ANDROID_KEY_PASSWORD != '' }}
+        if: ${{ vars.ANDROID_SIGNING_ENABLED == 'true' }}
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         shell: bash
@@ -71,7 +71,7 @@ jobs:
           echo "ANDROID_KEYSTORE_PATH=$KEYSTORE" >> "$GITHUB_ENV"
 
       - name: Build signed release APK
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' && secrets.ANDROID_KEY_ALIAS != '' && secrets.ANDROID_KEY_PASSWORD != '' }}
+        if: ${{ vars.ANDROID_SIGNING_ENABLED == 'true' }}
         env:
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/music-finder-release.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -80,7 +80,7 @@ jobs:
         run: gradle --no-daemon --stacktrace assembleRelease
 
       - name: Verify release APK signature
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' && secrets.ANDROID_KEY_ALIAS != '' && secrets.ANDROID_KEY_PASSWORD != '' }}
+        if: ${{ vars.ANDROID_SIGNING_ENABLED == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -92,7 +92,7 @@ jobs:
           ls -lh "$APK"
 
       - name: Upload signed release APK
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' && secrets.ANDROID_KEY_ALIAS != '' && secrets.ANDROID_KEY_PASSWORD != '' }}
+        if: ${{ vars.ANDROID_SIGNING_ENABLED == 'true' }}
         uses: actions/upload-artifact@v6
         with:
           name: app-release-signed
@@ -100,5 +100,5 @@ jobs:
           if-no-files-found: error
 
       - name: Explain missing release signing secrets
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 == '' || secrets.ANDROID_KEYSTORE_PASSWORD == '' || secrets.ANDROID_KEY_ALIAS == '' || secrets.ANDROID_KEY_PASSWORD == '' }}
+        if: ${{ vars.ANDROID_SIGNING_ENABLED != 'true' }}
         run: echo "Signed release APK skipped. Configure all four Android signing secrets in GitHub Actions settings."
